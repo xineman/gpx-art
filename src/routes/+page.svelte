@@ -39,7 +39,7 @@
 	const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 	const TILE_ATTRIBUTION =
 		'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-	const MAX_ROUTING_WAYPOINTS = 38;
+	const MAX_ROUTING_WAYPOINTS = 90;
 	const MIN_ROUTING_WAYPOINTS = 12;
 	const toolButtonBase =
 		'inline-flex aspect-square w-[38px] cursor-pointer items-center justify-center rounded-md border-0 transition-[background,color,transform,opacity] duration-150 ease-in-out hover:bg-[#e6b84a] hover:text-[#1f1d19] disabled:cursor-not-allowed disabled:opacity-40 max-[620px]:w-full';
@@ -288,25 +288,106 @@
 		status = 'Routing sketch onto bikeable roads.';
 
 		try {
-			const waypoints = prepareWaypoints(sketchPoints);
-			const coordinates = waypoints
-				.map((point) => `${point.lng.toFixed(6)},${point.lat.toFixed(6)}`)
-				.join(';');
-			const url = `${ROUTING_ENDPOINT}/${coordinates}?overview=full&geometries=geojson&steps=false&continue_straight=false`;
-			const response = await fetch(url);
+			let currentWaypoints = prepareWaypoints(sketchPoints);
+			let iteration = 0;
+			const maxIterations = 5;
+			let routeFound = false;
 
-			if (!response.ok) {
-				throw new Error(`Routing failed with ${response.status}`);
+			while (iteration < maxIterations && currentWaypoints.length >= 2) {
+				iteration++;
+				const coordinates = currentWaypoints
+					.map((point) => `${point.lng.toFixed(6)},${point.lat.toFixed(6)}`)
+					.join(';');
+				const url = `${ROUTING_ENDPOINT}/${coordinates}?overview=full&geometries=geojson&steps=false&continue_straight=false`;
+				const response = await fetch(url);
+
+				if (!response.ok) {
+					throw new Error(`Routing failed with ${response.status}`);
+				}
+
+				const payload = await response.json();
+				if (payload.code !== 'Ok' || !payload.routes?.[0]?.geometry?.coordinates?.length) {
+					throw new Error(payload.message ?? 'No route found for this drawing.');
+				}
+
+				const osrmRoute = payload.routes[0];
+				const routePoints = osrmRoute.geometry.coordinates.map(([lng, lat]: [number, number]) => ({
+					lat,
+					lng
+				}));
+				const snappedWaypoints = payload.waypoints.map((w: any) => ({
+					lat: w.location[1],
+					lng: w.location[0]
+				}));
+
+				// Find indices of snapped waypoints in the generated route
+				const waypointIndices: number[] = [];
+				let searchStart = 0;
+				for (const wp of snappedWaypoints) {
+					let bestIndex = searchStart;
+					let minDistance = Infinity;
+					for (let j = searchStart; j < routePoints.length; j++) {
+						const dist = distanceBetween(wp, routePoints[j]);
+						if (dist < minDistance) {
+							minDistance = dist;
+							bestIndex = j;
+						}
+						if (dist < 1.0) {
+							bestIndex = j;
+							break;
+						}
+					}
+					waypointIndices.push(bestIndex);
+					searchStart = bestIndex;
+				}
+
+				// Identify detour waypoints (excluding start and end)
+				const toExclude = new Set<number>();
+				for (let i = 1; i < snappedWaypoints.length - 1; i++) {
+					const legA = routePoints.slice(waypointIndices[i - 1], waypointIndices[i] + 1);
+					const legB = routePoints.slice(waypointIndices[i], waypointIndices[i + 1] + 1);
+
+					let overlapDistance = 0;
+					let step = 1;
+					while (legA.length - 1 - step >= 0 && step < legB.length) {
+						const ptA = legA[legA.length - 1 - step];
+						const ptB = legB[step];
+						const dist = distanceBetween(ptA, ptB);
+						if (dist > 10) {
+							break;
+						}
+						const segmentDist = distanceBetween(legB[step - 1], ptB);
+						overlapDistance += segmentDist;
+						step++;
+					}
+
+					if (overlapDistance > 15) {
+						toExclude.add(i);
+					}
+				}
+
+				if (toExclude.size === 0) {
+					route = routePoints;
+					routeDistance = osrmRoute.distance ?? totalDistance(route);
+					routeFound = true;
+					break;
+				}
+
+				const nextWaypoints = currentWaypoints.filter((_, idx) => !toExclude.has(idx));
+				if (nextWaypoints.length === currentWaypoints.length || nextWaypoints.length < 2) {
+					route = routePoints;
+					routeDistance = osrmRoute.distance ?? totalDistance(route);
+					routeFound = true;
+					break;
+				}
+
+				currentWaypoints = nextWaypoints;
 			}
 
-			const payload = await response.json();
-			if (payload.code !== 'Ok' || !payload.routes?.[0]?.geometry?.coordinates?.length) {
-				throw new Error(payload.message ?? 'No route found for this drawing.');
+			if (!routeFound) {
+				throw new Error('Could not optimize route without detours.');
 			}
 
-			const osrmRoute = payload.routes[0];
-			route = osrmRoute.geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng }));
-			routeDistance = osrmRoute.distance ?? totalDistance(route);
 			phase = 'routed';
 			status = 'Rideable route generated.';
 			renderLayers(true);
@@ -450,11 +531,11 @@
 
 	function prepareWaypoints(points: Point[]) {
 		const sketchDistance = totalDistance(points);
-		const simplificationMeters = clamp(sketchDistance / 250, 18, 42);
-		const waypointSpacingMeters = clamp(sketchDistance / 120, 25, 85);
+		const simplificationMeters = clamp(sketchDistance / 800, 3, 12);
+		const waypointSpacingMeters = clamp(sketchDistance / 400, 8, 28);
 		const maxWaypoints = Math.max(
 			MIN_ROUTING_WAYPOINTS,
-			Math.min(MAX_ROUTING_WAYPOINTS, Math.round(sketchDistance / 180))
+			Math.min(MAX_ROUTING_WAYPOINTS, Math.round(sketchDistance / 35))
 		);
 		const simplified = simplifyPath(points, simplificationMeters);
 		const compacted = removeNearbyPoints(simplified, waypointSpacingMeters);
