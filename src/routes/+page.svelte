@@ -39,6 +39,8 @@
 	const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 	const TILE_ATTRIBUTION =
 		'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+	const MAX_ROUTING_WAYPOINTS = 38;
+	const MIN_ROUTING_WAYPOINTS = 12;
 	const toolButtonBase =
 		'inline-flex aspect-square w-[38px] cursor-pointer items-center justify-center rounded-md border-0 transition-[background,color,transform,opacity] duration-150 ease-in-out hover:bg-[#e6b84a] hover:text-[#1f1d19] disabled:cursor-not-allowed disabled:opacity-40 max-[620px]:w-full';
 	const actionButtonBase =
@@ -447,9 +449,15 @@
 	}
 
 	function prepareWaypoints(points: Point[]) {
-		const simplified = simplifyPath(points, 0.00008);
-		const compacted = removeNearbyPoints(simplified, 20);
-		const maxWaypoints = 65;
+		const sketchDistance = totalDistance(points);
+		const simplificationMeters = clamp(sketchDistance / 250, 18, 42);
+		const waypointSpacingMeters = clamp(sketchDistance / 120, 25, 85);
+		const maxWaypoints = Math.max(
+			MIN_ROUTING_WAYPOINTS,
+			Math.min(MAX_ROUTING_WAYPOINTS, Math.round(sketchDistance / 180))
+		);
+		const simplified = simplifyPath(points, simplificationMeters);
+		const compacted = removeNearbyPoints(simplified, waypointSpacingMeters);
 
 		if (compacted.length <= maxWaypoints) return compacted;
 
@@ -555,7 +563,11 @@
 		return (degrees * Math.PI) / 180;
 	}
 
-	function simplifyPath(points: Point[], tolerance: number): Point[] {
+	function clamp(value: number, min: number, max: number) {
+		return Math.min(max, Math.max(min, value));
+	}
+
+	function simplifyPath(points: Point[], toleranceMeters: number): Point[] {
 		if (points.length <= 2) return points;
 
 		const first = points[0];
@@ -564,31 +576,48 @@
 		let splitIndex = 0;
 
 		for (let index = 1; index < points.length - 1; index += 1) {
-			const distance = perpendicularDistance(points[index], first, last);
+			const distance = perpendicularDistanceMeters(points[index], first, last);
 			if (distance > maxDistance) {
 				maxDistance = distance;
 				splitIndex = index;
 			}
 		}
 
-		if (maxDistance <= tolerance) return [first, last];
+		if (maxDistance <= toleranceMeters) return [first, last];
 
 		return [
-			...simplifyPath(points.slice(0, splitIndex + 1), tolerance).slice(0, -1),
-			...simplifyPath(points.slice(splitIndex), tolerance)
+			...simplifyPath(points.slice(0, splitIndex + 1), toleranceMeters).slice(0, -1),
+			...simplifyPath(points.slice(splitIndex), toleranceMeters)
 		];
 	}
 
-	function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point) {
+	function perpendicularDistanceMeters(point: Point, lineStart: Point, lineEnd: Point) {
+		const referenceLat = (lineStart.lat + lineEnd.lat) / 2;
+		const projectedPoint = projectPoint(point, referenceLat);
+		const projectedStart = projectPoint(lineStart, referenceLat);
+		const projectedEnd = projectPoint(lineEnd, referenceLat);
 		const numerator = Math.abs(
-			(lineEnd.lng - lineStart.lng) * (lineStart.lat - point.lat) -
-				(lineStart.lng - point.lng) * (lineEnd.lat - lineStart.lat)
+			(projectedEnd.x - projectedStart.x) * (projectedStart.y - projectedPoint.y) -
+				(projectedStart.x - projectedPoint.x) * (projectedEnd.y - projectedStart.y)
 		);
-		const denominator = Math.hypot(lineEnd.lng - lineStart.lng, lineEnd.lat - lineStart.lat);
+		const denominator = Math.hypot(
+			projectedEnd.x - projectedStart.x,
+			projectedEnd.y - projectedStart.y
+		);
 
 		return denominator === 0
-			? Math.hypot(point.lng - lineStart.lng, point.lat - lineStart.lat)
+			? Math.hypot(projectedPoint.x - projectedStart.x, projectedPoint.y - projectedStart.y)
 			: numerator / denominator;
+	}
+
+	function projectPoint(point: Point, referenceLat: number) {
+		const metersPerDegreeLat = 111_320;
+		const metersPerDegreeLng = metersPerDegreeLat * Math.cos(toRadians(referenceLat));
+
+		return {
+			x: point.lng * metersPerDegreeLng,
+			y: point.lat * metersPerDegreeLat
+		};
 	}
 
 	function removeNearbyPoints(points: Point[], minimumMeters: number) {
