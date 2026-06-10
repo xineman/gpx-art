@@ -58,13 +58,13 @@ Pure functions over a `SketchStateLike` interface (just `shapes` + `draft`) — 
 
 ### Geometry (`src/lib/geometry/`)
 
-- `point.ts` — `toPoint` / `toLatLngs` conversions, `rectanglePoints(start, end)` (returns 4 corners), `closeShape`.
+- `point.ts` — `toPoint` / `toLatLngs` conversions, `rectanglePoints(start, end)` (returns 4 corners), `resizeRectangle(points, movedIndex, newPoint)` (keeps a rectangle axis-aligned in lat/lng when one corner is dragged), `closeShape`.
 - `distance.ts` — Haversine `distanceBetween` in meters (Earth radius 6,371,000 m), `totalDistance`, `formatDistance` (m vs km).
 
 ### Map (`src/lib/map/`)
 
 - `bootstrap.ts` — `createMap(el, state)` dynamically imports Leaflet, builds the map with the constants from `src/lib/constants/map.ts` (centered on Warsaw by default at zoom 12), wires event handlers, and returns a `MapController` whose `teardown()` calls `map.off()` then `map.remove()`.
-- `renderer.ts` — `renderLayers(L, drawingLayer, shapes, draft)` clears the layer group and redraws all shapes. Polygons/rectangles use `L.polygon` with fill; lines/pencils use `L.polyline`. Drafts get orange (`#f26b3a`) stroke and point markers; committed shapes get dark stroke (`#2c2924`).
+- `renderer.ts` — `renderLayers(L, drawingLayer, shapes, draft, onVertexMove?, canEditCommitted?)` clears the layer group and redraws all shapes. Polygons/rectangles use `L.polygon` with fill; lines/pencils use `L.polyline`. Drafts get orange (`#f26b3a`) stroke and point markers; committed shapes get dark stroke (`#2c2924`). `canEditCommitted(shape)` is the gate that lets callers expose draggable vertex handles on otherwise-committed shapes (line, polygon, and rectangle pass it today; pencil does not).
 
 ### Components (`src/lib/components/`)
 
@@ -98,9 +98,11 @@ Implemented in `SketchState.handleKeydown/handleKeyup`:
 
 ## Drawing semantics
 
-- **Pencil** — adds a point only if it is >8 m from the last one. A stroke with fewer than 2 points is discarded on `mouseup`.
-- **Rectangle** — drag from one corner to the opposite; on `mouseup`, rectangles with diagonal <12 m are discarded.
-- **Line / Polygon** — click to add vertices; requires 2 points (line) or 3 points (polygon) to commit. In-progress draft shows orange with point markers; committing switches to the dark/filled style.
+- **Pencil** — adds a point only if it is >8 m from the last one. A stroke with fewer than 2 points is discarded on `mouseup`. Pencil strokes are not editable after commit.
+- **Rectangle** — drag from one corner to the opposite; on `mouseup`, rectangles with diagonal <12 m are discarded. Committed rectangles expose draggable corner handles in every tool; dragging a corner preserves axis-alignment in lat/lng via `resizeRectangle` (opposite corner fixed, adjacent corners repositioned).
+- **Line / Polygon** — click to add vertices; requires 2 points (line) or 3 points (polygon) to commit. In-progress draft shows orange with point markers; committing switches to the dark/filled style. Committed line and polygon shapes expose draggable vertex handles in every tool — moving a vertex just repositions that single point.
+
+While a drawing tool is active, mousing down on an existing vertex will start dragging that vertex instead of beginning a new shape. Start new shapes in empty space.
 
 ## Pending work
 

@@ -1,6 +1,6 @@
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
-import { rectanglePoints, toPoint } from '$lib/geometry/point';
+import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
@@ -296,8 +296,13 @@ export class SketchState implements SketchStateLike {
 			this.shapes = this.shapes.map((shape) => {
 				if (shape.id !== shapeId) return shape;
 				if (pointIndex < 0 || pointIndex >= shape.points.length) return shape;
-				const next = [...shape.points];
-				next[pointIndex] = point;
+				// Rectangles must stay axis-aligned: the opposite corner stays
+				// put and the two adjacent corners are repositioned by
+				// `resizeRectangle`. Other shapes get a plain index replace.
+				const next =
+					shape.type === 'rectangle'
+						? resizeRectangle(shape.points, pointIndex, point)
+						: shape.points.map((p, i) => (i === pointIndex ? point : p));
 				return { ...shape, points: next };
 			});
 		}
@@ -312,7 +317,14 @@ export class SketchState implements SketchStateLike {
 			this.shapes,
 			this.draft,
 			(shapeId, pointIndex, point, isDraft) =>
-				this.updateShapeVertex(shapeId, pointIndex, point, isDraft)
+				this.updateShapeVertex(shapeId, pointIndex, point, isDraft),
+			// Line, polygon, and rectangle shapes expose draggable vertex
+			// handles after commit. Pencil is excluded — it's a freeform
+			// stroke with many points, so per-vertex editing would be
+			// tedious. Trade-off: while a drawing tool is active, mousing
+			// down on an existing vertex drags that vertex instead of
+			// beginning a new shape — start new shapes in empty space.
+			(shape) => shape.type !== 'pencil'
 		);
 	}
 

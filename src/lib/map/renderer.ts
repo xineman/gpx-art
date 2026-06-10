@@ -10,24 +10,30 @@ type VertexMoveHandler = (
 	isDraft: boolean
 ) => void;
 
+// Tools where we keep committed-shape vertex markers visible. When the current
+// tool matches a shape's type, we hide its markers so clicking near an
+// existing corner starts a fresh shape instead of dragging the existing one.
+type Edits = (shape: Shape) => boolean;
+
 export function renderLayers(
 	L: L | undefined,
 	map: Leaflet.Map | undefined,
 	drawingLayer: Leaflet.LayerGroup | undefined,
 	shapes: Shape[],
 	draft: Shape | null,
-	onVertexMove?: VertexMoveHandler
+	onVertexMove?: VertexMoveHandler,
+	canEditCommitted: Edits = () => false
 ) {
 	if (!L || !drawingLayer) return;
 
 	drawingLayer.clearLayers();
 
 	for (const shape of shapes) {
-		addShapeLayer(L, map, drawingLayer, shape, false, onVertexMove);
+		addShapeLayer(L, map, drawingLayer, shape, false, onVertexMove, canEditCommitted(shape));
 	}
 
 	if (draft) {
-		addShapeLayer(L, map, drawingLayer, draft, true, onVertexMove);
+		addShapeLayer(L, map, drawingLayer, draft, true, onVertexMove, true);
 	}
 }
 
@@ -37,7 +43,8 @@ function addShapeLayer(
 	drawingLayer: Leaflet.LayerGroup,
 	shape: Shape,
 	isDraft: boolean,
-	onVertexMove?: VertexMoveHandler
+	onVertexMove?: VertexMoveHandler,
+	editable: boolean = false
 ) {
 	if (shape.points.length === 0) return;
 
@@ -67,7 +74,7 @@ function addShapeLayer(
 		}).addTo(drawingLayer);
 	}
 
-	if (isDraft && shape.points.length > 0) {
+	if ((isDraft || editable) && shape.points.length > 0) {
 		for (let i = 0; i < shape.points.length; i++) {
 			const point = shape.points[i];
 			const marker = L.circleMarker([point.lat, point.lng], {
