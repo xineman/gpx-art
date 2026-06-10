@@ -23,6 +23,7 @@ export class SketchState implements SketchStateLike {
 	shapes = $state<Shape[]>([]);
 	draft = $state<Shape | null>(null);
 	undoStack = $state<Snapshot[]>([]);
+	redoStack = $state<Snapshot[]>([]);
 	status = $state('Sketch a shape.');
 	routeError = $state('');
 	dragOrigin = $state<Point | null>(null);
@@ -155,13 +156,16 @@ export class SketchState implements SketchStateLike {
 				this.shapes = this.shapes.filter((shape) => shape.id !== activeId);
 			}
 			this.activePencilShape = null;
-			this.status = 'Pencil stroke added.';
+			this.status = 'Pencil line finished.';
 		}
 
 		if (this.activeRectangleShape) {
 			if (
 				this.dragOrigin &&
-				distanceBetween(this.dragOrigin, this.activeRectangleShape.points[2]) < 12
+				distanceBetween(
+					this.activeRectangleShape.points[0],
+					this.activeRectangleShape.points.at(-1)!
+				) < 12
 			) {
 				const activeId = this.activeRectangleShape.id;
 				this.shapes = this.shapes.filter((shape) => shape.id !== activeId);
@@ -219,6 +223,7 @@ export class SketchState implements SketchStateLike {
 		const previous = this.undoStack.at(-1);
 		if (!previous || this.phase === 'routing') return;
 
+		this.pushCurrentToRedo();
 		this.undoStack = this.undoStack.slice(0, -1);
 		this.shapes = cloneShapes(previous.shapes);
 		this.draft = previous.draft ? cloneShape(previous.draft) : null;
@@ -229,6 +234,32 @@ export class SketchState implements SketchStateLike {
 		this.isDragging = false;
 		this.status = 'Undid recent action.';
 		this.render();
+	}
+
+	redo() {
+		const next = this.redoStack.at(-1);
+		if (!next || this.phase === 'routing') return;
+
+		this.pushCurrentToUndo();
+		this.redoStack = this.redoStack.slice(0, -1);
+		this.shapes = cloneShapes(next.shapes);
+		this.draft = next.draft ? cloneShape(next.draft) : null;
+		this.phase = next.phase;
+		this.activePencilShape = null;
+		this.activeRectangleShape = null;
+		this.dragOrigin = null;
+		this.isDragging = false;
+		this.status = 'Redid recent action.';
+		this.render();
+	}
+
+	private pushCurrentToUndo() {
+		this.undoStack = [...this.undoStack.slice(-(MAX_UNDO - 1)), this.snapshot()];
+	}
+
+	private pushCurrentToRedo() {
+		const current = this.snapshot();
+		this.redoStack = [...this.redoStack.slice(-(MAX_UNDO - 1)), current];
 	}
 
 	clearDrawing() {
@@ -250,7 +281,11 @@ export class SketchState implements SketchStateLike {
 
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
 			event.preventDefault();
-			this.undo();
+			if (event.shiftKey) {
+				this.redo();
+			} else {
+				this.undo();
+			}
 		}
 
 		if (event.code === 'Space' && !event.repeat) {
@@ -329,7 +364,8 @@ export class SketchState implements SketchStateLike {
 	}
 
 	private pushHistory() {
-		this.undoStack = [...this.undoStack.slice(-(MAX_UNDO - 1)), this.snapshot()];
+		this.pushCurrentToUndo();
+		this.redoStack = [];
 	}
 
 	private snapshot(): Snapshot {

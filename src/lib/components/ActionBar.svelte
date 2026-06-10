@@ -37,6 +37,17 @@
 		<span>Undo</span>
 	</button>
 	<button
+		aria-label="Redo"
+		class={neutralActionButton}
+		disabled={state.phase === 'routing' || state.redoStack.length === 0}
+		onclick={() => state.redo()}
+		title="Redo"
+		type="button"
+	>
+		<RotateCcw size={18} style="transform: scaleX(-1);" />
+		<span>Redo</span>
+	</button>
+	<button
 		aria-label="Clear"
 		class={neutralActionButton}
 		disabled={state.phase !== 'editing' || !state.hasDrawing}
