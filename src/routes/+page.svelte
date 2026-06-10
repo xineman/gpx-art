@@ -30,17 +30,12 @@
 	type Snapshot = {
 		draft: Shape | null;
 		phase: Phase;
-		route: Point[];
-		routeDistance: number;
 		shapes: Shape[];
 	};
 
-	const ROUTING_ENDPOINT = 'https://routing.openstreetmap.de/routed-bike/route/v1/driving';
 	const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 	const TILE_ATTRIBUTION =
 		'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-	const MAX_ROUTING_WAYPOINTS = 90;
-	const MIN_ROUTING_WAYPOINTS = 12;
 	const toolButtonBase =
 		'inline-flex aspect-square w-[38px] cursor-pointer items-center justify-center rounded-md border-0 transition-[background,color,transform,opacity] duration-150 ease-in-out hover:bg-[#e6b84a] hover:text-[#1f1d19] disabled:cursor-not-allowed disabled:opacity-40 max-[620px]:w-full';
 	const actionButtonBase =
@@ -54,25 +49,20 @@
 	let shapes = $state<Shape[]>([]);
 	let draft = $state<Shape | null>(null);
 	let undoStack = $state<Snapshot[]>([]);
-	let route = $state<Point[]>([]);
-	let routeDistance = $state(0);
-	let status = $state('Sketch a shape, then route it.');
+	let status = $state('Sketch a shape.');
 	let routeError = $state('');
 	let dragOrigin = $state<Point | null>(null);
 
 	let L: typeof import('leaflet') | undefined;
 	let map: Leaflet.Map | undefined;
 	let drawingLayer: Leaflet.LayerGroup | undefined;
-	let routeLayer: Leaflet.LayerGroup | undefined;
 	let activePencilShape: Shape | null = null;
 	let activeRectangleShape: Shape | null = null;
 
-	const canRoute = $derived(phase === 'editing' && routeInputPoints().length > 1);
+	const canRoute = $derived(routeInputPoints().length > 1);
 	const hasDrawing = $derived(shapes.length > 0 || !!draft);
-	const distanceLabel = $derived(routeDistance > 0 ? formatDistance(routeDistance) : '0 km');
-	const pointLabel = $derived(
-		route.length > 0 ? `${route.length} pts` : `${routeInputPoints().length} sketch pts`
-	);
+	const distanceLabel = $derived(formatDistance(sketchDistance()));
+	const pointLabel = $derived(`${routeInputPoints().length} sketch pts`);
 
 	onMount(() => {
 		let disposed = false;
@@ -96,7 +86,6 @@
 			}).addTo(map);
 
 			drawingLayer = L.layerGroup().addTo(map);
-			routeLayer = L.layerGroup().addTo(map);
 
 			map.on('mousedown', handleMapMouseDown);
 			map.on('mousemove', handleMapMouseMove);
@@ -264,8 +253,6 @@
 		shapes = cloneShapes(previous.shapes);
 		draft = previous.draft ? cloneShape(previous.draft) : null;
 		phase = previous.phase;
-		route = previous.route.map((point) => ({ ...point }));
-		routeDistance = previous.routeDistance;
 		activePencilShape = null;
 		activeRectangleShape = null;
 		dragOrigin = null;
@@ -274,147 +261,18 @@
 	}
 
 	async function createRoute() {
-		if (!canRoute || phase !== 'editing') return;
-		finishDraft();
-
-		const sketchPoints = routeInputPoints();
-		if (sketchPoints.length < 2) {
-			routeError = 'Add at least two points before routing.';
-			return;
-		}
-
-		phase = 'routing';
-		routeError = '';
-		status = 'Routing sketch onto bikeable roads.';
-
-		try {
-			let currentWaypoints = prepareWaypoints(sketchPoints);
-			let iteration = 0;
-			const maxIterations = 5;
-			let routeFound = false;
-
-			while (iteration < maxIterations && currentWaypoints.length >= 2) {
-				iteration++;
-				const coordinates = currentWaypoints
-					.map((point) => `${point.lng.toFixed(6)},${point.lat.toFixed(6)}`)
-					.join(';');
-				const url = `${ROUTING_ENDPOINT}/${coordinates}?overview=full&geometries=geojson&steps=false&continue_straight=false`;
-				const response = await fetch(url);
-
-				if (!response.ok) {
-					throw new Error(`Routing failed with ${response.status}`);
-				}
-
-				const payload = await response.json();
-				if (payload.code !== 'Ok' || !payload.routes?.[0]?.geometry?.coordinates?.length) {
-					throw new Error(payload.message ?? 'No route found for this drawing.');
-				}
-
-				const osrmRoute = payload.routes[0];
-				const routePoints = osrmRoute.geometry.coordinates.map(([lng, lat]: [number, number]) => ({
-					lat,
-					lng
-				}));
-				const snappedWaypoints = payload.waypoints.map((w: any) => ({
-					lat: w.location[1],
-					lng: w.location[0]
-				}));
-
-				// Find indices of snapped waypoints in the generated route
-				const waypointIndices: number[] = [];
-				let searchStart = 0;
-				for (const wp of snappedWaypoints) {
-					let bestIndex = searchStart;
-					let minDistance = Infinity;
-					for (let j = searchStart; j < routePoints.length; j++) {
-						const dist = distanceBetween(wp, routePoints[j]);
-						if (dist < minDistance) {
-							minDistance = dist;
-							bestIndex = j;
-						}
-						if (dist < 1.0) {
-							bestIndex = j;
-							break;
-						}
-					}
-					waypointIndices.push(bestIndex);
-					searchStart = bestIndex;
-				}
-
-				// Identify detour waypoints (excluding start and end)
-				const toExclude = new Set<number>();
-				for (let i = 1; i < snappedWaypoints.length - 1; i++) {
-					const legA = routePoints.slice(waypointIndices[i - 1], waypointIndices[i] + 1);
-					const legB = routePoints.slice(waypointIndices[i], waypointIndices[i + 1] + 1);
-
-					let overlapDistance = 0;
-					let step = 1;
-					while (legA.length - 1 - step >= 0 && step < legB.length) {
-						const ptA = legA[legA.length - 1 - step];
-						const ptB = legB[step];
-						const dist = distanceBetween(ptA, ptB);
-						if (dist > 10) {
-							break;
-						}
-						const segmentDist = distanceBetween(legB[step - 1], ptB);
-						overlapDistance += segmentDist;
-						step++;
-					}
-
-					if (overlapDistance > 15) {
-						toExclude.add(i);
-					}
-				}
-
-				if (toExclude.size === 0) {
-					route = routePoints;
-					routeDistance = osrmRoute.distance ?? totalDistance(route);
-					routeFound = true;
-					break;
-				}
-
-				const nextWaypoints = currentWaypoints.filter((_, idx) => !toExclude.has(idx));
-				if (nextWaypoints.length === currentWaypoints.length || nextWaypoints.length < 2) {
-					route = routePoints;
-					routeDistance = osrmRoute.distance ?? totalDistance(route);
-					routeFound = true;
-					break;
-				}
-
-				currentWaypoints = nextWaypoints;
-			}
-
-			if (!routeFound) {
-				throw new Error('Could not optimize route without detours.');
-			}
-
-			phase = 'routed';
-			status = 'Rideable route generated.';
-			renderLayers(true);
-		} catch (error) {
-			phase = 'editing';
-			routeError = error instanceof Error ? error.message : 'Could not create route.';
-			status = 'Routing did not complete.';
-			renderLayers();
-		}
+		// Routing will be re-implemented from scratch.
 	}
 
 	function backToEditing() {
-		phase = 'editing';
-		route = [];
-		routeDistance = 0;
-		routeError = '';
-		status = 'Editing sketch.';
-		renderLayers();
+		// Routing will be re-implemented from scratch.
 	}
 
 	function clearDrawing() {
-		if (!hasDrawing && route.length === 0) return;
+		if (!hasDrawing) return;
 		pushHistory();
 		shapes = [];
 		draft = null;
-		route = [];
-		routeDistance = 0;
 		routeError = '';
 		phase = 'editing';
 		status = 'Canvas cleared.';
@@ -422,21 +280,13 @@
 	}
 
 	function downloadGpx() {
-		if (route.length < 2) return;
-		const gpx = buildGpx(route);
-		const url = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
-		const link = document.createElement('a');
-		link.href = url;
-		link.download = `gpx-art-${new Date().toISOString().slice(0, 10)}.gpx`;
-		link.click();
-		URL.revokeObjectURL(url);
+		// GPX export will be re-implemented with routing.
 	}
 
-	function renderLayers(fitRoute = false) {
-		if (!L || !drawingLayer || !routeLayer) return;
+	function renderLayers() {
+		if (!L || !drawingLayer) return;
 
 		drawingLayer.clearLayers();
-		routeLayer.clearLayers();
 
 		for (const shape of shapes) {
 			addShapeLayer(shape, false);
@@ -444,31 +294,6 @@
 
 		if (draft) {
 			addShapeLayer(draft, true);
-		}
-
-		if (route.length > 1) {
-			const routeLine = L.polyline(toLatLngs(route), {
-				className: 'route-line',
-				color: '#1e7d62',
-				interactive: false,
-				lineCap: 'round',
-				lineJoin: 'round',
-				opacity: 0.94,
-				weight: 7
-			}).addTo(routeLayer);
-
-			L.polyline(toLatLngs(route), {
-				color: '#f7f1de',
-				interactive: false,
-				lineCap: 'round',
-				lineJoin: 'round',
-				opacity: 0.88,
-				weight: 2
-			}).addTo(routeLayer);
-
-			if (fitRoute) {
-				map?.fitBounds(routeLine.getBounds(), { padding: [42, 42] });
-			}
 		}
 	}
 
@@ -529,26 +354,8 @@
 		return [...committed, ...pending];
 	}
 
-	function prepareWaypoints(points: Point[]) {
-		const sketchDistance = totalDistance(points);
-		const simplificationMeters = clamp(sketchDistance / 800, 3, 12);
-		const waypointSpacingMeters = clamp(sketchDistance / 400, 8, 28);
-		const maxWaypoints = Math.max(
-			MIN_ROUTING_WAYPOINTS,
-			Math.min(MAX_ROUTING_WAYPOINTS, Math.round(sketchDistance / 35))
-		);
-		const simplified = simplifyPath(points, simplificationMeters);
-		const compacted = removeNearbyPoints(simplified, waypointSpacingMeters);
-
-		if (compacted.length <= maxWaypoints) return compacted;
-
-		const sampled = [];
-		for (let index = 0; index < maxWaypoints; index += 1) {
-			const sourceIndex = Math.round((index / (maxWaypoints - 1)) * (compacted.length - 1));
-			sampled.push(compacted[sourceIndex]);
-		}
-
-		return sampled;
+	function sketchDistance() {
+		return totalDistance(routeInputPoints());
 	}
 
 	function pushHistory() {
@@ -559,8 +366,6 @@
 		return {
 			draft: draft ? cloneShape(draft) : null,
 			phase,
-			route: route.map((point) => ({ ...point })),
-			routeDistance,
 			shapes: cloneShapes(shapes)
 		};
 	}
@@ -644,105 +449,9 @@
 		return (degrees * Math.PI) / 180;
 	}
 
-	function clamp(value: number, min: number, max: number) {
-		return Math.min(max, Math.max(min, value));
-	}
-
-	function simplifyPath(points: Point[], toleranceMeters: number): Point[] {
-		if (points.length <= 2) return points;
-
-		const first = points[0];
-		const last = points[points.length - 1];
-		let maxDistance = 0;
-		let splitIndex = 0;
-
-		for (let index = 1; index < points.length - 1; index += 1) {
-			const distance = perpendicularDistanceMeters(points[index], first, last);
-			if (distance > maxDistance) {
-				maxDistance = distance;
-				splitIndex = index;
-			}
-		}
-
-		if (maxDistance <= toleranceMeters) return [first, last];
-
-		return [
-			...simplifyPath(points.slice(0, splitIndex + 1), toleranceMeters).slice(0, -1),
-			...simplifyPath(points.slice(splitIndex), toleranceMeters)
-		];
-	}
-
-	function perpendicularDistanceMeters(point: Point, lineStart: Point, lineEnd: Point) {
-		const referenceLat = (lineStart.lat + lineEnd.lat) / 2;
-		const projectedPoint = projectPoint(point, referenceLat);
-		const projectedStart = projectPoint(lineStart, referenceLat);
-		const projectedEnd = projectPoint(lineEnd, referenceLat);
-		const numerator = Math.abs(
-			(projectedEnd.x - projectedStart.x) * (projectedStart.y - projectedPoint.y) -
-				(projectedStart.x - projectedPoint.x) * (projectedEnd.y - projectedStart.y)
-		);
-		const denominator = Math.hypot(
-			projectedEnd.x - projectedStart.x,
-			projectedEnd.y - projectedStart.y
-		);
-
-		return denominator === 0
-			? Math.hypot(projectedPoint.x - projectedStart.x, projectedPoint.y - projectedStart.y)
-			: numerator / denominator;
-	}
-
-	function projectPoint(point: Point, referenceLat: number) {
-		const metersPerDegreeLat = 111_320;
-		const metersPerDegreeLng = metersPerDegreeLat * Math.cos(toRadians(referenceLat));
-
-		return {
-			x: point.lng * metersPerDegreeLng,
-			y: point.lat * metersPerDegreeLat
-		};
-	}
-
-	function removeNearbyPoints(points: Point[], minimumMeters: number) {
-		if (points.length <= 2) return points;
-
-		const compacted = [points[0]];
-		for (const point of points.slice(1, -1)) {
-			if (distanceBetween(compacted.at(-1)!, point) >= minimumMeters) {
-				compacted.push(point);
-			}
-		}
-		compacted.push(points.at(-1)!);
-
-		return compacted;
-	}
-
 	function formatDistance(meters: number) {
 		if (meters < 1000) return `${Math.round(meters)} m`;
 		return `${(meters / 1000).toFixed(1)} km`;
-	}
-
-	function buildGpx(points: Point[]) {
-		const generatedAt = new Date().toISOString();
-		const trackPoints = points
-			.map(
-				(point) =>
-					`      <trkpt lat="${point.lat.toFixed(7)}" lon="${point.lng.toFixed(7)}"></trkpt>`
-			)
-			.join('\n');
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="GPX Art MVP" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata>
-    <name>GPX Art Ride</name>
-    <time>${generatedAt}</time>
-  </metadata>
-  <trk>
-    <name>GPX Art Ride</name>
-    <trkseg>
-${trackPoints}
-    </trkseg>
-  </trk>
-</gpx>
-`;
 	}
 </script>
 
