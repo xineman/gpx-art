@@ -12,9 +12,19 @@
 	const sketch = new SketchState();
 	let hoveredPanel = $state<string | null>(null);
 	let mapHandle: { teardown: () => void } | null = null;
+	// Cached panel wrapper elements. We hit-test these with getBoundingClientRect()
+	// during a drag rather than relying on built-in DOM hit-testing, because our
+	// panel wrappers carry pointer-events: none while isDragging is true (so
+	// mousedown/mousemove fall through to the map). getBoundingClientRect() reports
+	// the visual rect regardless of pointer-events.
+	const panelElements: HTMLElement[] = [];
 
 	onMount(() => {
 		let cancelled = false;
+		document.querySelectorAll('[data-panel]').forEach((el) => {
+			panelElements.push(el as HTMLElement);
+		});
+
 		void (async () => {
 			if (!mapElement) return;
 			const handle = await createMap(mapElement, sketch);
@@ -30,9 +40,18 @@
 					return;
 				}
 				const original = event.originalEvent as MouseEvent;
-				const elements = document.elementsFromPoint(original.clientX, original.clientY);
-				const panelEl = elements.find((el) => el.hasAttribute('data-panel'));
-				hoveredPanel = panelEl ? panelEl.getAttribute('data-panel') : null;
+				const x = original.clientX;
+				const y = original.clientY;
+				let found: string | null = null;
+				for (const el of panelElements) {
+					const rect = el.getBoundingClientRect();
+					if (rect.width === 0 || rect.height === 0) continue;
+					if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+						found = el.getAttribute('data-panel');
+						break;
+					}
+				}
+				hoveredPanel = found;
 			});
 		})();
 
@@ -65,6 +84,7 @@
 		<div class="flex flex-col items-start gap-[14px] max-[620px]:w-full">
 			<div
 				data-panel="status"
+				class="transition-opacity duration-150"
 				class:pointer-events-auto={!sketch.isDragging}
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'status'}
@@ -73,6 +93,7 @@
 			</div>
 			<div
 				data-panel="palette"
+				class="transition-opacity duration-150"
 				class:pointer-events-auto={!sketch.isDragging}
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'palette'}
@@ -83,6 +104,7 @@
 		<div class="flex flex-col items-start gap-[10px] max-[620px]:w-full">
 			<div
 				data-panel="palette"
+				class="transition-opacity duration-150"
 				class:pointer-events-auto={!sketch.isDragging}
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'palette'}
@@ -91,6 +113,7 @@
 			</div>
 			<div
 				data-panel="error"
+				class="transition-opacity duration-150"
 				class:pointer-events-auto={!sketch.isDragging}
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'error'}
@@ -99,6 +122,7 @@
 			</div>
 			<div
 				data-panel="action"
+				class="transition-opacity duration-150"
 				class:pointer-events-auto={!sketch.isDragging}
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'action'}
