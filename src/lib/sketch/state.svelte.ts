@@ -106,6 +106,16 @@ export class SketchState implements SketchStateLike {
 			this.status = 'Sizing rectangle.';
 			this.render();
 		}
+
+		if (this.currentTool === 'line' || this.currentTool === 'polygon') {
+			// Without this, the map's default drag handler steals the gesture and
+			// pans the map on every click — and trying to drag a vertex marker
+			// (which lives inside the drawing layer) has the same effect. Match
+			// the pencil/rectangle behaviour: prevent default + disable map drag,
+			// then let handleMapClick add the new vertex on mouseup.
+			event.originalEvent.preventDefault();
+			this._map?.dragging.disable();
+		}
 	}
 
 	handleMapMouseMove(event: Leaflet.LeafletMouseEvent) {
@@ -275,8 +285,35 @@ export class SketchState implements SketchStateLike {
 		// GPX export will be re-implemented with routing.
 	}
 
+	updateShapeVertex(shapeId: string, pointIndex: number, point: Point, isDraft: boolean) {
+		if (isDraft) {
+			if (!this.draft || this.draft.id !== shapeId) return;
+			if (pointIndex < 0 || pointIndex >= this.draft.points.length) return;
+			const next = [...this.draft.points];
+			next[pointIndex] = point;
+			this.draft = { ...this.draft, points: next };
+		} else {
+			this.shapes = this.shapes.map((shape) => {
+				if (shape.id !== shapeId) return shape;
+				if (pointIndex < 0 || pointIndex >= shape.points.length) return shape;
+				const next = [...shape.points];
+				next[pointIndex] = point;
+				return { ...shape, points: next };
+			});
+		}
+		this.render();
+	}
+
 	private render() {
-		renderLayers(this._L, this._drawingLayer, this.shapes, this.draft);
+		renderLayers(
+			this._L,
+			this._map,
+			this._drawingLayer,
+			this.shapes,
+			this.draft,
+			(shapeId, pointIndex, point, isDraft) =>
+				this.updateShapeVertex(shapeId, pointIndex, point, isDraft)
+		);
 	}
 
 	private pushHistory() {

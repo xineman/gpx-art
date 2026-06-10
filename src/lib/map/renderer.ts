@@ -1,29 +1,44 @@
 import type * as Leaflet from 'leaflet';
 import { closeShape, toLatLngs } from '$lib/geometry/point';
-import type { Shape } from '$lib/types/sketch';
+import type { Point, Shape } from '$lib/types/sketch';
 
 type L = typeof import('leaflet');
+type VertexMoveHandler = (
+	shapeId: string,
+	pointIndex: number,
+	point: Point,
+	isDraft: boolean
+) => void;
 
 export function renderLayers(
 	L: L | undefined,
+	map: Leaflet.Map | undefined,
 	drawingLayer: Leaflet.LayerGroup | undefined,
 	shapes: Shape[],
-	draft: Shape | null
+	draft: Shape | null,
+	onVertexMove?: VertexMoveHandler
 ) {
 	if (!L || !drawingLayer) return;
 
 	drawingLayer.clearLayers();
 
 	for (const shape of shapes) {
-		addShapeLayer(L, drawingLayer, shape, false);
+		addShapeLayer(L, map, drawingLayer, shape, false, onVertexMove);
 	}
 
 	if (draft) {
-		addShapeLayer(L, drawingLayer, draft, true);
+		addShapeLayer(L, map, drawingLayer, draft, true, onVertexMove);
 	}
 }
 
-function addShapeLayer(L: L, drawingLayer: Leaflet.LayerGroup, shape: Shape, isDraft: boolean) {
+function addShapeLayer(
+	L: L,
+	map: Leaflet.Map | undefined,
+	drawingLayer: Leaflet.LayerGroup,
+	shape: Shape,
+	isDraft: boolean,
+	onVertexMove?: VertexMoveHandler
+) {
 	if (shape.points.length === 0) return;
 
 	const points =
@@ -53,14 +68,63 @@ function addShapeLayer(L: L, drawingLayer: Leaflet.LayerGroup, shape: Shape, isD
 	}
 
 	if (isDraft && shape.points.length > 0) {
-		for (const point of shape.points) {
-			L.circleMarker([point.lat, point.lng], {
+		for (let i = 0; i < shape.points.length; i++) {
+			const point = shape.points[i];
+			const marker = L.circleMarker([point.lat, point.lng], {
 				color: '#f26b3a',
 				fillColor: '#fff7df',
 				fillOpacity: 1,
 				radius: 4,
 				weight: 2
 			}).addTo(drawingLayer);
+
+			if (onVertexMove) {
+				makeVertexDraggable(L, marker, map, shape.id, i, isDraft, onVertexMove);
+			}
 		}
 	}
+}
+
+// Leaflet's circleMarker is interactive by default but not draggable. We attach
+// a custom drag handler: mousedown arms it, document-level mousemove moves the
+// marker + reports the new position back via onMove, document-level mouseup
+// disarms. We also disable map dragging for the duration so Leaflet doesn't
+// try to pan the map at the same time.
+function makeVertexDraggable(
+	L: L,
+	marker: Leaflet.CircleMarker,
+	map: Leaflet.Map | undefined,
+	shapeId: string,
+	pointIndex: number,
+	isDraft: boolean,
+	onMove: VertexMoveHandler
+) {
+	if (!map) return;
+
+	let armed = false;
+
+	marker.on('mousedown', (e: Leaflet.LeafletMouseEvent) => {
+		L.DomEvent.stopPropagation(e);
+		L.DomEvent.preventDefault(e.originalEvent);
+		armed = true;
+		map.dragging.disable();
+	});
+
+	const onMouseMove = (e: MouseEvent) => {
+		if (!armed) return;
+		const latLng = map.mouseEventToLatLng(e);
+		marker.setLatLng(latLng);
+		onMove(shapeId, pointIndex, { lat: latLng.lat, lng: latLng.lng }, isDraft);
+	};
+
+	const onMouseUp = () => {
+		if (!armed) return;
+		armed = false;
+		map.dragging.enable();
+		document.removeEventListener('mousemove', onMouseMove);
+		document.removeEventListener('mouseup', onMouseUp);
+	};
+
+	document.addEventListener('mousemove', onMouseMove);
+	document.addEventListener('mouseup', onMouseUp);
 }

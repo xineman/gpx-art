@@ -33,7 +33,7 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 	map.on('dblclick', () => state.finishDraft());
 	map.on('contextmenu', () => state.finishDraft());
 
-	renderLayers(L, drawingLayer, state.shapes, state.draft);
+	renderLayers(L, map, drawingLayer, state.shapes, state.draft);
 
 	return {
 		L,

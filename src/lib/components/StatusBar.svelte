@@ -26,12 +26,12 @@
 	</div>
 	<div class="flex shrink-0 items-center gap-1.5" aria-label="Route statistics">
 		<span
-			class="rounded-full bg-[#2c2924] px-[9px] py-[7px] text-xs leading-none font-extrabold text-[#fff7df]"
+			class="rounded-full bg-[#2c2924] px-[9px] py-[7px] text-xs leading-none font-bold text-[#fff7df]"
 		>
 			{state.distanceLabel}
 		</span>
 		<span
-			class="rounded-full bg-[#2c2924] px-[9px] py-[7px] text-xs leading-none font-extrabold text-[#fff7df]"
+			class="rounded-full bg-[#2c2924] px-[9px] py-[7px] text-xs leading-none font-bold text-[#fff7df]"
 		>
 			{state.pointLabel}
 		</span>
