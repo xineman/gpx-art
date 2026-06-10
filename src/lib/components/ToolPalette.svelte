@@ -26,7 +26,7 @@
 		class={toolButtonClass('pan')}
 		disabled={state.phase !== 'editing'}
 		onclick={() => state.setTool('pan')}
-		title="Pan"
+		title="Pan (hold Space)"
 		type="button"
 	>
 		<Hand size={18} />

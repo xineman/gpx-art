@@ -55,12 +55,15 @@
 			});
 		})();
 
-		const onKey = (event: KeyboardEvent) => sketch.handleKeydown(event);
-		window.addEventListener('keydown', onKey);
+		const onKeydown = (event: KeyboardEvent) => sketch.handleKeydown(event);
+		const onKeyup = (event: KeyboardEvent) => sketch.handleKeyup(event);
+		window.addEventListener('keydown', onKeydown);
+		window.addEventListener('keyup', onKeyup);
 
 		return () => {
 			cancelled = true;
-			window.removeEventListener('keydown', onKey);
+			window.removeEventListener('keydown', onKeydown);
+			window.removeEventListener('keyup', onKeyup);
 			sketch.detachMap();
 			mapHandle?.teardown();
 			mapHandle = null;

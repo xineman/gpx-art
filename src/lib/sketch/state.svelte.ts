@@ -27,11 +27,13 @@ export class SketchState implements SketchStateLike {
 	routeError = $state('');
 	dragOrigin = $state<Point | null>(null);
 	isDragging = $state(false);
+	isSpacePan = $state(false);
 
 	// Non-reactive scratch — see Preservation note #1. Plain refs that survive across
 	// mousedown/mousemove/mouseup without triggering reactivity.
 	activePencilShape: Shape | null = null;
 	activeRectangleShape: Shape | null = null;
+	previousTool: Tool | null = null;
 
 	private _L: L | undefined;
 	private _map: Leaflet.Map | undefined;
@@ -56,14 +58,17 @@ export class SketchState implements SketchStateLike {
 
 	setTool(tool: Tool) {
 		if (this.phase !== 'editing') return;
-		if (tool !== this.currentTool) {
-			this.finishDraft();
-			this.currentTool = tool;
-			this.activePencilShape = null;
-			this.activeRectangleShape = null;
-			this.isDragging = false;
-			this.status = tool === 'pan' ? 'Map navigation active.' : `${toolName(tool)} ready.`;
-		}
+		if (tool === this.currentTool) return;
+		this.applyTool(tool);
+	}
+
+	private applyTool(tool: Tool) {
+		this.finishDraft();
+		this.currentTool = tool;
+		this.activePencilShape = null;
+		this.activeRectangleShape = null;
+		this.isDragging = false;
+		this.status = tool === 'pan' ? 'Map navigation active.' : `${toolName(tool)} ready.`;
 	}
 
 	handleMapMouseDown(event: Leaflet.LeafletMouseEvent) {
@@ -236,6 +241,25 @@ export class SketchState implements SketchStateLike {
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
 			event.preventDefault();
 			this.undo();
+		}
+
+		if (event.code === 'Space' && !event.repeat) {
+			if (this.phase !== 'editing' || this.isSpacePan) return;
+			event.preventDefault();
+			this.previousTool = this.currentTool;
+			this.applyTool('pan');
+			this.isSpacePan = true;
+		}
+	}
+
+	handleKeyup(event: KeyboardEvent) {
+		if (event.code !== 'Space' || !this.isSpacePan) return;
+		event.preventDefault();
+		const restore = this.previousTool ?? this.currentTool;
+		this.previousTool = null;
+		this.isSpacePan = false;
+		if (this.phase === 'editing' && restore !== this.currentTool) {
+			this.applyTool(restore);
 		}
 	}
 
