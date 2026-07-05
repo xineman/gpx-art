@@ -17,5 +17,6 @@ export type Shape = {
 export type Snapshot = {
 	draft: Shape | null;
 	phase: Phase;
+	routedPath: Point[] | null;
 	shapes: Shape[];
 };

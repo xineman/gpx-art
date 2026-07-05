@@ -1,6 +1,13 @@
+import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
+import { RDP_TOLERANCE } from '$lib/constants/routing';
+import { pointsToGpx } from '$lib/routing/gpx';
+import { getRoute } from '$lib/routing/osrm';
+import { decodePolyline } from '$lib/routing/polyline';
+import { simplifyRdp } from '$lib/routing/simplify';
+import { solveClusterTspWithFlip } from '$lib/routing/tsp';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
@@ -15,6 +22,7 @@ export interface MapHandle {
 	L: L;
 	map: Leaflet.Map;
 	drawingLayer: Leaflet.LayerGroup;
+	routeLayer: Leaflet.LayerGroup;
 }
 
 export class SketchState implements SketchStateLike {
@@ -22,6 +30,8 @@ export class SketchState implements SketchStateLike {
 	phase = $state<Phase>('editing');
 	shapes = $state<Shape[]>([]);
 	draft = $state<Shape | null>(null);
+	routedPath = $state<Point[] | null>(null);
+	routeBusy = $state(false);
 	undoStack = $state<Snapshot[]>([]);
 	redoStack = $state<Snapshot[]>([]);
 	status = $state('Sketch a shape.');
@@ -39,6 +49,7 @@ export class SketchState implements SketchStateLike {
 	private _L: L | undefined;
 	private _map: Leaflet.Map | undefined;
 	private _drawingLayer: Leaflet.LayerGroup | undefined;
+	private _routeLayer: Leaflet.LayerGroup | undefined;
 
 	canRoute = $derived(canRoute(this));
 	hasDrawing = $derived(this.shapes.length > 0 || !!this.draft);
@@ -49,12 +60,14 @@ export class SketchState implements SketchStateLike {
 		this._L = handle.L;
 		this._map = handle.map;
 		this._drawingLayer = handle.drawingLayer;
+		this._routeLayer = handle.routeLayer;
 	}
 
 	detachMap() {
 		this._L = undefined;
 		this._map = undefined;
 		this._drawingLayer = undefined;
+		this._routeLayer = undefined;
 	}
 
 	setTool(tool: Tool) {
@@ -227,11 +240,13 @@ export class SketchState implements SketchStateLike {
 		this.undoStack = this.undoStack.slice(0, -1);
 		this.shapes = cloneShapes(previous.shapes);
 		this.draft = previous.draft ? cloneShape(previous.draft) : null;
+		this.routedPath = previous.routedPath;
 		this.phase = previous.phase;
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
 		this.isDragging = false;
+		this.routeBusy = false;
 		this.status = 'Undid recent action.';
 		this.render();
 	}
@@ -244,11 +259,13 @@ export class SketchState implements SketchStateLike {
 		this.redoStack = this.redoStack.slice(0, -1);
 		this.shapes = cloneShapes(next.shapes);
 		this.draft = next.draft ? cloneShape(next.draft) : null;
+		this.routedPath = next.routedPath;
 		this.phase = next.phase;
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
 		this.isDragging = false;
+		this.routeBusy = false;
 		this.status = 'Redid recent action.';
 		this.render();
 	}
@@ -267,8 +284,10 @@ export class SketchState implements SketchStateLike {
 		this.pushHistory();
 		this.shapes = [];
 		this.draft = null;
+		this.routedPath = null;
 		this.routeError = '';
 		this.phase = 'editing';
+		this.routeBusy = false;
 		this.isDragging = false;
 		this.status = 'Canvas cleared.';
 		this.render();
@@ -309,15 +328,129 @@ export class SketchState implements SketchStateLike {
 	}
 
 	async createRoute() {
-		// Routing will be re-implemented from scratch.
+		// We route over committed shapes only — the user is expected to Finish
+		// any draft before clicking Route (the Route button is still enabled
+		// when only a draft exists, so we error gracefully in that case).
+		const shapes = this.shapes.filter((shape) => shape.points.length >= 2);
+		if (shapes.length === 0) {
+			this.routeError = 'Finish your draft, then add at least one shape with 2+ points.';
+			return;
+		}
+
+		this.snapshot();
+		this.routeError = '';
+		this.phase = 'routing';
+		this.routeBusy = true;
+		this.status = 'Solving route…';
+		this.render();
+
+		try {
+			const last = shapes.map((s) => s.points[s.points.length - 1]);
+			const first = shapes.map((s) => s.points[0]);
+
+			// Optimised order + direction for each shape. The solver picks
+			// the visit order, but also which endpoint is the entry and which
+			// is the exit — tracing a shape in reverse is allowed when it
+			// minimises the inter-shape travel distance. See
+			// solveClusterTspWithFlip in $lib/routing/tsp for the full
+			// algorithm explanation.
+			this.status = 'Optimizing order between shapes…';
+			const { order, directions } = solveClusterTspWithFlip(first, last);
+
+			this.status = 'Routing along your shapes…';
+			const polylines: Point[] = [];
+			for (let i = 0; i < order.length; i++) {
+				const shape = shapes[order[i]];
+				const isClosed = shape.type === 'polygon' || shape.type === 'rectangle';
+				const isReversed = directions[i];
+
+				// Reverse the vertex list when the solver chose to trace this
+				// shape backwards. shape.points is always stored as an open
+				// chain in drawn order; reversing it produces an open chain
+				// in reverse-drawn order. RDP simplification is
+				// direction-agnostic (chord distances are the same), so either
+				// input gives equally valid simplified anchors.
+				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
+
+				// Simplify each shape with RDP before handing it to OSRM so the
+				// route engine isn't forced to visit every mid-block vertex.
+				// RDP preserves the first and last vertices of its input —
+				// after a possible reverse, those are the entry and exit points
+				// the solver picked, which the transition routes below use.
+				const simplified = simplifyRdp(sourcePoints, RDP_TOLERANCE);
+				let pts = isClosed ? [...simplified, simplified[0]] : simplified;
+
+				// Degenerate fallback: if simplification collapsed the chain
+				// below two points (very rare), route the raw shape instead so
+				// we still produce something for it.
+				if (pts.length < 2) {
+					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
+				}
+
+				const { geometry } = await getRoute(pts);
+				polylines.push(...decodePolyline(geometry));
+
+				if (i < order.length - 1) {
+					// Transitions are always 2 points — no simplification needed.
+					// The exit of the current shape and the entry of the next
+					// depend on their chosen directions: forward means
+					// entry=first, exit=last; reverse swaps them.
+					const currentShape = shape;
+					const nextShape = shapes[order[i + 1]];
+					const currentExit = isReversed
+						? currentShape.points[0]
+						: currentShape.points[currentShape.points.length - 1];
+					const nextEntry = directions[i + 1]
+						? nextShape.points[nextShape.points.length - 1]
+						: nextShape.points[0];
+					const { geometry: link } = await getRoute([currentExit, nextEntry]);
+					polylines.push(...decodePolyline(link));
+				}
+			}
+
+			this.routedPath = polylines;
+			this.phase = 'routed';
+			this.routeBusy = false;
+			this.status = 'Route ready — export or edit.';
+			this.render();
+		} catch (err) {
+			// Revert on any failure. v1 is strict — one bad shape aborts the
+			// whole thing; we can add lenient partial-result handling later.
+			this.routeError = err instanceof Error ? err.message : String(err);
+			this.phase = 'editing';
+			this.routeBusy = false;
+			this.status = 'Routing failed — try editing and rerouting.';
+			this.render();
+		}
 	}
 
 	backToEditing() {
-		// Routing will be re-implemented from scratch.
+		this.snapshot();
+		this.routedPath = null;
+		this.routeError = '';
+		this.routeBusy = false;
+		this.phase = 'editing';
+		this.status = 'Sketch a shape.';
+		this.render();
 	}
 
 	downloadGpx() {
-		// GPX export will be re-implemented with routing.
+		if (!this.routedPath || this.routedPath.length === 0) return;
+
+		const gpx = pointsToGpx(this.routedPath, 'gpx-art route');
+		const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+		const url = URL.createObjectURL(blob);
+
+		const today = new SvelteDate().toISOString().slice(0, 10);
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = `gpx-art-route-${today}.gpx`;
+		document.body.appendChild(anchor);
+		anchor.click();
+		document.body.removeChild(anchor);
+		URL.revokeObjectURL(url);
+
+		this.status = 'GPX downloaded.';
 	}
 
 	updateShapeVertex(shapeId: string, pointIndex: number, point: Point, isDraft: boolean) {
@@ -359,7 +492,9 @@ export class SketchState implements SketchStateLike {
 			// tedious. Trade-off: while a drawing tool is active, mousing
 			// down on an existing vertex drags that vertex instead of
 			// beginning a new shape — start new shapes in empty space.
-			(shape) => shape.type !== 'pencil'
+			(shape) => shape.type !== 'pencil',
+			this._routeLayer,
+			this.routedPath
 		);
 	}
 
@@ -372,6 +507,7 @@ export class SketchState implements SketchStateLike {
 		return {
 			draft: this.draft ? cloneShape(this.draft) : null,
 			phase: this.phase,
+			routedPath: this.routedPath ? [...this.routedPath] : null,
 			shapes: cloneShapes(this.shapes)
 		};
 	}

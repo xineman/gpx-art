@@ -25,6 +25,7 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 	}).addTo(map);
 
 	const drawingLayer = L.layerGroup().addTo(map);
+	const routeLayer = L.layerGroup().addTo(map);
 
 	map.on('mousedown', (event: Leaflet.LeafletMouseEvent) => state.handleMapMouseDown(event));
 	map.on('mousemove', (event: Leaflet.LeafletMouseEvent) => state.handleMapMouseMove(event));
@@ -33,12 +34,23 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 	map.on('dblclick', () => state.finishDraft());
 	map.on('contextmenu', () => state.finishDraft());
 
-	renderLayers(L, map, drawingLayer, state.shapes, state.draft);
+	renderLayers(
+		L,
+		map,
+		drawingLayer,
+		state.shapes,
+		state.draft,
+		undefined,
+		() => false,
+		routeLayer,
+		state.routedPath
+	);
 
 	return {
 		L,
 		map,
 		drawingLayer,
+		routeLayer,
 		teardown: () => {
 			map.off();
 			map.remove();
