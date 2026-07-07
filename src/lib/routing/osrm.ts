@@ -1,7 +1,9 @@
 import {
 	MATCH_CHUNK_OVERLAP,
+	MATCH_CONFIDENCE_THRESHOLD,
 	MATCH_MAX_POINTS,
 	MATCH_RADIUS_METERS,
+	MATCH_RADIUS_WAYPOINT_METERS,
 	OSRM_BASE_URL,
 	OSRM_PROFILE
 } from '$lib/constants/routing';
@@ -164,7 +166,12 @@ async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 	try {
 		return await getMatchChunk(points);
 	} catch (err) {
-		if (err instanceof OsrmApiError && err.code === 'NoMatch') {
+		// NoMatch (whole chunk rejected because a waypoint couldn't snap) and
+		// LowConfidence (chunk matched but HMM was too uncertain to trust)
+		// both fall through to the same /route-between-endpoints path. The
+		// /match call still paid latency, so this only fires for the tail of
+		// chunks the /match path can't handle cleanly.
+		if (err instanceof OsrmApiError && (err.code === 'NoMatch' || err.code === 'LowConfidence')) {
 			return getRouteAsMatchResult(chunkEndpoints(points));
 		}
 		throw err;
@@ -173,12 +180,21 @@ async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 
 async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
+	// Per-coordinate radius: waypoints (index 0 and length-1) get the relaxed
+	// MATCH_RADIUS_WAYPOINT_METERS so anchors 25-50 m off the road network
+	// (plaza boundaries, park entrances) still snap — without this, a chunk
+	// whose start/end anchor is just outside the 30 m tracepoint radius
+	// returns NoMatch for the whole chunk and we lose the curve detail.
+	// Tracepoints keep the tight 30 m so the HMM candidate set stays small.
+	const radii = points.map((_, i) =>
+		i === 0 || i === points.length - 1 ? MATCH_RADIUS_WAYPOINT_METERS : MATCH_RADIUS_METERS
+	);
 	const params = new URLSearchParams({
 		overview: 'full',
 		geometries: 'polyline',
 		steps: 'false',
 		tidy: 'true',
-		radiuses: points.map(() => String(MATCH_RADIUS_METERS)).join(';'),
+		radiuses: radii.join(';'),
 		waypoints: `0;${points.length - 1}`
 	});
 	const url = `${OSRM_BASE_URL}/match/v1/${OSRM_PROFILE}/${coords}?${params.toString()}`;
@@ -198,11 +214,26 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 		throw new Error('OSRM returned no match.');
 	}
 
+	// /match can succeed with confidence close to 0 when most tracepoints
+	// were dropped or when a waypoint was snapped far outside the typical
+	// road network (e.g. anchor 200+ m from any road but accepted by the
+	// relaxed waypoint radius). The resulting geometry is visually no
+	// better than the /route fallback and adds latency. Treat sub-threshold
+	// matchings as no result so getBestRouteForChunk falls through to /route.
+	const confident = matchings.filter((matching) => matching.confidence >= MATCH_CONFIDENCE_THRESHOLD);
+	if (confident.length === 0) {
+		throw new OsrmApiError(
+			'match',
+			'LowConfidence',
+			`OSRM match confidence below ${MATCH_CONFIDENCE_THRESHOLD} for chunk — falling back to /route`
+		);
+	}
+
 	return {
-		geometries: matchings.map((matching) => matching.geometry),
-		distance: matchings.reduce((sum, matching) => sum + matching.distance, 0),
-		duration: matchings.reduce((sum, matching) => sum + matching.duration, 0),
-		confidence: matchings.reduce((sum, matching) => sum + matching.confidence, 0) / matchings.length
+		geometries: confident.map((matching) => matching.geometry),
+		distance: confident.reduce((sum, matching) => sum + matching.distance, 0),
+		duration: confident.reduce((sum, matching) => sum + matching.duration, 0),
+		confidence: confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length
 	};
 }
 

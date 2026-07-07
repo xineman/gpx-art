@@ -24,17 +24,37 @@ export const OSRM_PROFILE = 'bike';
 // accepts fewer coordinates than /route, so split hand-drawn traces into short
 // overlapping chunks and stitch the returned geometries back together.
 //
-// MATCH_RADIUS_METERS is the per-coordinate standard deviation passed to
-// /match as `radiuses=`. Each radius search expands a window over the road
-// network and collects candidate edges — radius scales the search area
-// quadratically, so this is the dominant lever on /match latency. 30 m
-// covers mouse precision (~5 m), touch precision (~15 m), and intentional
-// mid-block anchors (~25 m) without exploding candidate counts in dense
-// urban areas.
+// Two per-coordinate radii because /match treats the chunk's first and last
+// anchors as mandatory waypoints (`waypoints=0;N-1`) and the rest as HMM
+// tracepoints. A waypoint failing to snap within its radius returns
+// `NoMatch` for the entire chunk, so waypoints deserve a more forgiving
+// radius than tracepoints:
+//
+//   - MATCH_RADIUS_METERS (30) — per-coordinate radius for tracepoints
+//     inside the chunk (indices 1..N-2). Sent as the interior values of
+//     `radiuses=`. Covers mouse precision (~5 m), touch precision (~15 m),
+//     and intentional mid-block anchors (~25 m) without exploding
+//     candidate counts in dense urban areas.
+//
+//   - MATCH_RADIUS_WAYPOINT_METERS (100) — per-coordinate radius for the
+//     chunk's first and last coordinate (the waypoints). Sent as the first
+//     and last values of `radiuses=`. Anchors landing 25-50 m from any road
+//     — plaza boundaries, park entrances, recently edited OSM data — still
+//     snap at this radius, so /match doesn't reject the whole chunk on
+//     `NoMatch`. Tracepoints stay at 30 m for fast HMM.
+//
+// MATCH_CONFIDENCE_THRESHOLD is the per-matching minimum score we trust.
+// /match can return a matching with confidence close to 0 when most
+// tracepoints were dropped (e.g. one waypoint was 200+ m from any road but
+// still "matched" because the relaxed radius accepted it). Such matchings
+// produce a path indistinguishable from the /route fallback but with
+// added latency. Discard them and force the /route fallback.
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
 export const MATCH_RADIUS_METERS = 30;
+export const MATCH_RADIUS_WAYPOINT_METERS = 100;
+export const MATCH_CONFIDENCE_THRESHOLD = 0.5;
 
 // Above this cluster count, the exact Held-Karp bitmask DP gives way to a
 // nearest-neighbour + 2-opt heuristic. Held-Karp is O(N²·2ᴺ); at N = 14 that's
