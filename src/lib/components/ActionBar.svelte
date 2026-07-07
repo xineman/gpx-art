@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { Check, Download, Eraser, LoaderCircle, RotateCcw, Trash2, Undo2 } from '@lucide/svelte';
 	import { neutralActionButton, primaryActionButton } from '$lib/constants/styles';
+	import FileMenu from './FileMenu.svelte';
 	import type { SketchState } from '$lib/sketch/state.svelte';
 
 	type Props = {
-		state: SketchState;
+		sketch: SketchState;
 		class?: string;
 	};
-	let { state, class: extraClass = '' }: Props = $props();
+	let { sketch, class: extraClass = '' }: Props = $props();
 </script>
 
 <section
@@ -17,8 +18,8 @@
 	<button
 		aria-label="Finish"
 		class={neutralActionButton}
-		disabled={state.phase !== 'editing' || !state.draft}
-		onclick={() => state.finishDraft()}
+		disabled={sketch.phase !== 'editing' || !sketch.draft}
+		onclick={() => sketch.finishDraft()}
 		title="Finish shape"
 		type="button"
 	>
@@ -28,8 +29,8 @@
 	<button
 		aria-label="Undo"
 		class={neutralActionButton}
-		disabled={state.phase === 'routing' || state.undoStack.length === 0}
-		onclick={() => state.undo()}
+		disabled={sketch.phase === 'routing' || sketch.undoStack.length === 0}
+		onclick={() => sketch.undo()}
 		title="Undo"
 		type="button"
 	>
@@ -37,21 +38,33 @@
 		<span>Undo</span>
 	</button>
 	<button
+		aria-label="Redo"
+		class={neutralActionButton}
+		disabled={sketch.phase === 'routing' || sketch.redoStack.length === 0}
+		onclick={() => sketch.redo()}
+		title="Redo"
+		type="button"
+	>
+		<RotateCcw size={18} style="transform: scaleX(-1);" />
+		<span>Redo</span>
+	</button>
+	<button
 		aria-label="Clear"
 		class={neutralActionButton}
-		disabled={state.phase !== 'editing' || !state.hasDrawing}
-		onclick={() => state.clearDrawing()}
+		disabled={sketch.phase !== 'editing' || !sketch.hasDrawing}
+		onclick={() => sketch.clearDrawing()}
 		title="Clear"
 		type="button"
 	>
 		<Trash2 size={18} />
 		<span>Clear</span>
 	</button>
-	{#if state.phase === 'routed'}
+	<FileMenu {sketch} />
+	{#if sketch.phase === 'routed'}
 		<button
 			aria-label="Export GPX"
 			class={primaryActionButton}
-			onclick={() => state.downloadGpx()}
+			onclick={() => sketch.downloadGpx()}
 			title="Export GPX"
 			type="button"
 		>
@@ -61,7 +74,7 @@
 		<button
 			aria-label="Edit sketch"
 			class={neutralActionButton}
-			onclick={() => state.backToEditing()}
+			onclick={() => sketch.backToEditing()}
 			title="Edit sketch"
 			type="button"
 		>
@@ -72,17 +85,17 @@
 		<button
 			aria-label="Route"
 			class={primaryActionButton}
-			disabled={!state.canRoute || state.phase === 'routing'}
-			onclick={() => state.createRoute()}
+			disabled={!sketch.canRoute || sketch.phase === 'routing'}
+			onclick={() => sketch.createRoute()}
 			title="Route"
 			type="button"
 		>
-			{#if state.phase === 'routing'}
+			{#if sketch.phase === 'routing'}
 				<span class="animate-spin"><LoaderCircle size={18} /></span>
 			{:else}
 				<Eraser size={18} />
 			{/if}
-			<span>{state.phase === 'routing' ? 'Routing' : 'Route'}</span>
+			<span>{sketch.phase === 'routing' ? 'Routing' : 'Route'}</span>
 		</button>
 	{/if}
 </section>

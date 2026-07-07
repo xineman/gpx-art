@@ -1,4 +1,5 @@
 import type * as Leaflet from 'leaflet';
+import { ROUTE_COLOR } from '$lib/constants/routing';
 import { closeShape, toLatLngs } from '$lib/geometry/point';
 import type { Point, Shape } from '$lib/types/sketch';
 
@@ -22,7 +23,9 @@ export function renderLayers(
 	shapes: Shape[],
 	draft: Shape | null,
 	onVertexMove?: VertexMoveHandler,
-	canEditCommitted: Edits = () => false
+	canEditCommitted: Edits = () => false,
+	routeLayer?: Leaflet.LayerGroup,
+	routedPath?: Point[] | null
 ) {
 	if (!L || !drawingLayer) return;
 
@@ -35,6 +38,28 @@ export function renderLayers(
 	if (draft) {
 		addShapeLayer(L, map, drawingLayer, draft, true, onVertexMove, true);
 	}
+
+	if (routeLayer) {
+		routeLayer.clearLayers();
+		if (routedPath && routedPath.length >= 2) {
+			addRouteLayer(L, routeLayer, routedPath);
+		}
+	}
+}
+
+// Render the road-snapped route as a single thick polyline. The route layer is
+// independent of the drawing layer so subsequent renders of shapes (e.g. while
+// editing) don't wipe the route — the user can see their sketch and the
+// generated route side-by-side.
+function addRouteLayer(L: L, routeLayer: Leaflet.LayerGroup, routedPath: Point[]) {
+	L.polyline(toLatLngs(routedPath), {
+		interactive: false,
+		color: ROUTE_COLOR,
+		weight: 5,
+		opacity: 0.9,
+		lineCap: 'round',
+		lineJoin: 'round'
+	}).addTo(routeLayer);
 }
 
 function addShapeLayer(
