@@ -12,6 +12,7 @@
 	const sketch = new SketchState();
 	let hoveredPanel = $state<string | null>(null);
 	let mapHandle: { teardown: () => void } | null = null;
+
 	// Cached panel wrapper elements. We hit-test these with getBoundingClientRect()
 	// during a drag rather than relying on built-in DOM hit-testing, because our
 	// panel wrappers carry pointer-events: none while isDragging is true (so
@@ -55,7 +56,9 @@
 			});
 		})();
 
-		const onKeydown = (event: KeyboardEvent) => sketch.handleKeydown(event);
+		const onKeydown = (event: KeyboardEvent) => {
+			sketch.handleKeydown(event);
+		};
 		const onKeyup = (event: KeyboardEvent) => sketch.handleKeyup(event);
 		window.addEventListener('keydown', onKeydown);
 		window.addEventListener('keyup', onKeyup);
@@ -130,7 +133,7 @@
 				class:pointer-events-none={sketch.isDragging}
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'action'}
 			>
-				<ActionBar state={sketch} />
+				<ActionBar {sketch} />
 			</div>
 		</div>
 	</div>

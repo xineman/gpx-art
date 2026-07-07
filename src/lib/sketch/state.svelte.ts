@@ -14,6 +14,7 @@ import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
 import { canRoute, distanceLabel, routeInputPoints, type SketchStateLike } from './derived';
 import { cloneShape, cloneShapes } from './cloning';
+import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
 
 type L = typeof import('leaflet');
 
@@ -35,6 +36,7 @@ export class SketchState implements SketchStateLike {
 	routeBusy = $state(false);
 	undoStack = $state<Snapshot[]>([]);
 	redoStack = $state<Snapshot[]>([]);
+	includeRouteInExport = $state(false);
 	status = $state('Sketch a shape.');
 	routeError = $state('');
 	dragOrigin = $state<Point | null>(null);
@@ -280,9 +282,9 @@ export class SketchState implements SketchStateLike {
 		this.redoStack = [...this.redoStack.slice(-(MAX_UNDO - 1)), current];
 	}
 
-	clearDrawing() {
-		if (!this.hasDrawing) return;
-		this.pushHistory();
+	clearDrawing(options: { skipHistory?: boolean } = {}) {
+		if (!options.skipHistory && !this.hasDrawing) return;
+		if (!options.skipHistory) this.pushHistory();
 		this.shapes = [];
 		this.draft = null;
 		this.routedPath = null;
@@ -480,6 +482,102 @@ export class SketchState implements SketchStateLike {
 		URL.revokeObjectURL(url);
 
 		this.status = 'GPX downloaded.';
+	}
+
+	exportDrawing() {
+		if (!this.hasDrawing && (!this.routedPath || this.routedPath.length === 0)) {
+			this.status = 'Nothing to export.';
+			return;
+		}
+
+		// When the user checks "Include route" we attach the matched path and
+		// set phase='routed'. If there is no usable routedPath, fall back silently
+		// to a shapes-only export rather than warning.
+		const includeRoute =
+			!!this.routedPath && this.routedPath.length >= 2 && this.includeRouteInExport;
+		const snapshot: Snapshot = {
+			shapes: cloneShapes(this.shapes),
+			draft: this.draft ? cloneShape(this.draft) : null,
+			phase: includeRoute ? 'routed' : 'editing',
+			routedPath: includeRoute && this.routedPath ? [...this.routedPath] : null
+		};
+
+		const json = JSON.stringify(buildSnapshotEnvelope(snapshot), null, '\t');
+		const blob = new Blob([json], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+
+		const today = new SvelteDate().toISOString().slice(0, 10);
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = `gpx-art-drawing-${today}.json`;
+		document.body.appendChild(anchor);
+		anchor.click();
+		document.body.removeChild(anchor);
+		URL.revokeObjectURL(url);
+
+		this.status = includeRoute ? 'Drawing + route exported.' : 'Drawing exported.';
+	}
+
+	async importDrawing(source: File | string) {
+		if (this.phase === 'routing') {
+			this.status = 'Wait for routing to finish, then import.';
+			return;
+		}
+
+		let raw: string;
+		try {
+			raw = typeof source === 'string' ? source : await source.text();
+		} catch {
+			this.status = "Couldn't read the file.";
+			return;
+		}
+		if (raw.trim() === '') {
+			this.status = 'File is empty — nothing to import.';
+			return;
+		}
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			this.status = "File isn't valid JSON.";
+			return;
+		}
+
+		const result = parseSnapshotEnvelope(parsed);
+		if (!result.ok) {
+			this.status = `Can't import: ${result.reason}`;
+			return;
+		}
+
+		// Capture the pre-import state on the undo stack so a bad import is
+		// recoverable with Cmd/Ctrl+Z. clearDrawing() then wipes the canvas
+		// without pushing again — one undo entry, not two.
+		this.pushHistory();
+		this.clearDrawing({ skipHistory: true });
+
+		const snap = result.snapshot;
+		this.shapes = cloneShapes(snap.shapes);
+		this.draft = snap.draft ? cloneShape(snap.draft) : null;
+		this.routedPath = snap.routedPath ? [...snap.routedPath] : null;
+
+		// The only intentional phase override: a saved routed file with no/too
+		// few routedPath points would leave the UI in a broken 'routed' state
+		// with nothing to render. Snap back to editing with a status note.
+		if (snap.phase === 'routed' && (!this.routedPath || this.routedPath.length < 2)) {
+			this.phase = 'editing';
+			this.status = 'Imported sketch (routed path was incomplete — reset to editing).';
+		} else {
+			this.phase = snap.phase;
+			this.status = snap.phase === 'routed' ? 'Imported sketch with route.' : 'Imported sketch.';
+		}
+
+		this.activePencilShape = null;
+		this.activeRectangleShape = null;
+		this.dragOrigin = null;
+		this.isDragging = false;
+		this.routeBusy = false;
+		this.render();
 	}
 
 	updateShapeVertex(shapeId: string, pointIndex: number, point: Point, isDraft: boolean) {
