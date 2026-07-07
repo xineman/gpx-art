@@ -10,11 +10,21 @@ type VertexMoveHandler = (
 	point: Point,
 	isDraft: boolean
 ) => void;
+type TrimHandleMoveHandler = (which: 'start' | 'end', point: Point) => void;
 
 // Tools where we keep committed-shape vertex markers visible. When the current
 // tool matches a shape's type, we hide its markers so clicking near an
 // existing corner starts a fresh shape instead of dragging the existing one.
 type Edits = (shape: Shape) => boolean;
+
+// Trim-mode colors. Chosen to read as a deliberate "red-pen correction" on
+// the cream canvas and aerial tiles, distinct from the orange draft stroke
+// and the blue routed polyline. Warm vermilion (#c8412c) for the cut marks,
+// soft salmon for the dashed overlay so it reads as "ghosted" rather than
+// a hard stroke. Trim-handle ink matches the rest of the dark ink palette.
+const TRIM_RED = '#c8412c';
+const TRIM_RED_SOFT = '#f6c5b8';
+const TRIM_HANDLE_FILL = '#fff7df';
 
 export function renderLayers(
 	L: L | undefined,
@@ -25,7 +35,11 @@ export function renderLayers(
 	onVertexMove?: VertexMoveHandler,
 	canEditCommitted: Edits = () => false,
 	routeLayer?: Leaflet.LayerGroup,
-	routedPath?: Point[] | null
+	routedPath?: Point[] | null,
+	trimMode: boolean = false,
+	trimStart: number | null = null,
+	trimEnd: number | null = null,
+	onTrimHandleDrop?: TrimHandleMoveHandler
 ) {
 	if (!L || !drawingLayer) return;
 
@@ -42,7 +56,7 @@ export function renderLayers(
 	if (routeLayer) {
 		routeLayer.clearLayers();
 		if (routedPath && routedPath.length >= 2) {
-			addRouteLayer(L, routeLayer, routedPath);
+			addRouteLayer(L, map, routeLayer, routedPath, trimMode, trimStart, trimEnd, onTrimHandleDrop);
 		}
 	}
 }
@@ -51,7 +65,24 @@ export function renderLayers(
 // independent of the drawing layer so subsequent renders of shapes (e.g. while
 // editing) don't wipe the route — the user can see their sketch and the
 // generated route side-by-side.
-function addRouteLayer(L: L, routeLayer: Leaflet.LayerGroup, routedPath: Point[]) {
+//
+// In trim mode, additionally draws:
+//   - a dashed red overlay polyline over the marked span (so the user
+//     sees exactly which stretch is going to disappear on Confirm);
+//   - one or two cut handles (cream-filled circleMarkers with red stroke)
+//     at trimStart / trimEnd. The handles are draggable via
+//     makeTrimHandleDraggable so the user can refine a pick without
+//     re-clicking on the polyline.
+function addRouteLayer(
+	L: L,
+	map: Leaflet.Map | undefined,
+	routeLayer: Leaflet.LayerGroup,
+	routedPath: Point[],
+	trimMode: boolean,
+	trimStart: number | null,
+	trimEnd: number | null,
+	onTrimHandleDrop?: TrimHandleMoveHandler
+) {
 	L.polyline(toLatLngs(routedPath), {
 		interactive: false,
 		color: ROUTE_COLOR,
@@ -60,6 +91,67 @@ function addRouteLayer(L: L, routeLayer: Leaflet.LayerGroup, routedPath: Point[]
 		lineCap: 'round',
 		lineJoin: 'round'
 	}).addTo(routeLayer);
+
+	if (!trimMode) return;
+
+	// Overlay polyline: visible only when both picks are set and they
+	// describe a non-trivial span (>=2 points). The slice uses the
+	// routedPath entries directly — no simplification — so the overlay
+	// tracks the exact path the cut will remove.
+	if (trimStart !== null && trimEnd !== null) {
+		const lo = Math.min(trimStart, trimEnd);
+		const hi = Math.max(trimStart, trimEnd);
+		if (hi - lo >= 1) {
+			const overlay = routedPath.slice(lo, hi + 1);
+			// Soft ghosted backdrop behind the dashed red line so the
+			// marked span reads at a glance even on a busy blue polyline.
+			L.polyline(toLatLngs(overlay), {
+				interactive: false,
+				color: TRIM_RED_SOFT,
+				weight: 12,
+				opacity: 0.55,
+				lineCap: 'round',
+				lineJoin: 'round'
+			}).addTo(routeLayer);
+			L.polyline(toLatLngs(overlay), {
+				interactive: false,
+				color: TRIM_RED,
+				weight: 5,
+				opacity: 0.95,
+				dashArray: '7 6',
+				lineCap: 'butt',
+				lineJoin: 'round'
+			}).addTo(routeLayer);
+		}
+	}
+
+	if (trimStart !== null) {
+		addTrimHandle(L, map, routeLayer, routedPath[trimStart], 'start', onTrimHandleDrop);
+	}
+	if (trimEnd !== null && trimEnd !== trimStart) {
+		addTrimHandle(L, map, routeLayer, routedPath[trimEnd], 'end', onTrimHandleDrop);
+	}
+}
+
+function addTrimHandle(
+	L: L,
+	map: Leaflet.Map | undefined,
+	routeLayer: Leaflet.LayerGroup,
+	point: Point,
+	which: 'start' | 'end',
+	onTrimHandleDrop?: TrimHandleMoveHandler
+) {
+	const marker = L.circleMarker([point.lat, point.lng], {
+		color: TRIM_RED,
+		fillColor: TRIM_HANDLE_FILL,
+		fillOpacity: 1,
+		radius: 7,
+		weight: 3
+	}).addTo(routeLayer);
+
+	if (onTrimHandleDrop && map) {
+		makeTrimHandleDraggable(L, marker, map, which, onTrimHandleDrop);
+	}
 }
 
 function addShapeLayer(
@@ -153,6 +245,49 @@ function makeVertexDraggable(
 		if (!armed) return;
 		armed = false;
 		map.dragging.enable();
+		document.removeEventListener('mousemove', onMouseMove);
+		document.removeEventListener('mouseup', onMouseUp);
+	};
+
+	document.addEventListener('mousemove', onMouseMove);
+	document.addEventListener('mouseup', onMouseUp);
+}
+
+// Like makeVertexDraggable, but for the trim cut handles. The visual
+// marker follows the cursor freely during the drag — no snap-to-vertex
+// mid-drag — so the user can place it precisely. Only on mouseup do we
+// project the drop point back to the nearest routedPath vertex via the
+// caller-supplied callback. This keeps the state updates to one per
+// drop instead of one per pixel of cursor motion, which would otherwise
+// thrash the dashed overlay polyline.
+function makeTrimHandleDraggable(
+	L: L,
+	marker: Leaflet.CircleMarker,
+	map: Leaflet.Map,
+	which: 'start' | 'end',
+	onDrop: TrimHandleMoveHandler
+) {
+	let armed = false;
+
+	marker.on('mousedown', (e: Leaflet.LeafletMouseEvent) => {
+		L.DomEvent.stopPropagation(e);
+		L.DomEvent.preventDefault(e.originalEvent);
+		armed = true;
+		map.dragging.disable();
+	});
+
+	const onMouseMove = (e: MouseEvent) => {
+		if (!armed) return;
+		const latLng = map.mouseEventToLatLng(e);
+		marker.setLatLng(latLng);
+	};
+
+	const onMouseUp = () => {
+		if (!armed) return;
+		armed = false;
+		map.dragging.enable();
+		const final = marker.getLatLng();
+		onDrop(which, { lat: final.lat, lng: final.lng });
 		document.removeEventListener('mousemove', onMouseMove);
 		document.removeEventListener('mouseup', onMouseUp);
 	};

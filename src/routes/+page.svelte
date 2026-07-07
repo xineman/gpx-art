@@ -7,11 +7,20 @@
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import ToolPalette from '$lib/components/ToolPalette.svelte';
+	import TrimPanel from '$lib/components/TrimPanel.svelte';
 
 	let mapElement: HTMLDivElement | undefined = $state();
 	const sketch = new SketchState();
 	let hoveredPanel = $state<string | null>(null);
 	let mapHandle: { teardown: () => void } | null = null;
+
+	// Test-only handle so Playwright can drive the trim flow without a
+	// real OSRM round-trip. It is a passive reference — no behaviour
+	// change for end users — but it does leak the full state object on
+	// window. Acceptable for an offline-only app with no auth.
+	if (typeof window !== 'undefined') {
+		(window as unknown as { __gpxArtTest?: { sketch: SketchState } }).__gpxArtTest = { sketch };
+	}
 
 	// Cached panel wrapper elements. We hit-test these with getBoundingClientRect()
 	// during a drag rather than relying on built-in DOM hit-testing, because our
@@ -125,6 +134,15 @@
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'error'}
 			>
 				<ErrorBanner error={sketch.routeError} />
+			</div>
+			<div
+				data-panel="trim"
+				class="transition-opacity duration-150"
+				class:pointer-events-auto={!sketch.isDragging}
+				class:pointer-events-none={sketch.isDragging}
+				class:opacity-30={sketch.isDragging && hoveredPanel === 'trim'}
+			>
+				<TrimPanel {sketch} />
 			</div>
 			<div
 				data-panel="action"

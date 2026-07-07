@@ -47,7 +47,47 @@ export function parseSnapshotEnvelope(input: unknown): ParseResult {
 	const routedFail = validatePointArray(snap?.routedPath, 'snapshot.routedPath');
 	if (routedFail) return { ok: false, reason: routedFail };
 
-	return { ok: true, snapshot: snap as unknown as Snapshot };
+	// Trim sub-mode is optional. Older saved files (version 1) predate
+	// these fields; treat them as "not in trim mode" so loading an old
+	// file still works without a version bump.
+	const trimMode = snap?.trimMode;
+	if (trimMode !== undefined && typeof trimMode !== 'boolean') {
+		return { ok: false, reason: 'snapshot.trimMode must be a boolean when present.' };
+	}
+	const trimStart = snap?.trimStart;
+	if (
+		trimStart !== undefined &&
+		trimStart !== null &&
+		(typeof trimStart !== 'number' || !Number.isFinite(trimStart) || !Number.isInteger(trimStart))
+	) {
+		return { ok: false, reason: 'snapshot.trimStart must be an integer when present.' };
+	}
+	const trimEnd = snap?.trimEnd;
+	if (
+		trimEnd !== undefined &&
+		trimEnd !== null &&
+		(typeof trimEnd !== 'number' || !Number.isFinite(trimEnd) || !Number.isInteger(trimEnd))
+	) {
+		return { ok: false, reason: 'snapshot.trimEnd must be an integer when present.' };
+	}
+	const trimHint = snap?.trimHint;
+	if (trimHint !== undefined && typeof trimHint !== 'string') {
+		return { ok: false, reason: 'snapshot.trimHint must be a string when present.' };
+	}
+
+	return {
+		ok: true,
+		snapshot: {
+			shapes: (snap?.shapes ?? []) as Snapshot['shapes'],
+			draft: (snap?.draft ?? null) as Snapshot['draft'],
+			phase: snap?.phase as Snapshot['phase'],
+			routedPath: (snap?.routedPath ?? null) as Snapshot['routedPath'],
+			trimMode,
+			trimStart,
+			trimEnd,
+			trimHint
+		}
+	};
 }
 
 function validateShapeArray(value: unknown, path: string): string | null {

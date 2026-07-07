@@ -19,6 +19,14 @@ import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
 type L = typeof import('leaflet');
 
 const MAX_UNDO = 40;
+// Max distance (meters) from a click to the routedPath polyline for the
+// click to count as a trim pick. 40 m is large enough to forgive typical
+// mouse precision (~5 m) plus a road-width miss on either side of a thin
+// street, but small enough that a stray click on empty canvas does not
+// land a handle. Picked over a smaller value (e.g. 20 m) so users on
+// touch devices or hi-DPI screens do not have to land exactly on the
+// blue line.
+const TRIM_PICK_MAX_DISTANCE_METERS = 40;
 
 export interface MapHandle {
 	L: L;
@@ -37,6 +45,18 @@ export class SketchState implements SketchStateLike {
 	undoStack = $state<Snapshot[]>([]);
 	redoStack = $state<Snapshot[]>([]);
 	includeRouteInExport = $state(false);
+	// Span-trim sub-mode of phase: 'routed'. trimMode flips when the user
+	// enters the trim flow; trimStart/trimEnd are indexes into routedPath
+	// (so they refer to existing road-snapped vertices, not arbitrary
+	// picked points). When trimStart === trimEnd the apply step is a no-op.
+	trimMode = $state(false);
+	trimStart = $state<number | null>(null);
+	trimEnd = $state<number | null>(null);
+	// Trim-specific instruction text. Distinct from status because
+	// the status bar shows the general workspace status (sketch a
+	// shape, route ready, ...) while the contextual TrimPanel reads
+	// from this field for its hint line.
+	trimHint = $state('');
 	status = $state('Sketch a shape.');
 	routeError = $state('');
 	dragOrigin = $state<Point | null>(null);
@@ -197,6 +217,10 @@ export class SketchState implements SketchStateLike {
 	}
 
 	handleMapClick(event: Leaflet.LeafletMouseEvent) {
+		if (this.phase === 'routed' && this.trimMode) {
+			this.handleTrimClick(event);
+			return;
+		}
 		if (this.phase !== 'editing' || (this.currentTool !== 'line' && this.currentTool !== 'polygon'))
 			return;
 		this.pushHistory();
@@ -216,6 +240,53 @@ export class SketchState implements SketchStateLike {
 		}
 
 		this.status = `${toolName(this.currentTool)} point added.`;
+		this.render();
+	}
+
+	// Project a map click onto the routedPath polyline and assign it to
+	// either trimStart or trimEnd. Trim is a two-pick flow: the first
+	// click sets the start of the span, the second sets the end. A third
+	// click restarts the flow with the new click as the start. A click on
+	// the same vertex as the previous pick resets both picks so the user
+	// can correct a misclick without leaving trim mode.
+	private handleTrimClick(event: Leaflet.LeafletMouseEvent) {
+		if (!this.routedPath || this.routedPath.length < 2) {
+			this.status = 'Nothing to trim.';
+			this.trimHint = '';
+			return;
+		}
+		const click = toPoint(event.latlng);
+		const { index, distance } = nearestRouteVertexIndex(this.routedPath, click);
+		if (distance > TRIM_PICK_MAX_DISTANCE_METERS) {
+			this.trimHint = `Pick closer to the route — the click was ${Math.round(distance)} m off.`;
+			this.status = 'Pick closer to the route.';
+			return;
+		}
+		if (this.trimStart === null) {
+			this.trimStart = index;
+			this.trimHint = 'Now mark the end of the stretch to remove.';
+			this.status = 'Route ready — trim, export, or edit.';
+		} else if (this.trimEnd === null) {
+			if (index === this.trimStart) {
+				this.trimStart = null;
+				this.trimEnd = null;
+				this.trimHint = 'Click the start of the stretch you want to remove.';
+				this.status = 'Route ready — trim, export, or edit.';
+				this.render();
+				return;
+			}
+			this.trimEnd = index;
+			this.trimHint = 'Confirm to drop the marked span, or cancel to start over.';
+			this.status = 'Route ready — trim, export, or edit.';
+		} else {
+			// Both picks already set — treat the next click as a fresh
+			// start. The hint flips back to "mark the end" so the
+			// two-step flow stays obvious.
+			this.trimStart = index;
+			this.trimEnd = null;
+			this.trimHint = 'Now mark the end of the stretch to remove.';
+			this.status = 'Route ready — trim, export, or edit.';
+		}
 		this.render();
 	}
 
@@ -245,6 +316,10 @@ export class SketchState implements SketchStateLike {
 		this.draft = previous.draft ? cloneShape(previous.draft) : null;
 		this.routedPath = previous.routedPath;
 		this.phase = previous.phase;
+		this.trimMode = previous.trimMode ?? false;
+		this.trimStart = previous.trimStart ?? null;
+		this.trimEnd = previous.trimEnd ?? null;
+		this.trimHint = previous.trimHint ?? '';
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -264,6 +339,10 @@ export class SketchState implements SketchStateLike {
 		this.draft = next.draft ? cloneShape(next.draft) : null;
 		this.routedPath = next.routedPath;
 		this.phase = next.phase;
+		this.trimMode = next.trimMode ?? false;
+		this.trimStart = next.trimStart ?? null;
+		this.trimEnd = next.trimEnd ?? null;
+		this.trimHint = next.trimHint ?? '';
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -292,6 +371,10 @@ export class SketchState implements SketchStateLike {
 		this.phase = 'editing';
 		this.routeBusy = false;
 		this.isDragging = false;
+		this.trimMode = false;
+		this.trimStart = null;
+		this.trimEnd = null;
+		this.trimHint = '';
 		this.status = 'Canvas cleared.';
 		this.render();
 	}
@@ -461,7 +544,171 @@ export class SketchState implements SketchStateLike {
 		this.routeError = '';
 		this.routeBusy = false;
 		this.phase = 'editing';
+		// Trim sub-mode only exists inside phase: 'routed'. Wiping the
+		// route also wipes the trim state so the next time we re-route we
+		// start fresh — the user could otherwise be left in trimMode with
+		// no route to trim.
+		this.trimMode = false;
+		this.trimStart = null;
+		this.trimEnd = null;
+		this.trimHint = '';
 		this.status = 'Sketch a shape.';
+		this.render();
+	}
+
+	startTrim() {
+		if (this.phase !== 'routed') return;
+		if (!this.routedPath || this.routedPath.length < 2) {
+			this.status = 'Nothing to trim — the route is empty.';
+			return;
+		}
+		// Entering trim mode is a UI state flip, not a data mutation: no
+		// history entry. The actual mutation happens in applyTrim().
+		this.trimMode = true;
+		this.trimStart = null;
+		this.trimEnd = null;
+		// Keep status generic — the trim-specific hint lives in
+		// trimHint and is read by the TrimPanel above the action bar.
+		this.status = 'Route ready — trim, export, or edit.';
+		this.trimHint = 'Click the start of the stretch you want to remove.';
+		this.render();
+	}
+
+	cancelTrim() {
+		if (!this.trimMode) return;
+		this.trimMode = false;
+		this.trimStart = null;
+		this.trimEnd = null;
+		this.status = 'Trim cancelled.';
+		this.trimHint = '';
+		this.render();
+	}
+
+	async applyTrim() {
+		if (this.phase !== 'routed') return;
+		if (!this.routedPath || this.routedPath.length === 0) {
+			this.cancelTrim();
+			return;
+		}
+		const start = this.trimStart;
+		const end = this.trimEnd;
+		if (start === null || end === null) {
+			this.status = 'Trim: pick both ends before confirming.';
+			return;
+		}
+		// Snap to integer indexes. The pick path rounds via Math.round in
+		// handleMapClick, but be defensive in case a drag leaves a
+		// non-integer — trim only operates on routedPath entries.
+		const lo = Math.max(0, Math.min(start, end));
+		const hi = Math.min(this.routedPath.length - 1, Math.max(start, end));
+		// Same point picked twice is a degenerate span (1 point). Treat
+		// it as "clear the picks, please pick a wider span" rather than
+		// mutating the route. Adjacent handles (hi - lo === 1) are valid
+		// — that's a real two-point stretch.
+		if (lo === hi) {
+			this.trimStart = null;
+			this.trimEnd = null;
+			this.status = 'Route ready — trim, export, or edit.';
+			this.trimHint = 'Pick two different points to mark a span.';
+			this.render();
+			return;
+		}
+		// Removing an entire route would leave phase: 'routed' with an
+		// empty polyline, which the renderer skips silently — the user
+		// would see no GPX and no useful UI. Refuse at one-point-remaining.
+		if (hi - lo + 1 >= this.routedPath.length) {
+			this.trimHint = 'That would remove the whole route — pick a smaller span.';
+			this.status = 'Route ready — trim, export, or edit.';
+			return;
+		}
+
+		this.pushHistory();
+
+		// Endpoints immediately outside the cut span. After the splice,
+		// the route has to traverse from `before` to `after` (when both
+		// exist); without a bridge, Leaflet would draw a straight-line
+		// jump cut that OSRM's /route can replace with real streets.
+		const before = lo > 0 ? this.routedPath[lo - 1] : null;
+		const after = hi < this.routedPath.length - 1 ? this.routedPath[hi + 1] : null;
+
+		// Drop the cut handles immediately — they reference indexes that
+		// no longer exist after the splice. routeBusy gates the action
+		// bar's Route button (already absent in this phase, but kept
+		// consistent with createRoute's loading flag).
+		this.trimMode = false;
+		this.trimStart = null;
+		this.trimEnd = null;
+		this.trimHint = '';
+
+		if (!before || !after) {
+			// Cut at the start or end of the route — no bridge needed,
+			// the surviving half is the entire route.
+			this.routedPath = [...this.routedPath.slice(0, lo), ...this.routedPath.slice(hi + 1)];
+			this.status = `Removed ${hi - lo + 1} points from the route.`;
+			this.render();
+			return;
+		}
+
+		// Capture the pre-bridge phase so we can ignore a late OSRM
+		// response if the user clicked Edit (or anything else that
+		// drops routedPath) while we were awaiting.
+		const phaseBefore = this.phase;
+		const beforeHalf = this.routedPath.slice(0, lo);
+		const afterHalf = this.routedPath.slice(hi + 1);
+
+		// Optimistic splice: render the straight-line cut instantly so
+		// the user sees their action take effect. The bridge call below
+		// replaces the straight link with road-snapped geometry when
+		// it returns.
+		this.routedPath = [...beforeHalf, ...afterHalf];
+		this.routeBusy = true;
+		this.status = 'Routing the link…';
+		this.render();
+
+		try {
+			const { geometry } = await getRoute([before, after]);
+			// The user might have left routed phase while we were
+			// awaiting. Drop the bridge on the floor in that case so we
+			// don't resurrect a route after Edit.
+			if (this.phase !== phaseBefore || this.phase !== 'routed') return;
+			const decoded = decodePolyline(geometry);
+			// OSRM's /route starts at the first waypoint, so the first
+			// decoded coordinate often equals `before` within rounding.
+			// Skip it to avoid doubling up at the join.
+			const bridge =
+				decoded.length > 0 && distanceBetween(decoded[0], before) <= 2 ? decoded.slice(1) : decoded;
+			if (bridge.length === 0) {
+				// OSRM returned nothing usable. Keep the straight-line
+				// splice; surface the failure in routeError.
+				this.routeError = 'OSRM returned no route for the link — kept a straight line.';
+				this.routeBusy = false;
+				this.status = `Removed ${hi - lo + 1} points; bridge unavailable.`;
+			} else {
+				this.routedPath = [...beforeHalf, ...bridge, ...afterHalf];
+				this.routeBusy = false;
+				this.status = `Removed ${hi - lo + 1} points; routed a ${bridge.length}-point link.`;
+			}
+			this.render();
+		} catch (err) {
+			if (this.phase !== phaseBefore || this.phase !== 'routed') return;
+			// Bridge failure: fall back to the straight-line splice so
+			// the cut is at least visually obvious. The user can undo
+			// and retry, or click Edit to start over.
+			this.routeError = err instanceof Error ? err.message : String(err);
+			this.routeBusy = false;
+			this.status = `Removed ${hi - lo + 1} points; bridge failed — kept a straight line.`;
+			this.render();
+		}
+	}
+
+	moveTrimHandle(which: 'start' | 'end', index: number) {
+		if (!this.trimMode || !this.routedPath) return;
+		const clamped = Math.max(0, Math.min(this.routedPath.length - 1, Math.round(index)));
+		if (which === 'start') {
+			this.trimStart = clamped;
+		} else {
+			this.trimEnd = clamped;
+		}
 		this.render();
 	}
 
@@ -572,6 +819,10 @@ export class SketchState implements SketchStateLike {
 			this.status = snap.phase === 'routed' ? 'Imported sketch with route.' : 'Imported sketch.';
 		}
 
+		this.trimMode = snap.trimMode ?? false;
+		this.trimStart = snap.trimStart ?? null;
+		this.trimEnd = snap.trimEnd ?? null;
+		this.trimHint = snap.trimHint ?? '';
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -621,8 +872,22 @@ export class SketchState implements SketchStateLike {
 			// beginning a new shape — start new shapes in empty space.
 			(shape) => shape.type !== 'pencil',
 			this._routeLayer,
-			this.routedPath
+			this.routedPath,
+			this.trimMode,
+			this.trimStart,
+			this.trimEnd,
+			(which, point) => this.dropTrimHandle(which, point)
 		);
+	}
+
+	// Project a dropped trim handle onto the nearest routedPath vertex and
+	// move the handle there. Called once per mouseup on the handle's drag
+	// gesture. The visual marker has already moved freely during the drag;
+	// this is the single state-commit step that locks in the new index.
+	private dropTrimHandle(which: 'start' | 'end', point: Point) {
+		if (!this.trimMode || !this.routedPath || this.routedPath.length === 0) return;
+		const { index } = nearestRouteVertexIndex(this.routedPath, point);
+		this.moveTrimHandle(which, index);
 	}
 
 	private pushHistory() {
@@ -635,7 +900,11 @@ export class SketchState implements SketchStateLike {
 			draft: this.draft ? cloneShape(this.draft) : null,
 			phase: this.phase,
 			routedPath: this.routedPath ? [...this.routedPath] : null,
-			shapes: cloneShapes(this.shapes)
+			shapes: cloneShapes(this.shapes),
+			trimMode: this.trimMode,
+			trimStart: this.trimStart,
+			trimEnd: this.trimEnd,
+			trimHint: this.trimHint
 		};
 	}
 }
@@ -667,4 +936,25 @@ function appendDecodedPoints(path: Point[], points: Point[]) {
 
 function sameRoutePoint(a: Point, b: Point) {
 	return distanceBetween(a, b) <= 2;
+}
+
+// Snap a click to the nearest vertex of a polyline. Used by the trim
+// flow to convert a (lat, lng) click into an index into routedPath.
+// Vertex-distance rather than perpendicular distance to a segment is
+// intentional: trim handles are placed on existing routedPath entries
+// (so the cut can be re-routed without dropping the snapped endpoint),
+// and snapping to the nearest vertex produces predictable handle
+// positions for the user. Distance is reported back so the caller can
+// gate against a max-distance threshold.
+function nearestRouteVertexIndex(path: Point[], target: Point) {
+	let bestIndex = 0;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	for (let i = 0; i < path.length; i++) {
+		const d = distanceBetween(path[i], target);
+		if (d < bestDistance) {
+			bestDistance = d;
+			bestIndex = i;
+		}
+	}
+	return { index: bestIndex, distance: bestDistance };
 }

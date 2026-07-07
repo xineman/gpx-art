@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { MATCH_CONFIDENCE_THRESHOLD, MATCH_RADIUS_METERS, MATCH_RADIUS_WAYPOINT_METERS } from '$lib/constants/routing';
+import {
+	MATCH_CONFIDENCE_THRESHOLD,
+	MATCH_RADIUS_METERS,
+	MATCH_RADIUS_WAYPOINT_METERS
+} from '$lib/constants/routing';
 import { chunkPointsForMatch, getMatchedRoute, matchingIndexesInTraceOrder } from './osrm';
 
 const point = (n: number) => ({ lat: 52 + n * 0.001, lng: 21 + n * 0.001 });

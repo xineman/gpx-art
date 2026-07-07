@@ -220,7 +220,9 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 	// relaxed waypoint radius). The resulting geometry is visually no
 	// better than the /route fallback and adds latency. Treat sub-threshold
 	// matchings as no result so getBestRouteForChunk falls through to /route.
-	const confident = matchings.filter((matching) => matching.confidence >= MATCH_CONFIDENCE_THRESHOLD);
+	const confident = matchings.filter(
+		(matching) => matching.confidence >= MATCH_CONFIDENCE_THRESHOLD
+	);
 	if (confident.length === 0) {
 		throw new OsrmApiError(
 			'match',

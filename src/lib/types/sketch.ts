@@ -19,4 +19,12 @@ export type Snapshot = {
 	phase: Phase;
 	routedPath: Point[] | null;
 	shapes: Shape[];
+	// Trim sub-mode of phase: 'routed'. Optional because older persisted
+	// snapshots predate the feature; missing fields are treated as "not in
+	// trim mode" by the state class. Undo/redo round-trips these so a
+	// mid-trim Cmd/Ctrl+Z returns to the previous pick set.
+	trimMode?: boolean;
+	trimStart?: number | null;
+	trimEnd?: number | null;
+	trimHint?: string;
 };

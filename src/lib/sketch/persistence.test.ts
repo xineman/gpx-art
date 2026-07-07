@@ -190,4 +190,151 @@ describe('parseSnapshotEnvelope', () => {
 		};
 		expect(parseSnapshotEnvelope(bad).ok).toBe(false);
 	});
+
+	test('accepts trim fields when present and well-typed', () => {
+		const env = buildSnapshotEnvelope({
+			...validSnapshot,
+			phase: 'routed',
+			routedPath: [
+				{ lat: 1, lng: 2 },
+				{ lat: 1.1, lng: 2.1 },
+				{ lat: 1.2, lng: 2.2 }
+			],
+			trimMode: true,
+			trimStart: 0,
+			trimEnd: 2
+		});
+		const parsed = parseSnapshotEnvelope(JSON.parse(JSON.stringify(env)));
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			expect(parsed.snapshot.trimMode).toBe(true);
+			expect(parsed.snapshot.trimStart).toBe(0);
+			expect(parsed.snapshot.trimEnd).toBe(2);
+		}
+	});
+
+	test('treats missing trim fields as undefined (back-compat with version 1 files)', () => {
+		const oldFile = {
+			format: SNAPSHOT_FORMAT,
+			version: 1,
+			snapshot: {
+				shapes: [{ id: 'shape-1', type: 'pencil', points: [{ lat: 1, lng: 2 }] }],
+				draft: null,
+				phase: 'routed',
+				routedPath: [
+					{ lat: 1, lng: 2 },
+					{ lat: 1.1, lng: 2.1 }
+				]
+			}
+		};
+		const parsed = parseSnapshotEnvelope(oldFile);
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			expect(parsed.snapshot.trimMode).toBeUndefined();
+			expect(parsed.snapshot.trimStart).toBeUndefined();
+			expect(parsed.snapshot.trimEnd).toBeUndefined();
+		}
+	});
+
+	test('accepts explicit null trim handles (start picked, end not yet)', () => {
+		const env = buildSnapshotEnvelope({
+			...validSnapshot,
+			phase: 'routed',
+			routedPath: [
+				{ lat: 1, lng: 2 },
+				{ lat: 1.1, lng: 2.1 }
+			],
+			trimMode: true,
+			trimStart: 0,
+			trimEnd: null
+		});
+		expect(parseSnapshotEnvelope(JSON.parse(JSON.stringify(env))).ok).toBe(true);
+	});
+
+	test('rejects non-integer trimStart', () => {
+		const bad = {
+			format: SNAPSHOT_FORMAT,
+			version: 1,
+			snapshot: {
+				shapes: [],
+				draft: null,
+				phase: 'routed',
+				routedPath: [
+					{ lat: 1, lng: 2 },
+					{ lat: 1.1, lng: 2.1 }
+				],
+				trimMode: true,
+				trimStart: 1.5,
+				trimEnd: 2
+			}
+		};
+		const result = parseSnapshotEnvelope(bad);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('trimStart');
+	});
+
+	test('rejects non-boolean trimMode', () => {
+		const bad = {
+			format: SNAPSHOT_FORMAT,
+			version: 1,
+			snapshot: {
+				shapes: [],
+				draft: null,
+				phase: 'routed',
+				routedPath: [
+					{ lat: 1, lng: 2 },
+					{ lat: 1.1, lng: 2.1 }
+				],
+				trimMode: 'yes',
+				trimStart: 0,
+				trimEnd: 1
+			}
+		};
+		const result = parseSnapshotEnvelope(bad);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('trimMode');
+	});
+
+	test('accepts trimHint as a string when present', () => {
+		const env = buildSnapshotEnvelope({
+			...validSnapshot,
+			phase: 'routed',
+			routedPath: [
+				{ lat: 1, lng: 2 },
+				{ lat: 1.1, lng: 2.1 }
+			],
+			trimMode: true,
+			trimStart: 0,
+			trimEnd: 1,
+			trimHint: 'Now mark the end of the stretch to remove.'
+		});
+		const parsed = parseSnapshotEnvelope(JSON.parse(JSON.stringify(env)));
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			expect(parsed.snapshot.trimHint).toBe('Now mark the end of the stretch to remove.');
+		}
+	});
+
+	test('rejects non-string trimHint', () => {
+		const bad = {
+			format: SNAPSHOT_FORMAT,
+			version: 1,
+			snapshot: {
+				shapes: [],
+				draft: null,
+				phase: 'routed',
+				routedPath: [
+					{ lat: 1, lng: 2 },
+					{ lat: 1.1, lng: 2.1 }
+				],
+				trimMode: true,
+				trimStart: 0,
+				trimEnd: 1,
+				trimHint: 42
+			}
+		};
+		const result = parseSnapshotEnvelope(bad);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('trimHint');
+	});
 });
