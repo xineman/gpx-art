@@ -6,6 +6,7 @@
 	import ActionBar from '$lib/components/ActionBar.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 	import HistoryDock from '$lib/components/HistoryDock.svelte';
+	import RouteDebugPanel from '$lib/components/RouteDebugPanel.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import ToolPalette from '$lib/components/ToolPalette.svelte';
 	import TrimPanel from '$lib/components/TrimPanel.svelte';
@@ -144,6 +145,15 @@
 				class:opacity-30={sketch.isDragging && hoveredPanel === 'trim'}
 			>
 				<TrimPanel {sketch} />
+			</div>
+			<div
+				data-panel="route-debug"
+				class="transition-opacity duration-150"
+				class:pointer-events-auto={!sketch.isDragging}
+				class:pointer-events-none={sketch.isDragging}
+				class:opacity-30={sketch.isDragging && hoveredPanel === 'route-debug'}
+			>
+				<RouteDebugPanel {sketch} />
 			</div>
 			<div
 				data-panel="history"

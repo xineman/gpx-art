@@ -27,4 +27,10 @@ export type Snapshot = {
 	trimStart?: number | null;
 	trimEnd?: number | null;
 	trimHint?: string;
+	// Whether the /match batch debug overlay is visible. Persisted across
+	// undo/redo so the user's preference survives editing — but the actual
+	// batch list is NOT snapshotted; it is recomputed on the next
+	// createRoute() call. Treating the overlay as a transient view rather
+	// than part of the document keeps undo semantics honest.
+	routeDebugVisible?: boolean;
 };

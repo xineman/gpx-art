@@ -3,6 +3,7 @@ import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
 import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
+import { buildRoutePlan, type RouteDebugBatch } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { getMatchedRoute, getRoute } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
@@ -33,6 +34,10 @@ export interface MapHandle {
 	map: Leaflet.Map;
 	drawingLayer: Leaflet.LayerGroup;
 	routeLayer: Leaflet.LayerGroup;
+	// Optional debug layer for the /match batch overlay. Optional so test
+	// harnesses that build a MapHandle by hand (e.g. Playwright) can
+	// omit it — the renderer no-ops when the layer is undefined.
+	debugLayer?: Leaflet.LayerGroup;
 }
 
 export class SketchState implements SketchStateLike {
@@ -63,6 +68,14 @@ export class SketchState implements SketchStateLike {
 	isDragging = $state(false);
 	isSpacePan = $state(false);
 
+	// /match batch debug overlay. routeDebugVisible is the user's preference
+	// (persisted across undo via Snapshot.routeDebugVisible);
+	// routeDebugBatches is the captured plan from the most recent
+	// createRoute() call and is intentionally NOT snapshotted — it is a
+	// transient view of the last route, recomputed on the next routing.
+	routeDebugVisible = $state(false);
+	routeDebugBatches = $state<RouteDebugBatch[]>([]);
+
 	// Non-reactive scratch — see Preservation note #1. Plain refs that survive across
 	// mousedown/mousemove/mouseup without triggering reactivity.
 	activePencilShape: Shape | null = null;
@@ -73,6 +86,7 @@ export class SketchState implements SketchStateLike {
 	private _map: Leaflet.Map | undefined;
 	private _drawingLayer: Leaflet.LayerGroup | undefined;
 	private _routeLayer: Leaflet.LayerGroup | undefined;
+	private _debugLayer: Leaflet.LayerGroup | undefined;
 
 	canRoute = $derived(canRoute(this));
 	hasDrawing = $derived(this.shapes.length > 0 || !!this.draft);
@@ -84,6 +98,7 @@ export class SketchState implements SketchStateLike {
 		this._map = handle.map;
 		this._drawingLayer = handle.drawingLayer;
 		this._routeLayer = handle.routeLayer;
+		this._debugLayer = handle.debugLayer;
 	}
 
 	detachMap() {
@@ -91,12 +106,23 @@ export class SketchState implements SketchStateLike {
 		this._map = undefined;
 		this._drawingLayer = undefined;
 		this._routeLayer = undefined;
+		this._debugLayer = undefined;
 	}
 
 	setTool(tool: Tool) {
 		if (this.phase !== 'editing') return;
 		if (tool === this.currentTool) return;
 		this.applyTool(tool);
+	}
+
+	// Setter for the /match batch debug overlay toggle. Goes through a
+	// method (not a direct field write) so the caller does not have to
+	// remember to call render() — toggling the overlay must repaint the
+	// map immediately to clear or restore the on-map markers.
+	setRouteDebugVisible(visible: boolean) {
+		if (this.routeDebugVisible === visible) return;
+		this.routeDebugVisible = visible;
+		this.render();
 	}
 
 	private applyTool(tool: Tool) {
@@ -320,6 +346,12 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = previous.trimStart ?? null;
 		this.trimEnd = previous.trimEnd ?? null;
 		this.trimHint = previous.trimHint ?? '';
+		this.routeDebugVisible = previous.routeDebugVisible ?? false;
+		// routeDebugBatches is a transient view of the last route, not
+		// part of the document — wipe it on undo so a stale overlay does
+		// not survive a shape-edit undo. The user can click Route again
+		// to recompute.
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -343,6 +375,8 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = next.trimStart ?? null;
 		this.trimEnd = next.trimEnd ?? null;
 		this.trimHint = next.trimHint ?? '';
+		this.routeDebugVisible = next.routeDebugVisible ?? false;
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -375,6 +409,7 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = null;
 		this.trimEnd = null;
 		this.trimHint = '';
+		this.routeDebugBatches = [];
 		this.status = 'Canvas cleared.';
 		this.render();
 	}
@@ -445,6 +480,11 @@ export class SketchState implements SketchStateLike {
 
 			this.status = 'Routing along your shapes…';
 			const polylines: Point[] = [];
+			// Mirror the per-shape points the pipeline is about to hand to
+			// OSRM, in TSP-solved order. Consumed by buildRoutePlan after
+			// the loop to populate routeDebugBatches — the visualization
+			// shows exactly what the API received.
+			const processedPoints: Point[][] = [];
 			for (let i = 0; i < order.length; i++) {
 				const shape = shapes[order[i]];
 				const isClosed = shape.type === 'polygon' || shape.type === 'rectangle';
@@ -486,6 +526,8 @@ export class SketchState implements SketchStateLike {
 					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
 				}
 
+				processedPoints.push(pts);
+
 				if (shape.type === 'pencil') {
 					// /match handles the noise and outliers that pencil
 					// strokes accumulate. The HMM can drop tracepoints that
@@ -523,6 +565,13 @@ export class SketchState implements SketchStateLike {
 			}
 
 			this.routedPath = polylines;
+
+			// Build the /match batch debug plan from the SAME points we
+			// just sent to OSRM. Persisted on the state so the legend
+			// and on-map overlay can render via renderRouteDebug.
+			const orderedShapes = order.map((idx) => shapes[idx]);
+			this.routeDebugBatches = buildRoutePlan(orderedShapes, processedPoints);
+
 			this.phase = 'routed';
 			this.routeBusy = false;
 			this.status = 'Route ready — export or edit.';
@@ -552,6 +601,10 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = null;
 		this.trimEnd = null;
 		this.trimHint = '';
+		// The /match batch overlay describes the route we just left — drop
+		// it alongside routedPath so the user is not left staring at
+		// colored markers over an emptied canvas.
+		this.routeDebugBatches = [];
 		this.status = 'Sketch a shape.';
 		this.render();
 	}
@@ -823,6 +876,11 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = snap.trimStart ?? null;
 		this.trimEnd = snap.trimEnd ?? null;
 		this.trimHint = snap.trimHint ?? '';
+		this.routeDebugVisible = snap.routeDebugVisible ?? false;
+		// Clear the overlay — the import may have changed the shape set
+		// drastically, and the old batches no longer describe the
+		// imported state. Recompute on the next Route click.
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -876,7 +934,12 @@ export class SketchState implements SketchStateLike {
 			this.trimMode,
 			this.trimStart,
 			this.trimEnd,
-			(which, point) => this.dropTrimHandle(which, point)
+			(which, point) => this.dropTrimHandle(which, point),
+			// /match batch debug overlay: render only when the toggle is on.
+			// The layer itself is always created (in bootstrap) so toggling
+			// is a state change, not a map mutation.
+			this._debugLayer,
+			this.routeDebugVisible ? this.routeDebugBatches : []
 		);
 	}
 
@@ -904,7 +967,8 @@ export class SketchState implements SketchStateLike {
 			trimMode: this.trimMode,
 			trimStart: this.trimStart,
 			trimEnd: this.trimEnd,
-			trimHint: this.trimHint
+			trimHint: this.trimHint,
+			routeDebugVisible: this.routeDebugVisible
 		};
 	}
 }

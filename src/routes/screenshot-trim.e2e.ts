@@ -28,8 +28,7 @@ test.describe('trim panel screenshots', () => {
 
 	test('capture trim panel in each state', async ({ page }) => {
 		await page.evaluate((pts) => {
-			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } })
-				.__gpxArtTest?.sketch;
+			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } }).__gpxArtTest?.sketch;
 			if (!sketch) throw new Error('Test hook missing');
 			sketch.routedPath = pts;
 			sketch.phase = 'routed';
@@ -41,8 +40,7 @@ test.describe('trim panel screenshots', () => {
 		// state setter would normally do this, but the test hook
 		// bypasses it.
 		await page.evaluate(() => {
-			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } })
-				.__gpxArtTest?.sketch;
+			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } }).__gpxArtTest?.sketch;
 			sketch.trimHint = 'Click the start of the stretch you want to remove.';
 		});
 		await page.waitForTimeout(250);
@@ -52,8 +50,7 @@ test.describe('trim panel screenshots', () => {
 
 		// Pick start only.
 		await page.evaluate(() => {
-			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } })
-				.__gpxArtTest?.sketch;
+			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } }).__gpxArtTest?.sketch;
 			sketch.trimMode = true;
 			sketch.trimStart = 2;
 			sketch.trimEnd = null;
@@ -64,8 +61,7 @@ test.describe('trim panel screenshots', () => {
 
 		// Pick end too — Confirm materialises with a 180ms scale-in.
 		await page.evaluate(() => {
-			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } })
-				.__gpxArtTest?.sketch;
+			const sketch = (window as unknown as { __gpxArtTest?: { sketch: any } }).__gpxArtTest?.sketch;
 			sketch.trimEnd = 6;
 			sketch.trimHint = 'Confirm to drop the marked span, or cancel to start over.';
 		});

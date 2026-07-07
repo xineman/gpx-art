@@ -2,6 +2,8 @@ import type * as Leaflet from 'leaflet';
 import { ROUTE_COLOR } from '$lib/constants/routing';
 import { closeShape, toLatLngs } from '$lib/geometry/point';
 import type { Point, Shape } from '$lib/types/sketch';
+import type { RouteDebugBatch } from '$lib/routing/batchPlan';
+import { renderRouteDebug } from './route-debug-layer';
 
 type L = typeof import('leaflet');
 type VertexMoveHandler = (
@@ -39,7 +41,9 @@ export function renderLayers(
 	trimMode: boolean = false,
 	trimStart: number | null = null,
 	trimEnd: number | null = null,
-	onTrimHandleDrop?: TrimHandleMoveHandler
+	onTrimHandleDrop?: TrimHandleMoveHandler,
+	debugLayer?: Leaflet.LayerGroup,
+	routeDebugBatches: readonly RouteDebugBatch[] = []
 ) {
 	if (!L || !drawingLayer) return;
 
@@ -57,6 +61,13 @@ export function renderLayers(
 		routeLayer.clearLayers();
 		if (routedPath && routedPath.length >= 2) {
 			addRouteLayer(L, map, routeLayer, routedPath, trimMode, trimStart, trimEnd, onTrimHandleDrop);
+		}
+	}
+
+	if (debugLayer) {
+		debugLayer.clearLayers();
+		if (routeDebugBatches.length > 0) {
+			renderRouteDebug(L, debugLayer, routeDebugBatches);
 		}
 	}
 }

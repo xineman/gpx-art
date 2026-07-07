@@ -56,6 +56,31 @@ export const MATCH_RADIUS_METERS = 30;
 export const MATCH_RADIUS_WAYPOINT_METERS = 100;
 export const MATCH_CONFIDENCE_THRESHOLD = 0.5;
 
+// Eight-hue palette used by the /match batch debug overlay (see
+// $lib/routing/batchPlan). Each batch of points the routing pipeline sends to
+// OSRM gets a distinct color from this list so the user can see at a glance
+// which sketch points went into which /match call.
+//
+// Distribution: spans the full hue wheel in ~45° steps for maximum
+// perceptual distance. Hue zones that would clash with the existing reserved
+// palette (orange draft #f26b3a, vermilion trim #c8412c) are skipped — instead
+// of pure orange/red we lead with rose (slightly toward magenta) and a deeper
+// amber-yellow, which read as warm but distinct from the draft orange. The
+// blues are kept well clear of the routed-polyline blue (#1d4ed8): sky-500
+// (brighter, more cyan) for batch blues, indigo-500 (slightly violet) for
+// the deepest blue batch. Palettes wrap via modulo — beyond 8 batches the
+// colors repeat, and the batch index in the legend disambiguates.
+export const MATCH_DEBUG_PALETTE: readonly string[] = [
+	'#f43f5e', // rose-500   — warm red, away from vermilion
+	'#facc15', // yellow-400 — bright amber, away from draft orange
+	'#84cc16', // lime-500   — yellow-green
+	'#10b981', // emerald-500 — clean green
+	'#0ea5e9', // sky-500    — bright cyan-blue, away from route blue
+	'#6366f1', // indigo-500 — blue-violet
+	'#a855f7', // purple-500 — vivid purple
+	'#ec4899' // pink-500    — hot magenta
+];
+
 // Above this cluster count, the exact Held-Karp bitmask DP gives way to a
 // nearest-neighbour + 2-opt heuristic. Held-Karp is O(N²·2ᴺ); at N = 14 that's
 // ~700k ops and runs comfortably in <50ms in the browser.
