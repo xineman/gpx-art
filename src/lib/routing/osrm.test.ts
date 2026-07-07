@@ -90,8 +90,39 @@ describe('getMatchedRoute', () => {
 
 		expect(result.geometries).toEqual(['matched']);
 		expect(url).toContain('/match/v1/bike/');
-		expect(url).toContain('radiuses=70%3B70%3B70%3B70%3B70%3B70');
+		expect(url).toContain('radiuses=30%3B30%3B30%3B30%3B30%3B30');
 		expect(url).toContain('waypoints=0%3B5');
+	});
+
+	test('dispatches all chunks in parallel rather than serially', async () => {
+		// 20 anchors → 3 overlapping chunks (stride = 10 - 2 = 8).
+		const points = Array.from({ length: 20 }, (_, i) => point(i));
+		const perChunkDelayMs = 40;
+		const fetchStarted: number[] = [];
+		let activeConcurrent = 0;
+		let peakConcurrent = 0;
+
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			fetchStarted.push(performance.now());
+			activeConcurrent++;
+			peakConcurrent = Math.max(peakConcurrent, activeConcurrent);
+			await new Promise((r) => setTimeout(r, perChunkDelayMs));
+			activeConcurrent--;
+			return new Response(
+				JSON.stringify({
+					code: 'Ok',
+					tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+					matchings: [{ geometry: 'g', distance: 50, duration: 10, confidence: 1 }]
+				}),
+				{ status: 200 }
+			);
+		});
+
+		const result = await getMatchedRoute(points);
+
+		expect(fetchStarted).toHaveLength(3);
+		expect(peakConcurrent).toBe(3);
+		expect(result.geometries).toEqual(['g', 'g', 'g']);
 	});
 
 	test('falls back from NoMatch to a route between chunk endpoints only', async () => {

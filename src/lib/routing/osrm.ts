@@ -73,20 +73,27 @@ export async function getRoute(points: Point[]): Promise<RouteResult> {
 // treats the input as a noisy trace and can drop outliers (`tracepoints: null`)
 // instead of forcing the route through every anchor. The public demo endpoint
 // allows only small traces, so split longer shapes into overlapping chunks.
+//
+// Chunks are dispatched in parallel. The chunks are independent once split,
+// and a complex Warsaw pencil stroke produces 5–6 chunks that each take
+// ~20–30 s — sequential would be 100–150 s, parallel is the max. Local
+// `osrm-routed` is multi-threaded by default, so 5–6 simultaneous requests
+// are fine. Promise.all preserves fail-fast semantics (one chunk's hard
+// error aborts createRoute) matching the previous sequential behaviour.
 export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 	if (points.length < 2) {
 		throw new Error('OSRM /match requires at least 2 trace points.');
 	}
 
 	const chunks = chunkPointsForMatch(points);
+	const results = await Promise.all(chunks.map((chunk) => getBestRouteForChunk(chunk)));
+
 	const geometries: string[] = [];
 	let distance = 0;
 	let duration = 0;
 	let confidenceSum = 0;
 	let matchingCount = 0;
-
-	for (const chunk of chunks) {
-		const result = await getBestRouteForChunk(chunk);
+	for (const result of results) {
 		geometries.push(...result.geometries);
 		distance += result.distance;
 		duration += result.duration;

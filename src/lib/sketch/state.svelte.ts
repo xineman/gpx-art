@@ -2,9 +2,11 @@ import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
+import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { getMatchedRoute, getRoute } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
+import { simplifyRdp } from '$lib/routing/rdp';
 import { sampleTrace } from '$lib/routing/sample';
 import { solveClusterTspWithFlip } from '$lib/routing/tsp';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
@@ -371,20 +373,49 @@ export class SketchState implements SketchStateLike {
 				// input gives equally valid simplified anchors.
 				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
 
-				// Sample the original drawing into a GPS-like trace for OSRM
-				// /match. Interior points are soft guidance instead of hard via
-				// stops, which lets the route stay on nearby streets instead of
+				// Sample the original drawing into a GPS-like trace for OSRM.
+				// Interior points are soft guidance instead of hard via stops,
+				// which lets the route stay on nearby streets instead of
 				// detouring through exact sketch vertices.
 				let pts = sampleTrace(isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints);
 
-				// Degenerate fallback: if sampling has too little to work with,
-				// route the raw shape instead so we still produce something.
+				// RDP-simplify the sampled trace. Pencil strokes use the higher
+				// tolerance (RDP_TOLERANCE_PENCIL) because their curves
+				// have many fine-grained points whose perpendicular
+				// distance sits just above RDP_TOLERANCE; without the
+				// higher value, /match sees the full noisy trace and
+				// runs slow. Structured shapes use the default tolerance
+				// — they're effectively a no-op for them anyway since
+				// their input has only a handful of vertices. Strip the
+				// closing point before simplifying so the chord back to
+				// start isn't degenerate (would swallow every interior
+				// point).
+				const rdpTolerance = shape.type === 'pencil' ? RDP_TOLERANCE_PENCIL : RDP_TOLERANCE;
+				const rdpped = simplifyRdp(isClosed ? pts.slice(0, -1) : pts, rdpTolerance);
+				pts = isClosed && rdpped.length > 0 ? [...rdpped, rdpped[0]] : rdpped;
+
+				// Degenerate fallback: if simplification produced too little
+				// to work with, route the raw shape instead so we still
+				// produce something.
 				if (pts.length < 2) {
 					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
 				}
 
-				const { geometries } = await getMatchedRoute(pts);
-				for (const geometry of geometries) {
+				if (shape.type === 'pencil') {
+					// /match handles the noise and outliers that pencil
+					// strokes accumulate. The HMM can drop tracepoints that
+					// don't snap, which is the reason /match exists.
+					const { geometries } = await getMatchedRoute(pts);
+					for (const geometry of geometries) {
+						await appendGeometryToPath(polylines, geometry);
+					}
+				} else {
+					// Structured shapes (rectangle / line / polygon) have
+					// user-clicked corners with no outliers to drop. /route
+					// via the RDP'd anchors is exact and ~20× faster than
+					// /match for these — the public demo's `TooBig`
+					// radius rejection goes away too.
+					const { geometry } = await getRoute(pts);
 					await appendGeometryToPath(polylines, geometry);
 				}
 

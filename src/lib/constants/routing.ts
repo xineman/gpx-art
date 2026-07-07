@@ -23,10 +23,18 @@ export const OSRM_PROFILE = 'bike';
 // The public OSRM demo server is intentionally small. Its map matching endpoint
 // accepts fewer coordinates than /route, so split hand-drawn traces into short
 // overlapping chunks and stitch the returned geometries back together.
+//
+// MATCH_RADIUS_METERS is the per-coordinate standard deviation passed to
+// /match as `radiuses=`. Each radius search expands a window over the road
+// network and collects candidate edges — radius scales the search area
+// quadratically, so this is the dominant lever on /match latency. 30 m
+// covers mouse precision (~5 m), touch precision (~15 m), and intentional
+// mid-block anchors (~25 m) without exploding candidate counts in dense
+// urban areas.
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
-export const MATCH_RADIUS_METERS = 70;
+export const MATCH_RADIUS_METERS = 30;
 
 // Above this cluster count, the exact Held-Karp bitmask DP gives way to a
 // nearest-neighbour + 2-opt heuristic. Held-Karp is O(N²·2ᴺ); at N = 14 that's
@@ -42,11 +50,25 @@ export const ROUTE_COLOR = '#1d4ed8';
 export const TWO_OPT_MAX_ITERATIONS = 1000;
 
 // Ramer–Douglas–Peucker simplification tolerance applied per shape before
-// handing vertices to OSRM. Drops vertices within this many meters of the
-// chord between kept neighbours. At 20 m a typical urban-block pencil
-// stroke collapses from ~50 raw vertices to ~6–8 anchors, which is the
-// granularity OSRM needs to choose natural streets instead of zigzagging
-// around every block.
+// handing vertices to OSRM. Drops interior vertices whose perpendicular
+// distance from the chord between their kept neighbours is below this
+// many meters. Outliers — points that bow sharply off the chord — survive
+// because their perpendicular distance exceeds the tolerance.
+//
+// Two tolerances because the trade-off is shape-specific:
+//   - RDP_TOLERANCE        — rectangles / lines / polygons (default 10 m).
+//                            These have 2–4 user-clicked vertices, so RDP is
+//                            effectively a no-op regardless of value; 10 m
+//                            just means "don't drop a corner".
+//   - RDP_TOLERANCE_PENCIL — free-form pencil strokes (default 30 m).
+//                            10 m keeps most curve points and lets /match
+//                            see a noisy trace — slow. 30 m prunes minor
+//                            curve wiggles while keeping major inflections
+//                            (heart lobes, hairpins, the user's intended
+//                            detours). Combined with chunked /match, this
+//                            cuts chunk count without flattening the input
+//                            shape. /match to real streets further smooths
+//                            whatever the simplification removed.
 //
 // Note on OSRM snapping: we deliberately omit the `radiuses=` parameter
 // from the `/route` URL. When omitted, OSRM's default for `/route` is
@@ -55,4 +77,5 @@ export const TWO_OPT_MAX_ITERATIONS = 1000;
 // required" and `radiuses=25` which caps at 25 m). Mid-block and plaza
 // anchors reliably fail with `NoSegment` when a finite radius is set, so
 // the implicit unlimited default is the right behaviour here.
-export const RDP_TOLERANCE = 20;
+export const RDP_TOLERANCE = 10;
+export const RDP_TOLERANCE_PENCIL = 30;
