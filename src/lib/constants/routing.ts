@@ -1,6 +1,15 @@
+import { env } from '$env/dynamic/public';
+
 // Centralised routing constants. The endpoint and profile are the two
 // lines to edit when migrating from the OSRM public demo to a self-hosted
 // instance, or switching routing modality (car/bike/foot).
+
+// PUBLIC_OSRM_BASE_URL is wired through SvelteKit's $env/dynamic/public so the
+// app can target a local osrm-routed Docker container (e.g. port 5050 on macOS
+// where 5000 is taken by AirPlay Receiver) without code changes. The public
+// router.project-osrm.org demo is kept as the fallback for builds that don't
+// define the var — useful for CI / preview deploys.
+const DEFAULT_OSRM_BASE_URL = 'https://router.project-osrm.org';
 
 // Bike profile: this app's output is meant to be rideable, so the route
 // engine biases toward cycle paths, residential streets, and avoids
@@ -8,7 +17,7 @@
 // `router.project-osrm.org` exposes the standard `bike` profile built
 // from OSM tags; a self-hosted instance can swap to a custom profile
 // (e.g. mtb, racing) by editing this constant.
-export const OSRM_BASE_URL = 'https://router.project-osrm.org';
+export const OSRM_BASE_URL = env.PUBLIC_OSRM_BASE_URL || DEFAULT_OSRM_BASE_URL;
 export const OSRM_PROFILE = 'bike';
 
 // The public OSRM demo server is intentionally small. Its map matching endpoint
