@@ -2,11 +2,10 @@ import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
-import { RDP_TOLERANCE } from '$lib/constants/routing';
 import { pointsToGpx } from '$lib/routing/gpx';
-import { getRoute } from '$lib/routing/osrm';
+import { getMatchedRoute, getRoute } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
-import { simplifyRdp } from '$lib/routing/simplify';
+import { sampleTrace } from '$lib/routing/sample';
 import { solveClusterTspWithFlip } from '$lib/routing/tsp';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
@@ -372,23 +371,22 @@ export class SketchState implements SketchStateLike {
 				// input gives equally valid simplified anchors.
 				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
 
-				// Simplify each shape with RDP before handing it to OSRM so the
-				// route engine isn't forced to visit every mid-block vertex.
-				// RDP preserves the first and last vertices of its input —
-				// after a possible reverse, those are the entry and exit points
-				// the solver picked, which the transition routes below use.
-				const simplified = simplifyRdp(sourcePoints, RDP_TOLERANCE);
-				let pts = isClosed ? [...simplified, simplified[0]] : simplified;
+				// Sample the original drawing into a GPS-like trace for OSRM
+				// /match. Interior points are soft guidance instead of hard via
+				// stops, which lets the route stay on nearby streets instead of
+				// detouring through exact sketch vertices.
+				let pts = sampleTrace(isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints);
 
-				// Degenerate fallback: if simplification collapsed the chain
-				// below two points (very rare), route the raw shape instead so
-				// we still produce something for it.
+				// Degenerate fallback: if sampling has too little to work with,
+				// route the raw shape instead so we still produce something.
 				if (pts.length < 2) {
 					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
 				}
 
-				const { geometry } = await getRoute(pts);
-				polylines.push(...decodePolyline(geometry));
+				const { geometries } = await getMatchedRoute(pts);
+				for (const geometry of geometries) {
+					await appendGeometryToPath(polylines, geometry);
+				}
 
 				if (i < order.length - 1) {
 					// Transitions are always 2 points — no simplification needed.
@@ -404,7 +402,7 @@ export class SketchState implements SketchStateLike {
 						? nextShape.points[nextShape.points.length - 1]
 						: nextShape.points[0];
 					const { geometry: link } = await getRoute([currentExit, nextEntry]);
-					polylines.push(...decodePolyline(link));
+					await appendGeometryToPath(polylines, link);
 				}
 			}
 
@@ -511,4 +509,33 @@ export class SketchState implements SketchStateLike {
 			shapes: cloneShapes(this.shapes)
 		};
 	}
+}
+
+async function appendGeometryToPath(path: Point[], geometry: string) {
+	const points = decodePolyline(geometry);
+	if (points.length === 0) return;
+
+	const previous = path.at(-1);
+	if (previous) {
+		const next = points[0];
+		if (!sameRoutePoint(previous, next)) {
+			const { geometry: bridge } = await getRoute([previous, next]);
+			appendDecodedPoints(path, decodePolyline(bridge));
+		}
+	}
+
+	appendDecodedPoints(path, points);
+}
+
+function appendDecodedPoints(path: Point[], points: Point[]) {
+	if (points.length === 0) return;
+	if (path.length > 0 && sameRoutePoint(path[path.length - 1], points[0])) {
+		path.push(...points.slice(1));
+		return;
+	}
+	path.push(...points);
+}
+
+function sameRoutePoint(a: Point, b: Point) {
+	return distanceBetween(a, b) <= 2;
 }

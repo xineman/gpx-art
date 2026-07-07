@@ -11,6 +11,14 @@
 export const OSRM_BASE_URL = 'https://router.project-osrm.org';
 export const OSRM_PROFILE = 'bike';
 
+// The public OSRM demo server is intentionally small. Its map matching endpoint
+// accepts fewer coordinates than /route, so split hand-drawn traces into short
+// overlapping chunks and stitch the returned geometries back together.
+export const MATCH_MAX_POINTS = 10;
+export const MATCH_CHUNK_OVERLAP = 2;
+export const MATCH_SAMPLE_SPACING_METERS = 60;
+export const MATCH_RADIUS_METERS = 70;
+
 // Above this cluster count, the exact Held-Karp bitmask DP gives way to a
 // nearest-neighbour + 2-opt heuristic. Held-Karp is O(N²·2ᴺ); at N = 14 that's
 // ~700k ops and runs comfortably in <50ms in the browser.

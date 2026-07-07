@@ -1,10 +1,23 @@
-import { OSRM_BASE_URL, OSRM_PROFILE } from '$lib/constants/routing';
+import {
+	MATCH_CHUNK_OVERLAP,
+	MATCH_MAX_POINTS,
+	MATCH_RADIUS_METERS,
+	OSRM_BASE_URL,
+	OSRM_PROFILE
+} from '$lib/constants/routing';
 import type { Point } from '$lib/types/sketch';
 
 export type RouteResult = {
 	geometry: string;
 	distance: number;
 	duration: number;
+};
+
+export type MatchResult = {
+	geometries: string[];
+	distance: number;
+	duration: number;
+	confidence: number;
 };
 
 // Thin wrapper around OSRM /route. Waypoints are ordered — this function does
@@ -54,6 +67,189 @@ export async function getRoute(points: Point[]): Promise<RouteResult> {
 	};
 }
 
+// Map-match a hand-drawn trace to the road network.
+//
+// OSRM /match is better suited than /route for dense sketch points because it
+// treats the input as a noisy trace and can drop outliers (`tracepoints: null`)
+// instead of forcing the route through every anchor. The public demo endpoint
+// allows only small traces, so split longer shapes into overlapping chunks.
+export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
+	if (points.length < 2) {
+		throw new Error('OSRM /match requires at least 2 trace points.');
+	}
+
+	const chunks = chunkPointsForMatch(points);
+	const geometries: string[] = [];
+	let distance = 0;
+	let duration = 0;
+	let confidenceSum = 0;
+	let matchingCount = 0;
+
+	for (const chunk of chunks) {
+		const result = await getBestRouteForChunk(chunk);
+		geometries.push(...result.geometries);
+		distance += result.distance;
+		duration += result.duration;
+		confidenceSum += result.confidence * result.geometries.length;
+		matchingCount += result.geometries.length;
+	}
+
+	return {
+		geometries,
+		distance,
+		duration,
+		confidence: matchingCount > 0 ? confidenceSum / matchingCount : 0
+	};
+}
+
+export function chunkPointsForMatch(
+	points: Point[],
+	maxPoints = MATCH_MAX_POINTS,
+	overlap = MATCH_CHUNK_OVERLAP
+): Point[][] {
+	if (maxPoints < 2) {
+		throw new Error('OSRM match chunks must allow at least 2 points.');
+	}
+	if (overlap < 0 || overlap >= maxPoints) {
+		throw new Error('OSRM match chunk overlap must be between 0 and maxPoints - 1.');
+	}
+	if (points.length <= maxPoints) return [points.slice()];
+
+	const chunks: Point[][] = [];
+	const stride = maxPoints - overlap;
+	for (let start = 0; start < points.length - 1; start += stride) {
+		let end = Math.min(points.length, start + maxPoints);
+		if (end === points.length && end - start === 2 && chunks.length > 0) {
+			start = Math.max(0, points.length - 3);
+			end = points.length;
+		}
+
+		const chunk = points.slice(start, end);
+		if (chunk.length >= 2) chunks.push(chunk);
+		if (end === points.length) break;
+	}
+	return chunks;
+}
+
+export function matchingIndexesInTraceOrder(
+	tracepoints: Array<OsrmMatchTracepoint | null>,
+	matchingCount: number
+): number[] {
+	const seen = new Set<number>();
+	const indexes: number[] = [];
+
+	for (const tracepoint of tracepoints) {
+		if (!tracepoint) continue;
+		const index = tracepoint.matchings_index;
+		if (index < 0 || index >= matchingCount || seen.has(index)) continue;
+		seen.add(index);
+		indexes.push(index);
+	}
+
+	for (let i = 0; i < matchingCount; i++) {
+		if (!seen.has(i)) indexes.push(i);
+	}
+
+	return indexes;
+}
+
+async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
+	try {
+		return await getMatchChunk(points);
+	} catch (err) {
+		if (err instanceof OsrmApiError && err.code === 'NoMatch') {
+			return getRouteAsMatchResult(chunkEndpoints(points));
+		}
+		throw err;
+	}
+}
+
+async function getMatchChunk(points: Point[]): Promise<MatchResult> {
+	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
+	const params = new URLSearchParams({
+		overview: 'full',
+		geometries: 'polyline',
+		steps: 'false',
+		tidy: 'true',
+		radiuses: points.map(() => String(MATCH_RADIUS_METERS)).join(';'),
+		waypoints: `0;${points.length - 1}`
+	});
+	const url = `${OSRM_BASE_URL}/match/v1/${OSRM_PROFILE}/${coords}?${params.toString()}`;
+
+	const response = await fetch(url, { headers: { Accept: 'application/json' } });
+	const body = (await readOsrmJson(response)) as OsrmMatchResponse;
+	if (!response.ok) throw osrmApiError('match', response, body);
+	if (body.code !== 'Ok') {
+		throw osrmApiError('match', response, body);
+	}
+
+	const order = matchingIndexesInTraceOrder(body.tracepoints ?? [], body.matchings.length);
+	const matchings = order
+		.map((index) => body.matchings[index])
+		.filter((matching) => matching?.geometry);
+	if (matchings.length === 0) {
+		throw new Error('OSRM returned no match.');
+	}
+
+	return {
+		geometries: matchings.map((matching) => matching.geometry),
+		distance: matchings.reduce((sum, matching) => sum + matching.distance, 0),
+		duration: matchings.reduce((sum, matching) => sum + matching.duration, 0),
+		confidence: matchings.reduce((sum, matching) => sum + matching.confidence, 0) / matchings.length
+	};
+}
+
+async function getRouteAsMatchResult(points: Point[]): Promise<MatchResult> {
+	const route = await getRoute(points);
+	return {
+		geometries: [route.geometry],
+		distance: route.distance,
+		duration: route.duration,
+		confidence: 1
+	};
+}
+
+function chunkEndpoints(points: Point[]): Point[] {
+	return [points[0], points[points.length - 1]];
+}
+
+async function readOsrmJson(response: Response): Promise<OsrmBaseResponse> {
+	try {
+		return (await response.json()) as OsrmBaseResponse;
+	} catch {
+		return {
+			code: response.ok ? 'Ok' : 'HttpError',
+			message: `${response.status} ${response.statusText}`
+		};
+	}
+}
+
+function osrmApiError(
+	service: 'match' | 'route',
+	response: Response,
+	body: OsrmBaseResponse
+): OsrmApiError {
+	const code = body.code || 'HttpError';
+	const message = body.message || `${response.status} ${response.statusText}`;
+	return new OsrmApiError(service, code, `OSRM returned ${service} error: ${code} — ${message}`);
+}
+
+class OsrmApiError extends Error {
+	constructor(
+		readonly service: 'match' | 'route',
+		readonly code: string,
+		message: string
+	) {
+		super(message);
+		this.name = 'OsrmApiError';
+	}
+}
+
+type OsrmBaseResponse = {
+	code: string;
+	message?: string;
+};
+
 type OsrmRouteResponse = {
 	code: string;
 	message?: string;
@@ -61,5 +257,23 @@ type OsrmRouteResponse = {
 		geometry: string;
 		distance: number;
 		duration: number;
+	}>;
+};
+
+type OsrmMatchTracepoint = {
+	matchings_index: number;
+	waypoint_index: number;
+	alternatives_count: number;
+};
+
+type OsrmMatchResponse = {
+	code: string;
+	message?: string;
+	tracepoints?: Array<OsrmMatchTracepoint | null>;
+	matchings: Array<{
+		geometry: string;
+		distance: number;
+		duration: number;
+		confidence: number;
 	}>;
 };
