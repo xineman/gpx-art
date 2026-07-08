@@ -36,6 +36,44 @@
 		const target = event.currentTarget as HTMLInputElement;
 		sketch.setRouteDebugVisible(target.checked);
 	}
+
+	// Status pill for a batch. The pre-outcome pill was just `match` /
+	// `route`; now the per-chunk outcome drives the label and color so the
+	// user can see at a glance which /match calls were used as-is and
+	// which fell back to /route. The "matched 0.NN" confidence is the
+	// most informative single number for "is this match trustworthy?" so
+	// it's shown to two decimals (not verbose, and avoids a tooltip).
+	//
+	// Structured-shape batches keep the blue "route" pill — they have no
+	// fallback path and no outcome field.
+	type PillStyle = { label: string; classes: string };
+	function statusPill(batch: RouteDebugBatch): PillStyle {
+		if (batch.callKind === 'route') {
+			return { label: 'route', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
+		}
+		const outcome = batch.outcome;
+		if (!outcome) {
+			// Defensive: a plan that never had attachOutcomes applied (e.g.
+			// a future code path that builds the plan before calls return).
+			// Falls back to the original callKind pill so the row still
+			// reads as something meaningful.
+			return { label: batch.callKind, classes: 'bg-[#1e7d62]/15 text-[#1e7d62]' };
+		}
+		if (outcome.kind === 'matched') {
+			return {
+				label: `matched ${outcome.confidence.toFixed(2)}`,
+				classes: 'bg-emerald-100 text-emerald-800'
+			};
+		}
+		// Fallback. `code` is the OSRM error string ("NoMatch" or
+		// "LowConfidence"); humanize the latter to "low conf" to match the
+		// user's "not verbose" guidance and the "low confidence" example.
+		const reason = outcome.code === 'NoMatch' ? 'NoMatch' : 'low conf';
+		return {
+			label: `fallback · ${reason}`,
+			classes: 'bg-amber-100 text-amber-800'
+		};
+	}
 </script>
 
 {#if sketch.hasDrawing}
@@ -66,6 +104,7 @@
 				</span>
 				<ul class="flex flex-col gap-[3px] overflow-y-auto text-[12px] text-[#2c2924]">
 					{#each sketch.routeDebugBatches as batch (batch.shapeIndex + '-' + batch.chunkIndex)}
+						{@const pill = statusPill(batch)}
 						<li class="flex items-center gap-[8px]">
 							<span
 								aria-hidden="true"
@@ -78,12 +117,9 @@
 								<span class="text-[#2c2924]/75">{chunkLabel(batch)}</span>
 							</span>
 							<span
-								class="rounded-sm px-[5px] py-[1px] text-[10px] font-bold tracking-wide uppercase {batch.callKind ===
-								'match'
-									? 'bg-[#1e7d62]/15 text-[#1e7d62]'
-									: 'bg-[#1d4ed8]/15 text-[#1d4ed8]'}"
+								class="rounded-sm px-[5px] py-[1px] text-[10px] font-bold tracking-wide uppercase {pill.classes}"
 							>
-								{batch.callKind}
+								{pill.label}
 							</span>
 						</li>
 					{/each}

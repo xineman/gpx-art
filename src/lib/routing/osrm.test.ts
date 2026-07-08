@@ -102,6 +102,9 @@ describe('getMatchedRoute', () => {
 			`radiuses=${MATCH_RADIUS_WAYPOINT_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_WAYPOINT_METERS}`
 		);
 		expect(url).toContain('waypoints=0%3B5');
+		// 6 points fits one chunk (max 10) so chunkOutcomes is a single
+		// matched entry carrying the per-matching confidence.
+		expect(result.chunkOutcomes).toEqual([{ kind: 'matched', confidence: 0.8 }]);
 	});
 
 	test('dispatches all chunks in parallel rather than serially', async () => {
@@ -135,7 +138,7 @@ describe('getMatchedRoute', () => {
 		expect(result.geometries).toEqual(['g', 'g', 'g']);
 	});
 
-	test('falls back from NoMatch to a route between chunk endpoints only', async () => {
+	test('falls back from NoMatch to a /route through the full chunk points', async () => {
 		const points = Array.from({ length: 6 }, (_, i) => point(i));
 		const fetchMock = vi
 			.spyOn(globalThis, 'fetch')
@@ -159,13 +162,19 @@ describe('getMatchedRoute', () => {
 
 		expect(result.geometries).toEqual(['fallback']);
 		expect(fallbackUrl).toContain('/route/v1/bike/');
-		expect(fallbackUrl).toContain(`${points[0].lng},${points[0].lat}`);
-		expect(fallbackUrl).toContain(`${points.at(-1)?.lng},${points.at(-1)?.lat}`);
-		expect(fallbackUrl).not.toContain(`${points[1].lng},${points[1].lat}`);
+		// The fallback /route uses the FULL chunk points (not just endpoints)
+		// so the route still follows the shape's trajectory when /match
+		// rejects a chunk. See commit 6366b8e "Fix route fallback".
+		expect(fallbackUrl).toContain(points.map((p) => `${p.lng},${p.lat}`).join(';'));
 		expect(fetchMock).toHaveBeenCalledTimes(2);
+		// The chunk outcome captures why the fallback was needed so the
+		// batch debug legend can surface it.
+		expect(result.chunkOutcomes).toEqual([
+			{ kind: 'fallback', reason: 'no_match', code: 'NoMatch' }
+		]);
 	});
 
-	test('falls back from sub-threshold confidence to a route between chunk endpoints only', async () => {
+	test('falls back from sub-threshold confidence to a /route through the full chunk points', async () => {
 		const points = Array.from({ length: 6 }, (_, i) => point(i));
 		const lowConfidence = MATCH_CONFIDENCE_THRESHOLD - 0.01;
 		const fetchMock = vi
@@ -204,10 +213,11 @@ describe('getMatchedRoute', () => {
 
 		expect(result.geometries).toEqual(['fallback']);
 		expect(fallbackUrl).toContain('/route/v1/bike/');
-		expect(fallbackUrl).toContain(`${points[0].lng},${points[0].lat}`);
-		expect(fallbackUrl).toContain(`${points.at(-1)?.lng},${points.at(-1)?.lat}`);
-		expect(fallbackUrl).not.toContain(`${points[1].lng},${points[1].lat}`);
+		expect(fallbackUrl).toContain(points.map((p) => `${p.lng},${p.lat}`).join(';'));
 		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(result.chunkOutcomes).toEqual([
+			{ kind: 'fallback', reason: 'low_confidence', code: 'LowConfidence' }
+		]);
 	});
 
 	test('trusts matchings at or above the confidence threshold', async () => {
@@ -234,6 +244,91 @@ describe('getMatchedRoute', () => {
 
 		expect(result.geometries).toEqual(['trusted']);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(result.chunkOutcomes).toEqual([{ kind: 'matched', confidence: atThreshold }]);
+	});
+
+	test('emits one chunk outcome per chunk in dispatch order', async () => {
+		// 20 anchors → 3 overlapping chunks (stride = 10 - 2 = 8). All three
+		// /match calls succeed, so chunkOutcomes should have 3 matched entries
+		// in the order chunks were dispatched (Promise.all preserves order).
+		const points = Array.from({ length: 20 }, (_, i) => point(i));
+		const confidences = [0.91, 0.72, 0.85];
+		const fetchMock = vi.spyOn(globalThis, 'fetch');
+		for (const confidence of confidences) {
+			fetchMock.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+						matchings: [{ geometry: 'g', distance: 50, duration: 10, confidence }]
+					}),
+					{ status: 200 }
+				)
+			);
+		}
+
+		const result = await getMatchedRoute(points);
+
+		expect(result.chunkOutcomes).toEqual(
+			confidences.map((confidence) => ({ kind: 'matched', confidence }))
+		);
+	});
+
+	test('emits fallback outcomes for individual chunks that fail while others match', async () => {
+		// 20 anchors → 3 chunks. Middle chunk returns NoMatch, others match.
+		// Each chunk gets its own /route fallback (when needed) or stays as
+		// /match geometry; the outcome list interleaves matched and fallback
+		// entries in dispatch order so the legend can color them
+		// independently.
+		//
+		// Mock order matches fetch-call order: Promise.all issues all three
+		// /match fetches in chunk order before any resolve, so the /route
+		// fallback for the failing chunk only fires AFTER chunk 1's /match
+		// returns NoMatch — meaning the fallback is the 4th fetch, not the
+		// 3rd.
+		const points = Array.from({ length: 20 }, (_, i) => point(i));
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+						matchings: [{ geometry: 'g1', distance: 50, duration: 10, confidence: 0.9 }]
+					}),
+					{ status: 200 }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ code: 'NoMatch', matchings: [] }), { status: 400 })
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+						matchings: [{ geometry: 'g3', distance: 50, duration: 10, confidence: 0.8 }]
+					}),
+					{ status: 200 }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						routes: [{ geometry: 'fallback2', distance: 100, duration: 20 }]
+					}),
+					{ status: 200 }
+				)
+			);
+
+		const result = await getMatchedRoute(points);
+
+		expect(result.geometries).toEqual(['g1', 'fallback2', 'g3']);
+		expect(result.chunkOutcomes).toEqual([
+			{ kind: 'matched', confidence: 0.9 },
+			{ kind: 'fallback', reason: 'no_match', code: 'NoMatch' },
+			{ kind: 'matched', confidence: 0.8 }
+		]);
 	});
 
 	test('does not fallback for non-NoMatch OSRM errors', async () => {

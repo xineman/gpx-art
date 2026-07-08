@@ -1,4 +1,4 @@
-import { chunkPointsForMatch } from './osrm';
+import { chunkPointsForMatch, type ChunkOutcome } from './osrm';
 import { MATCH_DEBUG_PALETTE } from '$lib/constants/routing';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 
@@ -36,6 +36,13 @@ export interface RouteDebugBatch {
 	// Exclusive end index. startIndex/endIndex are 0..N for a shape whose
 	// sample+rdp produced N points.
 	endIndex: number;
+	// Outcome of the actual OSRM call for this batch. Undefined for the
+	// `route` callKind (structured shapes never fall back) and for any
+	// batch whose /match call hadn't been issued yet at the time the panel
+	// reads it (e.g. when the plan is shown before completion). Populated
+	// post-hoc by attachOutcomes once getMatchedRoute has returned its
+	// per-chunk outcome list.
+	outcome?: ChunkOutcome;
 }
 
 // Build the per-call debug plan from the TSP-ordered shapes and the points
@@ -113,4 +120,30 @@ export function buildRoutePlan(
 	}
 
 	return batches;
+}
+
+// Attach per-chunk outcomes to the batches produced by buildRoutePlan.
+//
+// `chunkOutcomesByShape` is aligned with the same TSP-solved order the plan
+// was built from: chunkOutcomesByShape[i] is the per-chunk outcome list
+// returned by getMatchedRoute for the i-th TSP-ordered shape (in chunk
+// dispatch order). Undefined entries mean the shape didn't dispatch /match
+// calls — typically non-pencil shapes, which go through /route and have no
+// fallback path. Structured-shape batches are returned with `outcome`
+// still unset so the legend keeps showing the blue `route` pill.
+//
+// Returns a new array; the input `plan` is never mutated so callers that
+// want to keep the original around (e.g. for a future diff view) can.
+// Defensive: a short outcomes array leaves later batches with no outcome
+// rather than throwing — that lets the legend fall back to its existing
+// pre-outcome render for any partially-built plan.
+export function attachOutcomes(
+	plan: readonly RouteDebugBatch[],
+	chunkOutcomesByShape: ReadonlyArray<readonly ChunkOutcome[] | undefined>
+): RouteDebugBatch[] {
+	return plan.map((batch) => {
+		const shapeOutcomes = chunkOutcomesByShape[batch.shapeIndex];
+		const outcome = shapeOutcomes?.[batch.chunkIndex];
+		return outcome ? { ...batch, outcome } : batch;
+	});
 }
