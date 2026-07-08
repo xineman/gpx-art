@@ -43,18 +43,19 @@ export const OSRM_PROFILE = 'bike';
 //     snap at this radius, so /match doesn't reject the whole chunk on
 //     `NoMatch`. Tracepoints stay at 30 m for fast HMM.
 //
-// MATCH_CONFIDENCE_THRESHOLD is the per-matching minimum score we trust.
-// /match can return a matching with confidence close to 0 when most
-// tracepoints were dropped (e.g. one waypoint was 200+ m from any road but
-// still "matched" because the relaxed radius accepted it). Such matchings
-// produce a path indistinguishable from the /route fallback but with
-// added latency. Discard them and force the /route fallback.
+// OSRM /match also reports a per-matching `confidence` score, but the score
+// reflects HMM hypothesis-spread (how many plausible candidate roads the
+// chunk could match) rather than route usability. Pencil traces are
+// systematically low-confidence even when the matched geometry is correct,
+// because the tracepoints are collinear — every nearby road looks equally
+// plausible. We therefore trust every /match result OSRM returns and only
+// fall back to /route on a hard `NoMatch` (a waypoint couldn't snap inside
+// its radius).
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
 export const MATCH_RADIUS_METERS = 30;
 export const MATCH_RADIUS_WAYPOINT_METERS = 100;
-export const MATCH_CONFIDENCE_THRESHOLD = 0.5;
 
 // Eight-hue palette used by the /match batch debug overlay (see
 // $lib/routing/batchPlan). Each batch of points the routing pipeline sends to

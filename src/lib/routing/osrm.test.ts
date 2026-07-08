@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import {
-	MATCH_CONFIDENCE_THRESHOLD,
-	MATCH_RADIUS_METERS,
-	MATCH_RADIUS_WAYPOINT_METERS
-} from '$lib/constants/routing';
+import { MATCH_RADIUS_METERS, MATCH_RADIUS_WAYPOINT_METERS } from '$lib/constants/routing';
 import { chunkPointsForMatch, getMatchedRoute, matchingIndexesInTraceOrder } from './osrm';
 
 const point = (n: number) => ({ lat: 52 + n * 0.001, lng: 21 + n * 0.001 });
@@ -170,81 +166,8 @@ describe('getMatchedRoute', () => {
 		// The chunk outcome captures why the fallback was needed so the
 		// batch debug legend can surface it.
 		expect(result.chunkOutcomes).toEqual([
-			{ kind: 'fallback', reason: 'no_match', code: 'NoMatch' }
+			{ kind: 'fallback', code: 'NoMatch' }
 		]);
-	});
-
-	test('falls back from sub-threshold confidence to a /route through the full chunk points', async () => {
-		const points = Array.from({ length: 6 }, (_, i) => point(i));
-		const lowConfidence = MATCH_CONFIDENCE_THRESHOLD - 0.01;
-		const fetchMock = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						code: 'Ok',
-						tracepoints: [
-							{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 },
-							null,
-							null,
-							null,
-							null,
-							{ matchings_index: 0, waypoint_index: 1, alternatives_count: 0 }
-						],
-						matchings: [
-							{ geometry: 'lowconf', distance: 100, duration: 20, confidence: lowConfidence }
-						]
-					}),
-					{ status: 200 }
-				)
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						code: 'Ok',
-						routes: [{ geometry: 'fallback', distance: 200, duration: 40 }]
-					}),
-					{ status: 200 }
-				)
-			);
-
-		const result = await getMatchedRoute(points);
-		const fallbackUrl = String(fetchMock.mock.calls[1][0]);
-
-		expect(result.geometries).toEqual(['fallback']);
-		expect(fallbackUrl).toContain('/route/v1/bike/');
-		expect(fallbackUrl).toContain(points.map((p) => `${p.lng},${p.lat}`).join(';'));
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(result.chunkOutcomes).toEqual([
-			{ kind: 'fallback', reason: 'low_confidence', code: 'LowConfidence' }
-		]);
-	});
-
-	test('trusts matchings at or above the confidence threshold', async () => {
-		const atThreshold = MATCH_CONFIDENCE_THRESHOLD;
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					code: 'Ok',
-					tracepoints: [
-						{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 },
-						{ matchings_index: 0, waypoint_index: null, alternatives_count: 0 },
-						{ matchings_index: 0, waypoint_index: null, alternatives_count: 0 },
-						{ matchings_index: 0, waypoint_index: null, alternatives_count: 0 },
-						{ matchings_index: 0, waypoint_index: null, alternatives_count: 0 },
-						{ matchings_index: 0, waypoint_index: 1, alternatives_count: 0 }
-					],
-					matchings: [{ geometry: 'trusted', distance: 100, duration: 20, confidence: atThreshold }]
-				}),
-				{ status: 200 }
-			)
-		);
-
-		const result = await getMatchedRoute(Array.from({ length: 6 }, (_, i) => point(i)));
-
-		expect(result.geometries).toEqual(['trusted']);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(result.chunkOutcomes).toEqual([{ kind: 'matched', confidence: atThreshold }]);
 	});
 
 	test('emits one chunk outcome per chunk in dispatch order', async () => {
@@ -326,7 +249,7 @@ describe('getMatchedRoute', () => {
 		expect(result.geometries).toEqual(['g1', 'fallback2', 'g3']);
 		expect(result.chunkOutcomes).toEqual([
 			{ kind: 'matched', confidence: 0.9 },
-			{ kind: 'fallback', reason: 'no_match', code: 'NoMatch' },
+			{ kind: 'fallback', code: 'NoMatch' },
 			{ kind: 'matched', confidence: 0.8 }
 		]);
 	});

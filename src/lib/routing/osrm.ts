@@ -1,6 +1,5 @@
 import {
 	MATCH_CHUNK_OVERLAP,
-	MATCH_CONFIDENCE_THRESHOLD,
 	MATCH_MAX_POINTS,
 	MATCH_RADIUS_METERS,
 	MATCH_RADIUS_WAYPOINT_METERS,
@@ -16,22 +15,16 @@ export type RouteResult = {
 };
 
 // Per-chunk outcome for a /match call: either the match was used as-is
-// (with the avg confidence across its confident matchings) or the pipeline
-// fell through to /route because /match returned NoMatch (a waypoint
-// couldn't snap inside its radius) or LowConfidence (matchings existed but
-// the HMM was below MATCH_CONFIDENCE_THRESHOLD). Surfaced via the batch
-// debug legend so the user can see which chunks needed the fallback and why.
+// (with the avg confidence across its matchings) or the pipeline fell
+// through to /route because /match returned NoMatch (a waypoint couldn't
+// snap inside its radius). Surfaced via the batch debug legend so the user
+// can see which chunks needed the fallback and why.
 //
-// `code` keeps OSRM's exact reason string for the legend (e.g. "NoMatch").
-// `reason` is a stable discriminator for code-based UI logic; new OSRM codes
-// would need an explicit mapping here to keep the discriminator exhaustive.
+// `code` keeps OSRM's exact reason string for the legend; introducing a new
+// fallback reason would extend the discriminated union here.
 export type ChunkOutcome =
 	| { kind: 'matched'; confidence: number }
-	| {
-			kind: 'fallback';
-			reason: 'no_match' | 'low_confidence';
-			code: 'NoMatch' | 'LowConfidence';
-	  };
+	| { kind: 'fallback'; code: 'NoMatch' };
 
 export type MatchResult = {
 	geometries: string[];
@@ -195,15 +188,13 @@ async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 	try {
 		return await getMatchChunk(points);
 	} catch (err) {
-		// NoMatch (whole chunk rejected because a waypoint couldn't snap) and
-		// LowConfidence (chunk matched but HMM was too uncertain to trust)
-		// both fall through to /route with the full chunk points (not just
-		// endpoints), so the route still follows the shape's trajectory.
-		// The error code is captured into the chunk outcome so the batch
+		// Whole chunk rejected because a waypoint couldn't snap inside its
+		// radius. Fall through to /route with the full chunk points (not just
+		// endpoints) so the route still follows the shape's trajectory. The
+		// NoMatch code is captured into the chunk outcome so the batch
 		// debug legend can surface per-chunk why the fallback was needed.
-		if (err instanceof OsrmApiError && (err.code === 'NoMatch' || err.code === 'LowConfidence')) {
-			const reason = err.code === 'NoMatch' ? 'no_match' : 'low_confidence';
-			return getRouteAsMatchResult(points, reason, err.code);
+		if (err instanceof OsrmApiError && err.code === 'NoMatch') {
+			return getRouteAsMatchResult(points);
 		}
 		throw err;
 	}
@@ -245,51 +236,29 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 		throw new Error('OSRM returned no match.');
 	}
 
-	// /match can succeed with confidence close to 0 when most tracepoints
-	// were dropped or when a waypoint was snapped far outside the typical
-	// road network (e.g. anchor 200+ m from any road but accepted by the
-	// relaxed waypoint radius). The resulting geometry is visually no
-	// better than the /route fallback and adds latency. Treat sub-threshold
-	// matchings as no result so getBestRouteForChunk falls through to /route.
-	const confident = matchings.filter(
-		(matching) => matching.confidence >= MATCH_CONFIDENCE_THRESHOLD
+	const totalConfidence = matchings.reduce(
+		(sum, matching) => sum + matching.confidence,
+		0
 	);
-	if (confident.length === 0) {
-		throw new OsrmApiError(
-			'match',
-			'LowConfidence',
-			`OSRM match confidence below ${MATCH_CONFIDENCE_THRESHOLD} for chunk — falling back to /route`
-		);
-	}
+	const avgConfidence = totalConfidence / matchings.length;
 
 	return {
-		geometries: confident.map((matching) => matching.geometry),
-		distance: confident.reduce((sum, matching) => sum + matching.distance, 0),
-		duration: confident.reduce((sum, matching) => sum + matching.duration, 0),
-		confidence:
-			confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length,
-		chunkOutcomes: [
-			{
-				kind: 'matched',
-				confidence:
-					confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length
-			}
-		]
+		geometries: matchings.map((matching) => matching.geometry),
+		distance: matchings.reduce((sum, matching) => sum + matching.distance, 0),
+		duration: matchings.reduce((sum, matching) => sum + matching.duration, 0),
+		confidence: avgConfidence,
+		chunkOutcomes: [{ kind: 'matched', confidence: avgConfidence }]
 	};
 }
 
-async function getRouteAsMatchResult(
-	points: Point[],
-	reason: 'no_match' | 'low_confidence',
-	code: 'NoMatch' | 'LowConfidence'
-): Promise<MatchResult> {
+async function getRouteAsMatchResult(points: Point[]): Promise<MatchResult> {
 	const route = await getRoute(points);
 	return {
 		geometries: [route.geometry],
 		distance: route.distance,
 		duration: route.duration,
 		confidence: 1,
-		chunkOutcomes: [{ kind: 'fallback', reason, code }]
+		chunkOutcomes: [{ kind: 'fallback', code: 'NoMatch' }]
 	};
 }
 

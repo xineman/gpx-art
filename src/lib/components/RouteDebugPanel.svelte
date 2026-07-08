@@ -65,12 +65,12 @@
 				classes: 'bg-emerald-100 text-emerald-800'
 			};
 		}
-		// Fallback. `code` is the OSRM error string ("NoMatch" or
-		// "LowConfidence"); humanize the latter to "low conf" to match the
-		// user's "not verbose" guidance and the "low confidence" example.
-		const reason = outcome.code === 'NoMatch' ? 'NoMatch' : 'low conf';
+		// Fallback. `code` is the OSRM error string that triggered the /route
+		// fallback (currently only `NoMatch`). The discriminator stays in the
+		// shape so a future error type can be humanized here without changing
+		// the legend pill.
 		return {
-			label: `fallback · ${reason}`,
+			label: `fallback · ${outcome.code}`,
 			classes: 'bg-amber-100 text-amber-800'
 		};
 	}

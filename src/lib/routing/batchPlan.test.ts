@@ -154,22 +154,14 @@ describe('attachOutcomes', () => {
 			[
 				{ kind: 'matched' as const, confidence: 0.91 },
 				{ kind: 'matched' as const, confidence: 0.84 },
-				{
-					kind: 'fallback' as const,
-					reason: 'low_confidence' as const,
-					code: 'LowConfidence' as const
-				}
+				{ kind: 'fallback' as const, code: 'NoMatch' as const }
 			],
 			undefined // rectangle has no /match chunks
 		]);
 
 		expect(withOutcomes[0].outcome).toEqual({ kind: 'matched', confidence: 0.91 });
 		expect(withOutcomes[1].outcome).toEqual({ kind: 'matched', confidence: 0.84 });
-		expect(withOutcomes[2].outcome).toEqual({
-			kind: 'fallback',
-			reason: 'low_confidence',
-			code: 'LowConfidence'
-		});
+		expect(withOutcomes[2].outcome).toEqual({ kind: 'fallback', code: 'NoMatch' });
 		expect(withOutcomes[3].outcome).toBeUndefined();
 	});
 
