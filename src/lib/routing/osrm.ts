@@ -15,11 +15,34 @@ export type RouteResult = {
 	duration: number;
 };
 
+// Per-chunk outcome for a /match call: either the match was used as-is
+// (with the avg confidence across its confident matchings) or the pipeline
+// fell through to /route because /match returned NoMatch (a waypoint
+// couldn't snap inside its radius) or LowConfidence (matchings existed but
+// the HMM was below MATCH_CONFIDENCE_THRESHOLD). Surfaced via the batch
+// debug legend so the user can see which chunks needed the fallback and why.
+//
+// `code` keeps OSRM's exact reason string for the legend (e.g. "NoMatch").
+// `reason` is a stable discriminator for code-based UI logic; new OSRM codes
+// would need an explicit mapping here to keep the discriminator exhaustive.
+export type ChunkOutcome =
+	| { kind: 'matched'; confidence: number }
+	| {
+			kind: 'fallback';
+			reason: 'no_match' | 'low_confidence';
+			code: 'NoMatch' | 'LowConfidence';
+	  };
+
 export type MatchResult = {
 	geometries: string[];
 	distance: number;
 	duration: number;
 	confidence: number;
+	// One entry per chunk dispatched, in dispatch order. For chunk-level
+	// callers (getMatchChunk, getBestRouteForChunk, getRouteAsMatchResult)
+	// this is always a single-element array; getMatchedRoute concatenates
+	// them into the final per-shape list.
+	chunkOutcomes: ChunkOutcome[];
 };
 
 // Thin wrapper around OSRM /route. Waypoints are ordered — this function does
@@ -91,12 +114,17 @@ export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 	const results = await Promise.all(chunks.map((chunk) => getBestRouteForChunk(chunk)));
 
 	const geometries: string[] = [];
+	const chunkOutcomes: ChunkOutcome[] = [];
 	let distance = 0;
 	let duration = 0;
 	let confidenceSum = 0;
 	let matchingCount = 0;
 	for (const result of results) {
 		geometries.push(...result.geometries);
+		// Each chunk-level MatchResult has exactly one ChunkOutcome describing
+		// that chunk's dispatch outcome. Concatenate in dispatch order so the
+		// returned list aligns with `chunks`.
+		chunkOutcomes.push(...result.chunkOutcomes);
 		distance += result.distance;
 		duration += result.duration;
 		confidenceSum += result.confidence * result.geometries.length;
@@ -107,7 +135,8 @@ export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 		geometries,
 		distance,
 		duration,
-		confidence: matchingCount > 0 ? confidenceSum / matchingCount : 0
+		confidence: matchingCount > 0 ? confidenceSum / matchingCount : 0,
+		chunkOutcomes
 	};
 }
 
@@ -170,8 +199,11 @@ async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 		// LowConfidence (chunk matched but HMM was too uncertain to trust)
 		// both fall through to /route with the full chunk points (not just
 		// endpoints), so the route still follows the shape's trajectory.
+		// The error code is captured into the chunk outcome so the batch
+		// debug legend can surface per-chunk why the fallback was needed.
 		if (err instanceof OsrmApiError && (err.code === 'NoMatch' || err.code === 'LowConfidence')) {
-			return getRouteAsMatchResult(points);
+			const reason = err.code === 'NoMatch' ? 'no_match' : 'low_confidence';
+			return getRouteAsMatchResult(points, reason, err.code);
 		}
 		throw err;
 	}
@@ -234,17 +266,30 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 		geometries: confident.map((matching) => matching.geometry),
 		distance: confident.reduce((sum, matching) => sum + matching.distance, 0),
 		duration: confident.reduce((sum, matching) => sum + matching.duration, 0),
-		confidence: confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length
+		confidence:
+			confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length,
+		chunkOutcomes: [
+			{
+				kind: 'matched',
+				confidence:
+					confident.reduce((sum, matching) => sum + matching.confidence, 0) / confident.length
+			}
+		]
 	};
 }
 
-async function getRouteAsMatchResult(points: Point[]): Promise<MatchResult> {
+async function getRouteAsMatchResult(
+	points: Point[],
+	reason: 'no_match' | 'low_confidence',
+	code: 'NoMatch' | 'LowConfidence'
+): Promise<MatchResult> {
 	const route = await getRoute(points);
 	return {
 		geometries: [route.geometry],
 		distance: route.distance,
 		duration: route.duration,
-		confidence: 1
+		confidence: 1,
+		chunkOutcomes: [{ kind: 'fallback', reason, code }]
 	};
 }
 

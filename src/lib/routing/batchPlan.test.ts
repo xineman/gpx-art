@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildRoutePlan } from './batchPlan';
+import { attachOutcomes, buildRoutePlan } from './batchPlan';
 import { MATCH_DEBUG_PALETTE } from '$lib/constants/routing';
 import type { Point, Shape } from '$lib/types/sketch';
 
@@ -106,5 +106,103 @@ describe('buildRoutePlan', () => {
 
 		expect(plan).toHaveLength(2);
 		expect(plan.map((b) => b.points.length)).toEqual([10, 3]);
+	});
+});
+
+describe('attachOutcomes', () => {
+	test('attaches each outcome to the matching (shapeIndex, chunkIndex) batch', () => {
+		// Single pencil shape, 25 points → 3 chunks. Pick distinct outcomes
+		// per chunk to confirm the zip is by (shapeIndex, chunkIndex), not
+		// just by batch order.
+		const points = Array.from({ length: 25 }, (_, i) => point(i * 0.001, i * 0.001));
+		const plan = buildRoutePlan([shape('a', 'pencil', points)], [points]);
+		const outcomes = [
+			{ kind: 'matched' as const, confidence: 0.91 },
+			{ kind: 'fallback' as const, reason: 'no_match' as const, code: 'NoMatch' as const },
+			{ kind: 'matched' as const, confidence: 0.74 }
+		];
+
+		const withOutcomes = attachOutcomes(plan, [outcomes]);
+
+		expect(withOutcomes.map((b) => b.outcome)).toEqual(outcomes);
+	});
+
+	test('leaves structured-shape batches with no outcome', () => {
+		// Rectangle has no /match chunks and no fallback path — its batch
+		// must keep `outcome: undefined` so the legend renders the blue
+		// `route` pill instead of a matched/fallback pill.
+		const rectangle = [point(0, 0), point(0, 1), point(1, 1), point(1, 0)];
+		const plan = buildRoutePlan([shape('a', 'rectangle', rectangle)], [rectangle]);
+
+		const withOutcomes = attachOutcomes(plan, [undefined]);
+
+		expect(withOutcomes[0].outcome).toBeUndefined();
+	});
+
+	test('mixes matched and fallback outcomes across multiple shapes', () => {
+		// Pencil shape (3 chunks, shapeIndex 0) + rectangle (1 batch,
+		// shapeIndex 1). The pencil chunks get per-chunk outcomes, the
+		// rectangle batch stays undefined.
+		const pencil = Array.from({ length: 25 }, (_, i) => point(i * 0.001, i * 0.001));
+		const rectangle = [point(0, 0), point(0, 1), point(1, 1), point(1, 0)];
+		const plan = buildRoutePlan(
+			[shape('a', 'pencil', pencil), shape('b', 'rectangle', rectangle)],
+			[pencil, rectangle]
+		);
+
+		const withOutcomes = attachOutcomes(plan, [
+			[
+				{ kind: 'matched' as const, confidence: 0.91 },
+				{ kind: 'matched' as const, confidence: 0.84 },
+				{
+					kind: 'fallback' as const,
+					reason: 'low_confidence' as const,
+					code: 'LowConfidence' as const
+				}
+			],
+			undefined // rectangle has no /match chunks
+		]);
+
+		expect(withOutcomes[0].outcome).toEqual({ kind: 'matched', confidence: 0.91 });
+		expect(withOutcomes[1].outcome).toEqual({ kind: 'matched', confidence: 0.84 });
+		expect(withOutcomes[2].outcome).toEqual({
+			kind: 'fallback',
+			reason: 'low_confidence',
+			code: 'LowConfidence'
+		});
+		expect(withOutcomes[3].outcome).toBeUndefined();
+	});
+
+	test('does not mutate the input plan', () => {
+		const points = Array.from({ length: 25 }, (_, i) => point(i * 0.001, i * 0.001));
+		const plan = buildRoutePlan([shape('a', 'pencil', points)], [points]);
+		const before = JSON.stringify(plan);
+
+		attachOutcomes(plan, [
+			[
+				{ kind: 'matched' as const, confidence: 0.91 },
+				{ kind: 'matched' as const, confidence: 0.84 },
+				{ kind: 'matched' as const, confidence: 0.74 }
+			]
+		]);
+
+		expect(JSON.stringify(plan)).toBe(before);
+	});
+
+	test('leaves later batches without outcomes when the array is short', () => {
+		// Defensive: if attachOutcomes ever sees an outcomes array shorter
+		// than the plan (e.g. a partial build during a streaming render),
+		// the missing batches should stay `outcome: undefined` rather than
+		// throw — the panel's defensive branch in statusPill() handles them.
+		const points = Array.from({ length: 25 }, (_, i) => point(i * 0.001, i * 0.001));
+		const plan = buildRoutePlan([shape('a', 'pencil', points)], [points]);
+
+		const withOutcomes = attachOutcomes(plan, [
+			[{ kind: 'matched' as const, confidence: 0.91 }] // only chunk 0
+		]);
+
+		expect(withOutcomes[0].outcome).toEqual({ kind: 'matched', confidence: 0.91 });
+		expect(withOutcomes[1].outcome).toBeUndefined();
+		expect(withOutcomes[2].outcome).toBeUndefined();
 	});
 });

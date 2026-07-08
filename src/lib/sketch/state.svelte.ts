@@ -3,9 +3,9 @@ import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
 import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
-import { buildRoutePlan, type RouteDebugBatch } from '$lib/routing/batchPlan';
+import { buildRoutePlan, type RouteDebugBatch, attachOutcomes } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
-import { getMatchedRoute, getRoute } from '$lib/routing/osrm';
+import { getMatchedRoute, getRoute, type ChunkOutcome } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
 import { simplifyRdp } from '$lib/routing/rdp';
 import { sampleTrace } from '$lib/routing/sample';
@@ -485,6 +485,13 @@ export class SketchState implements SketchStateLike {
 			// the loop to populate routeDebugBatches — the visualization
 			// shows exactly what the API received.
 			const processedPoints: Point[][] = [];
+			// Per-chunk /match outcomes aligned with `order` (so the i-th
+			// entry corresponds to the i-th TSP-ordered shape). Pencil
+			// shapes push the chunkOutcomes list returned by
+			// getMatchedRoute; non-pencil shapes push undefined because
+			// their single /route call has no fallback path. attachOutcomes
+			// below uses this to populate `outcome` on each batch.
+			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
 			for (let i = 0; i < order.length; i++) {
 				const shape = shapes[order[i]];
 				const isClosed = shape.type === 'polygon' || shape.type === 'rectangle';
@@ -532,7 +539,8 @@ export class SketchState implements SketchStateLike {
 					// /match handles the noise and outliers that pencil
 					// strokes accumulate. The HMM can drop tracepoints that
 					// don't snap, which is the reason /match exists.
-					const { geometries } = await getMatchedRoute(pts);
+					const { geometries, chunkOutcomes } = await getMatchedRoute(pts);
+					chunkOutcomesByShape.push(chunkOutcomes);
 					for (const geometry of geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
@@ -542,6 +550,7 @@ export class SketchState implements SketchStateLike {
 					// via the RDP'd anchors is exact and ~20× faster than
 					// /match for these — the public demo's `TooBig`
 					// radius rejection goes away too.
+					chunkOutcomesByShape.push(undefined);
 					const { geometry } = await getRoute(pts);
 					await appendGeometryToPath(polylines, geometry);
 				}
@@ -567,10 +576,13 @@ export class SketchState implements SketchStateLike {
 			this.routedPath = polylines;
 
 			// Build the /match batch debug plan from the SAME points we
-			// just sent to OSRM. Persisted on the state so the legend
-			// and on-map overlay can render via renderRouteDebug.
+			// just sent to OSRM, then attach the per-chunk outcomes so the
+			// legend can show whether /match was used or fell back to /route.
+			// Persisted on the state so the legend and on-map overlay can
+			// render via renderRouteDebug.
 			const orderedShapes = order.map((idx) => shapes[idx]);
-			this.routeDebugBatches = buildRoutePlan(orderedShapes, processedPoints);
+			const plan = buildRoutePlan(orderedShapes, processedPoints);
+			this.routeDebugBatches = attachOutcomes(plan, chunkOutcomesByShape);
 
 			this.phase = 'routed';
 			this.routeBusy = false;
