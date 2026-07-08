@@ -168,11 +168,10 @@ async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 	} catch (err) {
 		// NoMatch (whole chunk rejected because a waypoint couldn't snap) and
 		// LowConfidence (chunk matched but HMM was too uncertain to trust)
-		// both fall through to the same /route-between-endpoints path. The
-		// /match call still paid latency, so this only fires for the tail of
-		// chunks the /match path can't handle cleanly.
+		// both fall through to /route with the full chunk points (not just
+		// endpoints), so the route still follows the shape's trajectory.
 		if (err instanceof OsrmApiError && (err.code === 'NoMatch' || err.code === 'LowConfidence')) {
-			return getRouteAsMatchResult(chunkEndpoints(points));
+			return getRouteAsMatchResult(points);
 		}
 		throw err;
 	}
@@ -247,10 +246,6 @@ async function getRouteAsMatchResult(points: Point[]): Promise<MatchResult> {
 		duration: route.duration,
 		confidence: 1
 	};
-}
-
-function chunkEndpoints(points: Point[]): Point[] {
-	return [points[0], points[points.length - 1]];
 }
 
 async function readOsrmJson(response: Response): Promise<OsrmBaseResponse> {
