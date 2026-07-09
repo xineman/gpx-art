@@ -4,9 +4,11 @@
 		CORNER_INSET_DEFAULT_METERS,
 		CORNER_INSET_MAX_METERS,
 		CORNER_INSET_MIN_METERS,
-		ROUTE_FIDELITIES,
-		fidelityLabel,
-		type RouteFidelity
+		FIDELITY_LEVEL_DEFAULT,
+		FIDELITY_LEVEL_MAX,
+		FIDELITY_LEVEL_MIN,
+		FIDELITY_LEVEL_STEP,
+		fidelityLevelLabel
 	} from '$lib/routing/options';
 	import { neutralActionButton } from '$lib/constants/styles';
 	import type { SketchState } from '$lib/sketch/state.svelte';
@@ -21,17 +23,12 @@
 	};
 	let { sketch, open = false, onOpenChange, class: extraClass = '' }: Props = $props();
 
-	const fidelityHint: Record<RouteFidelity, string> = {
-		loose: 'Prefers simpler roads; freehand can wander more',
-		balanced: 'Default — good for most sketches',
-		strict: 'Stays closer to your sketch (may take longer)'
-	};
-
 	let menuButton: HTMLButtonElement | undefined = $state();
 	let menuElement: HTMLElement | undefined = $state();
 
 	let isNonDefault = $derived(
-		sketch.routeFidelity !== 'balanced' || sketch.cornerInsetMeters !== CORNER_INSET_DEFAULT_METERS
+		sketch.routeFidelityLevel !== FIDELITY_LEVEL_DEFAULT ||
+			sketch.cornerInsetMeters !== CORNER_INSET_DEFAULT_METERS
 	);
 
 	function setOpen(value: boolean) {
@@ -42,11 +39,9 @@
 		setOpen(!open);
 	}
 
-	function onFidelityChange(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value;
-		if (value === 'loose' || value === 'balanced' || value === 'strict') {
-			sketch.setRouteFidelity(value);
-		}
+	function onFidelityInput(event: Event) {
+		const value = Number((event.currentTarget as HTMLInputElement).value);
+		sketch.setRouteFidelityLevel(value);
 	}
 
 	function onCornerInput(event: Event) {
@@ -55,7 +50,7 @@
 	}
 
 	function resetDefaults() {
-		sketch.setRouteFidelity('balanced');
+		sketch.setRouteFidelityLevel(FIDELITY_LEVEL_DEFAULT);
 		sketch.setCornerInsetMeters(CORNER_INSET_DEFAULT_METERS);
 	}
 
@@ -126,24 +121,64 @@
 				</button>
 			</header>
 
-			<label class="flex flex-col gap-[4px]">
+			<div class="flex flex-col gap-[4px]">
 				<span class="text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase">
 					Follow sketch
 				</span>
-				<select
-					class="min-h-[32px] cursor-pointer rounded-md border border-[#2c2924]/15 bg-[#efe1b9] px-[8px] text-[13px] font-bold text-[#2c2924] outline-none focus-visible:ring-2 focus-visible:ring-[#1e7d62]/40"
-					value={sketch.routeFidelity}
-					onchange={onFidelityChange}
+				<input
+					type="range"
+					min={FIDELITY_LEVEL_MIN}
+					max={FIDELITY_LEVEL_MAX}
+					step={FIDELITY_LEVEL_STEP}
+					value={sketch.routeFidelityLevel}
+					oninput={onFidelityInput}
+					class="h-[6px] w-full cursor-pointer accent-[#1e7d62]"
+					aria-label="Follow sketch fidelity"
 					aria-describedby="fidelity-hint"
+					aria-valuetext={fidelityLevelLabel(sketch.routeFidelityLevel)}
+					title="How tightly the route hugs freehand and long edges"
+				/>
+				<!-- Map-scale style ticks: named anchors for the continuum. -->
+				<div
+					class="flex justify-between gap-[4px] text-[10px] font-bold tracking-wide text-[#67604f] uppercase"
+					role="group"
+					aria-label="Fidelity anchors"
 				>
-					{#each ROUTE_FIDELITIES as fidelity (fidelity)}
-						<option value={fidelity}>{fidelityLabel(fidelity)}</option>
-					{/each}
-				</select>
+					<button
+						type="button"
+						class="cursor-pointer border-0 bg-transparent p-0 text-inherit hover:text-[#1e7d62] {sketch.routeFidelityLevel ===
+						FIDELITY_LEVEL_MIN
+							? 'text-[#1e7d62]'
+							: ''}"
+						onclick={() => sketch.setRouteFidelityLevel(FIDELITY_LEVEL_MIN)}
+					>
+						Loose
+					</button>
+					<button
+						type="button"
+						class="cursor-pointer border-0 bg-transparent p-0 text-inherit hover:text-[#1e7d62] {sketch.routeFidelityLevel ===
+						FIDELITY_LEVEL_DEFAULT
+							? 'text-[#1e7d62]'
+							: ''}"
+						onclick={() => sketch.setRouteFidelityLevel(FIDELITY_LEVEL_DEFAULT)}
+					>
+						Balanced
+					</button>
+					<button
+						type="button"
+						class="cursor-pointer border-0 bg-transparent p-0 text-inherit hover:text-[#1e7d62] {sketch.routeFidelityLevel ===
+						FIDELITY_LEVEL_MAX
+							? 'text-[#1e7d62]'
+							: ''}"
+						onclick={() => sketch.setRouteFidelityLevel(FIDELITY_LEVEL_MAX)}
+					>
+						Strict
+					</button>
+				</div>
 				<span id="fidelity-hint" class="text-[11px] leading-[1.3] text-[#67604f]">
-					{fidelityHint[sketch.routeFidelity]}
+					How tightly the route hugs freehand and long edges.
 				</span>
-			</label>
+			</div>
 
 			<label class="flex flex-col gap-[4px]">
 				<span class="flex items-baseline justify-between gap-[8px]">

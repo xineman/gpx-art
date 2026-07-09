@@ -9,10 +9,12 @@ import { getRoute, type RouteResult } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
 import {
 	clampCornerInset,
+	clampFidelityLevel,
 	CORNER_INSET_DEFAULT_METERS,
+	FIDELITY_LEVEL_DEFAULT,
+	fidelityToLevel,
 	isRouteFidelity,
 	resolveRoutingOptions,
-	type RouteFidelity,
 	type RoutingOptions
 } from '$lib/routing/options';
 import {
@@ -87,10 +89,10 @@ export class SketchState implements SketchStateLike {
 	routeDebugVisible = $state(false);
 	routeDebugBatches = $state<RouteDebugBatch[]>([]);
 
-	// Route fidelity + corner inset — session prefs, not undo history.
+	// Route fidelity level (0–100) + corner inset — session prefs, not undo history.
 	// Persisted in localStorage. When phase is 'routed', changes debounce
 	// into an automatic createRoute() so the map reflects new knobs immediately.
-	routeFidelity = $state<RouteFidelity>('balanced');
+	routeFidelityLevel = $state(FIDELITY_LEVEL_DEFAULT);
 	cornerInsetMeters = $state(CORNER_INSET_DEFAULT_METERS);
 
 	// Non-reactive scratch — see Preservation note #1. Plain refs that survive across
@@ -146,12 +148,13 @@ export class SketchState implements SketchStateLike {
 
 	/** Resolve live OSRM knobs from the current UI prefs. */
 	routingOptions(): RoutingOptions {
-		return resolveRoutingOptions(this.routeFidelity, this.cornerInsetMeters);
+		return resolveRoutingOptions(this.routeFidelityLevel, this.cornerInsetMeters);
 	}
 
-	setRouteFidelity(fidelity: RouteFidelity) {
-		if (this.routeFidelity === fidelity) return;
-		this.routeFidelity = fidelity;
+	setRouteFidelityLevel(level: number) {
+		const next = clampFidelityLevel(level);
+		if (this.routeFidelityLevel === next) return;
+		this.routeFidelityLevel = next;
 		this.persistRouteSettings();
 		this.scheduleRerouteFromSettings();
 	}
@@ -211,11 +214,15 @@ export class SketchState implements SketchStateLike {
 			const raw = localStorage.getItem(ROUTE_SETTINGS_STORAGE_KEY);
 			if (!raw) return;
 			const parsed = JSON.parse(raw) as {
+				fidelityLevel?: unknown;
+				/** Legacy enum key from pre-slider settings. */
 				fidelity?: unknown;
 				cornerInsetMeters?: unknown;
 			};
-			if (isRouteFidelity(parsed.fidelity)) {
-				this.routeFidelity = parsed.fidelity;
+			if (typeof parsed.fidelityLevel === 'number') {
+				this.routeFidelityLevel = clampFidelityLevel(parsed.fidelityLevel);
+			} else if (isRouteFidelity(parsed.fidelity)) {
+				this.routeFidelityLevel = fidelityToLevel(parsed.fidelity);
 			}
 			if (typeof parsed.cornerInsetMeters === 'number') {
 				this.cornerInsetMeters = clampCornerInset(parsed.cornerInsetMeters);
@@ -231,7 +238,7 @@ export class SketchState implements SketchStateLike {
 			localStorage.setItem(
 				ROUTE_SETTINGS_STORAGE_KEY,
 				JSON.stringify({
-					fidelity: this.routeFidelity,
+					fidelityLevel: this.routeFidelityLevel,
 					cornerInsetMeters: this.cornerInsetMeters
 				})
 			);

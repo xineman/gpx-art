@@ -3,8 +3,14 @@ import {
 	CORNER_INSET_DEFAULT_METERS,
 	CORNER_INSET_MAX_METERS,
 	CORNER_INSET_MIN_METERS,
+	FIDELITY_LEVEL_DEFAULT,
+	FIDELITY_LEVEL_MAX,
+	FIDELITY_LEVEL_MIN,
 	clampCornerInset,
+	clampFidelityLevel,
 	defaultRoutingOptions,
+	fidelityLevelLabel,
+	fidelityToLevel,
 	isRouteFidelity,
 	resolveRoutingOptions
 } from './options';
@@ -35,13 +41,31 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 			structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE,
 			structuredCornerInsetMeters: CORNER_INSET_DEFAULT_METERS
 		});
-		expect(resolveRoutingOptions('balanced')).toEqual(opts);
+		expect(resolveRoutingOptions(FIDELITY_LEVEL_DEFAULT)).toEqual(opts);
+	});
+
+	test('level anchors match loose / balanced / strict presets', () => {
+		const loose = resolveRoutingOptions(FIDELITY_LEVEL_MIN);
+		const balanced = resolveRoutingOptions(FIDELITY_LEVEL_DEFAULT);
+		const strict = resolveRoutingOptions(FIDELITY_LEVEL_MAX);
+
+		expect(loose.pencilRouteRdpTolerance).toBe(40);
+		expect(loose.pencilMaxVias).toBe(8);
+		expect(loose.pencilSampleSpacingMeters).toBe(90);
+
+		expect(balanced).toEqual(defaultRoutingOptions());
+
+		// 2× softer point reduction vs balanced defaults.
+		expect(strict.pencilRouteRdpTolerance).toBe(Math.round(PENCIL_ROUTE_RDP_TOLERANCE / 2));
+		expect(strict.pencilMaxVias).toBe(PENCIL_MAX_VIAS * 2);
+		expect(strict.pencilSampleSpacingMeters).toBe(Math.round(PENCIL_SAMPLE_SPACING_METERS / 2));
+		expect(strict.structuredMaxViasPerEdge).toBe(STRUCTURED_MAX_VIAS_PER_EDGE * 2);
 	});
 
 	test('loose is coarser than balanced; strict is tighter', () => {
-		const loose = resolveRoutingOptions('loose');
-		const balanced = resolveRoutingOptions('balanced');
-		const strict = resolveRoutingOptions('strict');
+		const loose = resolveRoutingOptions(FIDELITY_LEVEL_MIN);
+		const balanced = resolveRoutingOptions(FIDELITY_LEVEL_DEFAULT);
+		const strict = resolveRoutingOptions(FIDELITY_LEVEL_MAX);
 
 		expect(loose.pencilRouteRdpTolerance).toBeGreaterThan(balanced.pencilRouteRdpTolerance);
 		expect(strict.pencilRouteRdpTolerance).toBeLessThan(balanced.pencilRouteRdpTolerance);
@@ -60,12 +84,34 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 		expect(strict.pencilSampleSpacingMeters).toBeLessThan(balanced.pencilSampleSpacingMeters);
 	});
 
+	test('midpoint interpolates between loose and balanced', () => {
+		const loose = resolveRoutingOptions(0);
+		const mid = resolveRoutingOptions(25);
+		const balanced = resolveRoutingOptions(50);
+
+		expect(mid.pencilSampleSpacingMeters).toBeGreaterThan(balanced.pencilSampleSpacingMeters);
+		expect(mid.pencilSampleSpacingMeters).toBeLessThan(loose.pencilSampleSpacingMeters);
+		expect(mid.pencilMaxVias).toBeGreaterThan(loose.pencilMaxVias);
+		expect(mid.pencilMaxVias).toBeLessThan(balanced.pencilMaxVias);
+		expect(mid.pencilRouteRdpTolerance).toBeGreaterThan(balanced.pencilRouteRdpTolerance);
+		expect(mid.pencilRouteRdpTolerance).toBeLessThan(loose.pencilRouteRdpTolerance);
+	});
+
 	test('corner inset is independent of fidelity', () => {
-		const a = resolveRoutingOptions('strict', 40);
-		const b = resolveRoutingOptions('strict', 180);
+		const a = resolveRoutingOptions(FIDELITY_LEVEL_MAX, 40);
+		const b = resolveRoutingOptions(FIDELITY_LEVEL_MAX, 180);
 		expect(a.structuredCornerInsetMeters).toBe(40);
 		expect(b.structuredCornerInsetMeters).toBe(180);
 		expect(a.pencilRouteRdpTolerance).toBe(b.pencilRouteRdpTolerance);
+	});
+});
+
+describe('clampFidelityLevel', () => {
+	test('clamps and rounds', () => {
+		expect(clampFidelityLevel(-10)).toBe(FIDELITY_LEVEL_MIN);
+		expect(clampFidelityLevel(999)).toBe(FIDELITY_LEVEL_MAX);
+		expect(clampFidelityLevel(12.6)).toBe(13);
+		expect(clampFidelityLevel(Number.NaN)).toBe(FIDELITY_LEVEL_DEFAULT);
 	});
 });
 
@@ -78,8 +124,22 @@ describe('clampCornerInset', () => {
 	});
 });
 
-describe('isRouteFidelity', () => {
-	test('accepts known values only', () => {
+describe('fidelity labels and legacy mapping', () => {
+	test('fidelityToLevel maps named presets', () => {
+		expect(fidelityToLevel('loose')).toBe(0);
+		expect(fidelityToLevel('balanced')).toBe(50);
+		expect(fidelityToLevel('strict')).toBe(100);
+	});
+
+	test('fidelityLevelLabel names anchors and custom midpoints', () => {
+		expect(fidelityLevelLabel(0)).toBe('Loose');
+		expect(fidelityLevelLabel(50)).toBe('Balanced');
+		expect(fidelityLevelLabel(100)).toBe('Strict');
+		expect(fidelityLevelLabel(33)).toBe('Custom');
+		expect(fidelityLevelLabel(75)).toBe('Custom');
+	});
+
+	test('isRouteFidelity accepts known values only', () => {
 		expect(isRouteFidelity('loose')).toBe(true);
 		expect(isRouteFidelity('balanced')).toBe(true);
 		expect(isRouteFidelity('strict')).toBe(true);
