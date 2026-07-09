@@ -123,7 +123,6 @@ describe('prepareShapeRoute', () => {
 			point(52 + d, 21)
 		]);
 		const prepared = prepareShapeRoute(rect, false);
-		expect(prepared.callKind).toBe('route');
 		expect(prepared.edgeCorners).toBeUndefined();
 		expect(prepared.points).toHaveLength(5);
 	});
@@ -137,17 +136,16 @@ describe('prepareShapeRoute', () => {
 			point(52 + d, 21)
 		]);
 		const prepared = prepareShapeRoute(rect, false);
-		expect(prepared.callKind).toBe('route');
 		expect(prepared.edgeCorners).toBeDefined();
 		expect(prepared.edgeCorners!.length).toBe(5); // closed
 		expect(needsStructuredEdgeVias(routingChain(rect, false))).toBe(true);
 	});
 
-	test('short 2-point line uses /route', () => {
+	test('short 2-point line uses corner-only /route', () => {
 		const d = deg(30);
 		const line = shape('l', 'line', [point(52, 21), point(52 + d, 21)]);
 		const prepared = prepareShapeRoute(line, false);
-		expect(prepared.callKind).toBe('route');
+		expect(prepared.edgeCorners).toBeUndefined();
 		expect(prepared.points).toHaveLength(2);
 	});
 
@@ -158,9 +156,13 @@ describe('prepareShapeRoute', () => {
 		expect(prepared.edgeCorners).toEqual(prepared.points);
 	});
 
-	test('pencil uses match callKind (route-first pipeline entry)', () => {
+	test('pencil produces sparse hard-via anchors for /route', () => {
 		const pts = Array.from({ length: 5 }, (_, i) => point(52 + i * deg(10), 21));
-		expect(prepareShapeRoute(shape('p', 'pencil', pts), false).callKind).toBe('match');
+		const prepared = prepareShapeRoute(shape('p', 'pencil', pts), false);
+		expect(prepared.edgeCorners).toBeUndefined();
+		expect(prepared.points.length).toBeGreaterThanOrEqual(2);
+		expect(prepared.points.length).toBeLessThanOrEqual(pts.length);
+		expect(prepared.routeOptions).toEqual({ continueStraight: true });
 	});
 });
 

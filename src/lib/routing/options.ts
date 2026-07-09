@@ -1,12 +1,10 @@
 import {
-	DETOUR_RATIO,
-	MATCH_FALLBACK_MAX_VIAS,
-	MATCH_FALLBACK_RDP_TOLERANCE,
-	MATCH_RADIUS_METERS,
-	MATCH_RADIUS_WAYPOINT_METERS,
-	MATCH_SAMPLE_SPACING_METERS,
+	PENCIL_MAX_VIAS,
+	PENCIL_ROUTE_RDP_TOLERANCE,
+	PENCIL_SAMPLE_SPACING_METERS,
 	RDP_TOLERANCE_PENCIL,
 	STRUCTURED_CORNER_INSET_METERS,
+	STRUCTURED_DENSE_LENGTH_RATIO,
 	STRUCTURED_EDGE_DEVIATION_METERS,
 	STRUCTURED_EDGE_VIA_MIN_METERS,
 	STRUCTURED_MAX_VIAS_PER_EDGE,
@@ -18,19 +16,16 @@ export const ROUTE_FIDELITIES = ['loose', 'balanced', 'strict'] as const;
 export type RouteFidelity = (typeof ROUTE_FIDELITIES)[number];
 
 /**
- * Tunable routing knobs used by prepareShapeRoute / getMatchedRoute /
- * structured edge routing. Infrastructure limits (chunk size, clean bridge
- * budget, TSP caps) stay hardcoded in constants/routing.ts.
+ * Tunable routing knobs used by prepareShapeRoute / structured edge routing.
+ * Infrastructure limits (clean bridge budget, TSP caps) stay in routing.ts.
  */
 export type RoutingOptions = {
 	rdpTolerancePencil: number;
-	matchFallbackRdpTolerance: number;
-	matchFallbackMaxVias: number;
-	detourRatio: number;
-	matchRadiusMeters: number;
-	matchRadiusWaypointMeters: number;
-	matchSampleSpacingMeters: number;
+	pencilRouteRdpTolerance: number;
+	pencilMaxVias: number;
+	pencilSampleSpacingMeters: number;
 	structuredEdgeDeviationMeters: number;
+	structuredDenseLengthRatio: number;
 	structuredViaSpacingMeters: number;
 	structuredEdgeViaMinMeters: number;
 	structuredMaxViasPerEdge: number;
@@ -47,13 +42,11 @@ export function defaultRoutingOptions(
 ): RoutingOptions {
 	return {
 		rdpTolerancePencil: RDP_TOLERANCE_PENCIL,
-		matchFallbackRdpTolerance: MATCH_FALLBACK_RDP_TOLERANCE,
-		matchFallbackMaxVias: MATCH_FALLBACK_MAX_VIAS,
-		detourRatio: DETOUR_RATIO,
-		matchRadiusMeters: MATCH_RADIUS_METERS,
-		matchRadiusWaypointMeters: MATCH_RADIUS_WAYPOINT_METERS,
-		matchSampleSpacingMeters: MATCH_SAMPLE_SPACING_METERS,
+		pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
+		pencilMaxVias: PENCIL_MAX_VIAS,
+		pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
 		structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
+		structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 		structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
 		structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
 		structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE,
@@ -65,16 +58,14 @@ export function defaultRoutingOptions(
 type FidelityFields = Omit<RoutingOptions, 'structuredCornerInsetMeters'>;
 
 const FIDELITY_PRESETS: Record<RouteFidelity, FidelityFields> = {
-	// Coarser pencil, more detour forgiveness, looser structured densify.
+	// Coarser pencil, looser structured densify.
 	loose: {
 		rdpTolerancePencil: 20,
-		matchFallbackRdpTolerance: 40,
-		matchFallbackMaxVias: 8,
-		detourRatio: 1.6,
-		matchRadiusMeters: 50,
-		matchRadiusWaypointMeters: 150,
-		matchSampleSpacingMeters: 90,
+		pencilRouteRdpTolerance: 40,
+		pencilMaxVias: 8,
+		pencilSampleSpacingMeters: 90,
 		structuredEdgeDeviationMeters: 400,
+		structuredDenseLengthRatio: 1.6,
 		structuredViaSpacingMeters: 450,
 		structuredEdgeViaMinMeters: 250,
 		structuredMaxViasPerEdge: 10
@@ -82,27 +73,23 @@ const FIDELITY_PRESETS: Record<RouteFidelity, FidelityFields> = {
 	// Exact current constants from routing.ts.
 	balanced: {
 		rdpTolerancePencil: RDP_TOLERANCE_PENCIL,
-		matchFallbackRdpTolerance: MATCH_FALLBACK_RDP_TOLERANCE,
-		matchFallbackMaxVias: MATCH_FALLBACK_MAX_VIAS,
-		detourRatio: DETOUR_RATIO,
-		matchRadiusMeters: MATCH_RADIUS_METERS,
-		matchRadiusWaypointMeters: MATCH_RADIUS_WAYPOINT_METERS,
-		matchSampleSpacingMeters: MATCH_SAMPLE_SPACING_METERS,
+		pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
+		pencilMaxVias: PENCIL_MAX_VIAS,
+		pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
 		structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
+		structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 		structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
 		structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
 		structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE
 	},
-	// Tighter freehand, stricter detour gate, denser structured vias.
+	// Tighter freehand, denser structured vias.
 	strict: {
 		rdpTolerancePencil: 5,
-		matchFallbackRdpTolerance: 12,
-		matchFallbackMaxVias: 18,
-		detourRatio: 1.2,
-		matchRadiusMeters: 20,
-		matchRadiusWaypointMeters: 70,
-		matchSampleSpacingMeters: 40,
+		pencilRouteRdpTolerance: 12,
+		pencilMaxVias: 18,
+		pencilSampleSpacingMeters: 40,
 		structuredEdgeDeviationMeters: 120,
+		structuredDenseLengthRatio: 1.2,
 		structuredViaSpacingMeters: 180,
 		structuredEdgeViaMinMeters: 80,
 		structuredMaxViasPerEdge: 24

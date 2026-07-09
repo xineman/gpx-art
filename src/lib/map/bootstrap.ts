@@ -26,7 +26,7 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 
 	const drawingLayer = L.layerGroup().addTo(map);
 	const routeLayer = L.layerGroup().addTo(map);
-	// Third layer for the /match batch debug overlay. Cleared on every
+	// Third layer for the OSRM batch debug overlay. Cleared on every
 	// render alongside the route layer; markers stay non-interactive so
 	// they never intercept clicks intended for the drawing or route layer.
 	const debugLayer = L.layerGroup().addTo(map);

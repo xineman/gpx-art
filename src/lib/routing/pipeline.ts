@@ -1,15 +1,13 @@
 import { STRUCTURED_BEARING_RANGE_DEG } from '$lib/constants/routing';
 import { distanceBetween, initialBearingDegrees } from '$lib/geometry/distance';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
-import { usesMatchApi, type RouteCallKind } from './batchPlan';
 import { defaultRoutingOptions, type RoutingOptions } from './options';
 import type { GetRouteOptions, RouteBearing, RouteResult } from './osrm';
-import { getRoute } from './osrm';
+import { getRoute, pencilRouteAnchors } from './osrm';
 import { decodePolyline } from './polyline';
 import { sampleTrace } from './sample';
 import { simplifyRdp } from './rdp';
 
-export type { RouteCallKind };
 export type { RoutingOptions };
 
 // One shape after TSP direction choice, ready for an OSRM call.
@@ -18,12 +16,10 @@ export type PreparedShapeRoute = {
 	/** Visit index in TSP order (0-based). */
 	shapeIndex: number;
 	/**
-	 * Coordinates for debug / fallback. For multi-edge structured this is the
-	 * corner chain (or densified flatten); actual OSRM calls may use
-	 * edgeCorners for adaptive per-edge routing.
+	 * Coordinates sent to OSRM (or the corner chain for multi-edge structured).
+	 * Actual OSRM calls may use edgeCorners for adaptive per-edge routing.
 	 */
 	points: Point[];
-	callKind: RouteCallKind;
 	/** Where the rider enters this shape (and, for closed shapes, exits). */
 	entry: Point;
 	/** Where the rider leaves this shape after routing. */
@@ -246,7 +242,7 @@ export async function routeAdaptiveEdge(
 		// Accept densified only if it hugs the edge better and length is sane.
 		const betterFit =
 			denseMean < simpleMean * 0.85 || denseDev < simpleDev * 0.85;
-		const lengthOk = dense.distance <= simple.distance * options.detourRatio;
+		const lengthOk = dense.distance <= simple.distance * options.structuredDenseLengthRatio;
 		if (betterFit && lengthOk) {
 			return dense;
 		}
@@ -376,25 +372,24 @@ export function prepareShapeRoute(
 			shape,
 			shapeIndex,
 			points: chain,
-			callKind: 'route',
 			entry,
 			exit
 		};
 	}
 
-	// Pencil: densify + mild RDP (sketch length / rare /match escalate).
-	// Live path is getMatchedRoute → sparse /route on MATCH_FALLBACK_* anchors.
-	if (usesMatchApi(shape.type)) {
-		let pts = sampleTrace(chain, options.matchSampleSpacingMeters);
+	// Pencil: densify → mild RDP → sparse hard-via anchors → single /route.
+	if (shape.type === 'pencil') {
+		let pts = sampleTrace(chain, options.pencilSampleSpacingMeters);
 		const rdpped = simplifyRdp(pts, options.rdpTolerancePencil);
 		pts = rdpped.length >= 2 ? rdpped : chain;
+		pts = pencilRouteAnchors(pts, options.pencilRouteRdpTolerance, options.pencilMaxVias);
 		return {
 			shape,
 			shapeIndex,
 			points: pts,
-			callKind: 'match',
 			entry,
-			exit
+			exit,
+			routeOptions: { continueStraight: true }
 		};
 	}
 
@@ -404,7 +399,6 @@ export function prepareShapeRoute(
 			shape,
 			shapeIndex,
 			points: chain,
-			callKind: 'route',
 			entry,
 			exit,
 			routeOptions: chain.length > 2 ? { continueStraight: true } : undefined
@@ -416,7 +410,6 @@ export function prepareShapeRoute(
 		shape,
 		shapeIndex,
 		points: chain,
-		callKind: 'route',
 		entry,
 		exit,
 		edgeCorners: chain

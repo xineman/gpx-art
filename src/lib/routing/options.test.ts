@@ -9,13 +9,11 @@ import {
 	resolveRoutingOptions
 } from './options';
 import {
-	DETOUR_RATIO,
-	MATCH_FALLBACK_MAX_VIAS,
-	MATCH_FALLBACK_RDP_TOLERANCE,
-	MATCH_RADIUS_METERS,
-	MATCH_RADIUS_WAYPOINT_METERS,
-	MATCH_SAMPLE_SPACING_METERS,
+	PENCIL_MAX_VIAS,
+	PENCIL_ROUTE_RDP_TOLERANCE,
+	PENCIL_SAMPLE_SPACING_METERS,
 	RDP_TOLERANCE_PENCIL,
+	STRUCTURED_DENSE_LENGTH_RATIO,
 	STRUCTURED_EDGE_DEVIATION_METERS,
 	STRUCTURED_EDGE_VIA_MIN_METERS,
 	STRUCTURED_MAX_VIAS_PER_EDGE,
@@ -27,13 +25,11 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 		const opts = defaultRoutingOptions();
 		expect(opts).toEqual({
 			rdpTolerancePencil: RDP_TOLERANCE_PENCIL,
-			matchFallbackRdpTolerance: MATCH_FALLBACK_RDP_TOLERANCE,
-			matchFallbackMaxVias: MATCH_FALLBACK_MAX_VIAS,
-			detourRatio: DETOUR_RATIO,
-			matchRadiusMeters: MATCH_RADIUS_METERS,
-			matchRadiusWaypointMeters: MATCH_RADIUS_WAYPOINT_METERS,
-			matchSampleSpacingMeters: MATCH_SAMPLE_SPACING_METERS,
+			pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
+			pencilMaxVias: PENCIL_MAX_VIAS,
+			pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
 			structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
+			structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 			structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
 			structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
 			structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE,
@@ -47,11 +43,8 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 		const balanced = resolveRoutingOptions('balanced');
 		const strict = resolveRoutingOptions('strict');
 
-		expect(loose.matchFallbackRdpTolerance).toBeGreaterThan(balanced.matchFallbackRdpTolerance);
-		expect(strict.matchFallbackRdpTolerance).toBeLessThan(balanced.matchFallbackRdpTolerance);
-
-		expect(loose.detourRatio).toBeGreaterThan(balanced.detourRatio);
-		expect(strict.detourRatio).toBeLessThan(balanced.detourRatio);
+		expect(loose.pencilRouteRdpTolerance).toBeGreaterThan(balanced.pencilRouteRdpTolerance);
+		expect(strict.pencilRouteRdpTolerance).toBeLessThan(balanced.pencilRouteRdpTolerance);
 
 		expect(loose.structuredEdgeDeviationMeters).toBeGreaterThan(
 			balanced.structuredEdgeDeviationMeters
@@ -60,8 +53,11 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 			balanced.structuredEdgeDeviationMeters
 		);
 
-		expect(loose.matchSampleSpacingMeters).toBeGreaterThan(balanced.matchSampleSpacingMeters);
-		expect(strict.matchSampleSpacingMeters).toBeLessThan(balanced.matchSampleSpacingMeters);
+		expect(loose.structuredDenseLengthRatio).toBeGreaterThan(balanced.structuredDenseLengthRatio);
+		expect(strict.structuredDenseLengthRatio).toBeLessThan(balanced.structuredDenseLengthRatio);
+
+		expect(loose.pencilSampleSpacingMeters).toBeGreaterThan(balanced.pencilSampleSpacingMeters);
+		expect(strict.pencilSampleSpacingMeters).toBeLessThan(balanced.pencilSampleSpacingMeters);
 	});
 
 	test('corner inset is independent of fidelity', () => {
@@ -69,7 +65,7 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 		const b = resolveRoutingOptions('strict', 180);
 		expect(a.structuredCornerInsetMeters).toBe(40);
 		expect(b.structuredCornerInsetMeters).toBe(180);
-		expect(a.matchFallbackRdpTolerance).toBe(b.matchFallbackRdpTolerance);
+		expect(a.pencilRouteRdpTolerance).toBe(b.pencilRouteRdpTolerance);
 	});
 });
 

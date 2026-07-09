@@ -1,13 +1,13 @@
 import { distanceBetween } from '$lib/geometry/distance';
-import { MATCH_SAMPLE_SPACING_METERS } from '$lib/constants/routing';
+import { PENCIL_SAMPLE_SPACING_METERS } from '$lib/constants/routing';
 import type { Point } from '$lib/types/sketch';
 
-// Convert a sketch polyline into a GPS-like trace for OSRM /match. Original
-// vertices stay in the output, and long segments get interpolated points so
-// sparse shapes such as rectangles still provide enough soft guidance.
+// Densify a sketch polyline: original vertices stay, long segments get
+// interpolated points so freehand strokes have even spacing before RDP /
+// sparse-anchor extraction.
 export function sampleTrace(
 	points: Point[],
-	spacingMeters: number = MATCH_SAMPLE_SPACING_METERS
+	spacingMeters: number = PENCIL_SAMPLE_SPACING_METERS
 ): Point[] {
 	if (points.length < 2) return points.slice();
 	if (spacingMeters <= 0) {

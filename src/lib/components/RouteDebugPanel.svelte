@@ -37,12 +37,8 @@
 		return `Shape ${batch.shapeIndex + 1}`;
 	}
 
-	// One row per chunk for pencil shapes, one row per shape for the
-	// rest. The "chunk N of M" suffix is suppressed for structured
-	// shapes (single chunk) so the row stays short.
-	function chunkLabel(batch: RouteDebugBatch): string {
-		if (batch.callKind === 'route') return `${batch.points.length} pts`;
-		return `chunk ${batch.chunkIndex + 1}/${batch.chunkCount} · ${batch.points.length} pts`;
+	function batchLabel(batch: RouteDebugBatch): string {
+		return `${batch.points.length} pts`;
 	}
 
 	// Toggle handler. Goes through the state's setter so the map repaints
@@ -53,45 +49,7 @@
 		sketch.setRouteDebugVisible(target.checked);
 	}
 
-	// Status pill for a batch. Per-chunk outcomes drive the label when
-	// present: route-first sparse /route, matched HMM, or match→route
-	// fallback (NoMatch / Detour). Structured shapes have no outcome and
-	// keep the blue "route" pill.
-	type PillStyle = { label: string; classes: string };
-	function statusPill(batch: RouteDebugBatch): PillStyle {
-		const outcome = batch.outcome;
-		if (outcome?.kind === 'routed') {
-			return { label: 'route-first', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
-		}
-		if (batch.callKind === 'route') {
-			return { label: 'route', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
-		}
-		if (!outcome) {
-			// Defensive: a plan that never had attachOutcomes applied (e.g.
-			// a future code path that builds the plan before calls return).
-			// Falls back to the original callKind pill so the row still
-			// reads as something meaningful.
-			return { label: batch.callKind, classes: 'bg-[#1e7d62]/15 text-[#1e7d62]' };
-		}
-		if (outcome.kind === 'matched') {
-			return {
-				label: `matched ${outcome.confidence.toFixed(2)}`,
-				classes: 'bg-emerald-100 text-emerald-800'
-			};
-		}
-		// Fallback. `code` is why sparse /route replaced the match:
-		// NoMatch (OSRM reject) or Detour (pathologically long match).
-		if (outcome.code === 'Detour') {
-			return {
-				label: 'fallback · detour',
-				classes: 'bg-orange-100 text-orange-800'
-			};
-		}
-		return {
-			label: `fallback · ${outcome.code}`,
-			classes: 'bg-amber-100 text-amber-800'
-		};
-	}
+	const routePill = { label: 'route', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
 
 	// Outside click + Escape. Same pattern as FileMenu.
 	$effect(() => {
@@ -128,7 +86,7 @@
 			aria-expanded={open}
 			class="{neutralActionButton} {open ? 'bg-[#e6b84a]' : ''}"
 			onclick={toggle}
-			title="OSRM call batches — how the sketch is split across match/route calls"
+			title="OSRM call batches — waypoints sent per /route call"
 			type="button"
 		>
 			<Layers size={18} />
@@ -145,7 +103,7 @@
 					</h2>
 					<label
 						class="flex cursor-pointer items-center gap-[6px] text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase"
-						title="Overlay /match call batches on the map"
+						title="Overlay OSRM call batches on the map"
 					>
 						<input
 							type="checkbox"
@@ -163,7 +121,6 @@
 					</span>
 					<ul class="flex flex-col gap-[3px] overflow-y-auto text-[12px] text-[#2c2924]">
 						{#each sketch.routeDebugBatches as batch (batch.shapeIndex + '-' + batch.chunkIndex)}
-							{@const pill = statusPill(batch)}
 							<li class="flex items-center gap-[8px]">
 								<span
 									aria-hidden="true"
@@ -173,12 +130,12 @@
 								<span class="flex-1 truncate">
 									{shapeLabel(batch)}
 									<span class="text-[#2c2924]/55">·</span>
-									<span class="text-[#2c2924]/75">{chunkLabel(batch)}</span>
+									<span class="text-[#2c2924]/75">{batchLabel(batch)}</span>
 								</span>
 								<span
-									class="rounded-sm px-[5px] py-[1px] text-[10px] font-bold tracking-wide uppercase {pill.classes}"
+									class="rounded-sm px-[5px] py-[1px] text-[10px] font-bold tracking-wide uppercase {routePill.classes}"
 								>
-									{pill.label}
+									{routePill.label}
 								</span>
 							</li>
 						{/each}

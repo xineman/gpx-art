@@ -75,7 +75,7 @@ export function parseSnapshotEnvelope(input: unknown): ParseResult {
 		return { ok: false, reason: 'snapshot.trimHint must be a string when present.' };
 	}
 
-	// /match batch debug overlay toggle — optional so older saved files
+	// OSRM batch debug overlay toggle — optional so older saved files
 	// (pre-feature) still import without a version bump.
 	const routeDebugVisible = snap?.routeDebugVisible;
 	if (routeDebugVisible !== undefined && typeof routeDebugVisible !== 'boolean') {

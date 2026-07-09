@@ -56,10 +56,10 @@ async function stubOsrm(page: Page) {
 		{ lat: 52.223, lng: 21.02 }
 	]);
 
-	// Match any URL containing the OSRM /route or /match endpoint,
+	// Match any URL containing the OSRM /route endpoint,
 	// regardless of host (router.project-osrm.org on production, or
 	// localhost:5050 on a developer's local osrm-routed setup).
-	await page.route(/\/(route|match)\/v1\//, async (route) => {
+	await page.route(/\/route\/v1\//, async (route) => {
 		const url = route.request().url();
 		// /route URL pattern: /route/v1/{profile}/{coords}?... where
 		// coords is a ;-separated list of "lng,lat" pairs. A 2-waypoint

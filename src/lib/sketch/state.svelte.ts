@@ -2,21 +2,10 @@ import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
-import {
-	attachOutcomes,
-	buildRoutePlan,
-	type RouteDebugBatch
-} from '$lib/routing/batchPlan';
+import { buildRoutePlan, type RouteDebugBatch } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { cleanRoutedPathOnNetwork } from '$lib/routing/cleanPath';
-import {
-	getMatchedRoute,
-	getRoute,
-	sparseFallbackAnchors,
-	type ChunkOutcome,
-	type MatchResult,
-	type RouteResult
-} from '$lib/routing/osrm';
+import { getRoute, type RouteResult } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
 import {
 	clampCornerInset,
@@ -58,7 +47,7 @@ export interface MapHandle {
 	map: Leaflet.Map;
 	drawingLayer: Leaflet.LayerGroup;
 	routeLayer: Leaflet.LayerGroup;
-	// Optional debug layer for the /match batch overlay. Optional so test
+	// Optional debug layer for the OSRM batch overlay. Optional so test
 	// harnesses that build a MapHandle by hand (e.g. Playwright) can
 	// omit it — the renderer no-ops when the layer is undefined.
 	debugLayer?: Leaflet.LayerGroup;
@@ -92,7 +81,7 @@ export class SketchState implements SketchStateLike {
 	isDragging = $state(false);
 	isSpacePan = $state(false);
 
-	// /match batch debug overlay. routeDebugVisible is the user's preference
+	// OSRM batch debug overlay. routeDebugVisible is the user's preference
 	// (persisted across undo via Snapshot.routeDebugVisible);
 	// routeDebugBatches is the captured plan from the most recent
 	// createRoute() call and is intentionally NOT snapshotted — it is a
@@ -212,7 +201,7 @@ export class SketchState implements SketchStateLike {
 		}
 	}
 
-	// Setter for the /match batch debug overlay toggle. Goes through a
+	// Setter for the OSRM batch debug overlay toggle. Goes through a
 	// method (not a direct field write) so the caller does not have to
 	// remember to call render() — toggling the overlay must repaint the
 	// map immediately to clear or restore the on-map markers.
@@ -584,24 +573,15 @@ export class SketchState implements SketchStateLike {
 				prepareShapeRoute(shapes[shapeIdx], directions[visitIdx], visitIdx, routeOpts)
 			);
 
-			// Parallel OSRM: all shapes (match / single route / per-edge route)
+			// Parallel OSRM: all shapes (single /route or per-edge /route)
 			// + inter-shape links, then stitch in visit order.
-			type ShapeOsrmResult =
-				| { kind: 'empty' }
-				| { kind: 'match'; matched: MatchResult }
-				| { kind: 'route'; geometries: string[] };
+			type ShapeOsrmResult = { kind: 'empty' } | { kind: 'route'; geometries: string[] };
 
 			const [shapeResults, linkResults] = await Promise.all([
 				Promise.all(
 					prepared.map(async (p): Promise<ShapeOsrmResult> => {
 						if (p.points.length < 2) return { kind: 'empty' };
-						if (p.callKind === 'match') {
-							return {
-								kind: 'match',
-								matched: await getMatchedRoute(p.points, routeOpts)
-							};
-						}
-						// Structured: may fan out to one /route per sketch edge.
+						// Pencil and structured: one or more hard-via /route calls.
 						const routed = await routePreparedStructured(p, routeOpts);
 						return { kind: 'route', geometries: routed.geometries };
 					})
@@ -616,36 +596,13 @@ export class SketchState implements SketchStateLike {
 
 			const polylines: Point[] = [];
 			const processedPoints: Point[][] = prepared.map((p) => p.points);
-			const callKinds = prepared.map((p) => p.callKind);
-			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
 
 			for (let i = 0; i < prepared.length; i++) {
 				const result = shapeResults[i];
-				if (result.kind === 'match') {
-					const outcomes = result.matched.chunkOutcomes;
-					chunkOutcomesByShape.push(outcomes);
-					// Route-first success: one sparse /route, not chunked /match.
-					// Align the debug plan with the anchors actually sent.
-					if (outcomes.length === 1 && outcomes[0].kind === 'routed') {
-						processedPoints[i] =
-							result.matched.routeAnchors ??
-							sparseFallbackAnchors(
-								prepared[i].points,
-								routeOpts.matchFallbackRdpTolerance,
-								routeOpts.matchFallbackMaxVias
-							);
-						callKinds[i] = 'route';
-					}
-					for (const geometry of result.matched.geometries) {
-						await appendGeometryToPath(polylines, geometry);
-					}
-				} else if (result.kind === 'route') {
-					chunkOutcomesByShape.push(undefined);
+				if (result.kind === 'route') {
 					for (const geometry of result.geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
-				} else {
-					chunkOutcomesByShape.push(undefined);
 				}
 
 				if (i < linkResults.length) {
@@ -661,11 +618,9 @@ export class SketchState implements SketchStateLike {
 				corners: sketchCorners
 			});
 
-			// Debug plan uses the points + callKinds actually sent to OSRM
-			// (route-first pencil may rewrite to sparse anchors + 'route').
+			// Debug plan: points actually sent to OSRM for each shape.
 			const orderedShapes = prepared.map((p) => p.shape);
-			const plan = buildRoutePlan(orderedShapes, processedPoints, callKinds);
-			this.routeDebugBatches = attachOutcomes(plan, chunkOutcomesByShape);
+			this.routeDebugBatches = buildRoutePlan(orderedShapes, processedPoints);
 
 			this.phase = 'routed';
 			this.routeBusy = false;
@@ -696,7 +651,7 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = null;
 		this.trimEnd = null;
 		this.trimHint = '';
-		// The /match batch overlay describes the route we just left — drop
+		// The OSRM batch overlay describes the route we just left — drop
 		// it alongside routedPath so the user is not left staring at
 		// colored markers over an emptied canvas.
 		this.routeDebugBatches = [];
@@ -1030,7 +985,7 @@ export class SketchState implements SketchStateLike {
 			this.trimStart,
 			this.trimEnd,
 			(which, point) => this.dropTrimHandle(which, point),
-			// /match batch debug overlay: render only when the toggle is on.
+			// OSRM batch debug overlay: render only when the toggle is on.
 			// The layer itself is always created (in bootstrap) so toggling
 			// is a state change, not a map mutation.
 			this._debugLayer,
