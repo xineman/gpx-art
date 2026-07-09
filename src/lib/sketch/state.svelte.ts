@@ -477,12 +477,15 @@ export class SketchState implements SketchStateLike {
 	}
 
 	async createRoute() {
-		// We route over committed shapes only — the user is expected to Finish
-		// any draft before clicking Route (the Route button is still enabled
-		// when only a draft exists, so we error gracefully in that case).
+		// Auto-commit any in-progress draft so Route works in one click.
+		// Finish remains available for commit-without-routing (Esc / button).
+		if (this.draft) {
+			this.finishDraft();
+		}
+
 		const shapes = this.shapes.filter((shape) => shape.points.length >= 2);
 		if (shapes.length === 0) {
-			this.routeError = 'Finish your draft, then add at least one shape with 2+ points.';
+			this.routeError = 'Add at least one shape with 2+ points before routing.';
 			return;
 		}
 
