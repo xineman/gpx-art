@@ -70,20 +70,35 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 
 	// Drawing tools: only forward to state when we are not mid vertex/trim drag.
 	// Vertex/trim mousedown is handled inside bindMapInteractions (registered first).
+	//
+	// Line/polygon place vertices on mouseup (not MapLibre `click`): toggling
+	// dragPan mid-gesture often drops the synthetic click, which looked like
+	// points lagging one click behind. MapMouseEvent.preventDefault() blocks
+	// pan for this gesture without disabling the handler globally.
 	map.on('mousedown', (e: MapMouseEvent) => {
-		if (isMapFeatureDragging() || !map.dragPan.isEnabled()) return;
+		if (isMapFeatureDragging()) return;
+		const tool = state.currentTool;
+		const blocksPan =
+			state.phase === 'editing' &&
+			(tool === 'pencil' || tool === 'rectangle' || tool === 'line' || tool === 'polygon');
+		if (blocksPan) {
+			e.preventDefault();
+		}
 		state.handleMapMouseDown(toPointerEvent(e));
 	});
 	map.on('mousemove', (e: MapMouseEvent) => {
 		if (isMapFeatureDragging()) return;
 		state.handleMapMouseMove(toPointerEvent(e));
 	});
-	map.on('mouseup', () => {
+	map.on('mouseup', (e: MapMouseEvent) => {
 		if (isMapFeatureDragging()) return;
-		state.handleMapMouseUp();
+		state.handleMapMouseUp(toPointerEvent(e));
 	});
 	map.on('click', (e: MapMouseEvent) => {
+		// Line/polygon use mouseup; click is only for trim picks (and must
+		// ignore the synthetic click after vertex/trim handle drag).
 		if (consumeSuppressedClick() || isMapFeatureDragging()) return;
+		if (state.currentTool === 'line' || state.currentTool === 'polygon') return;
 		state.handleMapClick(toPointerEvent(e));
 	});
 	map.on('dblclick', () => state.finishDraft());

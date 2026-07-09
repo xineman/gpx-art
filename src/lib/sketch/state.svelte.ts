@@ -98,6 +98,8 @@ export class SketchState implements SketchStateLike {
 	activePencilShape: Shape | null = null;
 	activeRectangleShape: Shape | null = null;
 	previousTool: Tool | null = null;
+	/** Line/polygon: true between mousedown and mouseup so we place a vertex on up. */
+	private _linePolyStroke = false;
 
 	private _map: MapLibreMap | undefined;
 	/** Timer for debounced auto re-route after settings changes. */
@@ -253,6 +255,7 @@ export class SketchState implements SketchStateLike {
 		this.currentTool = tool;
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
+		this._linePolyStroke = false;
 		this.isDragging = false;
 		this.status = tool === 'pan' ? 'Map navigation active.' : `${toolName(tool)} ready.`;
 	}
@@ -261,7 +264,8 @@ export class SketchState implements SketchStateLike {
 		if (this.phase !== 'editing') return;
 
 		if (this.currentTool === 'pencil') {
-			event.originalEvent.preventDefault();
+			// Pan for this gesture is blocked via MapMouseEvent.preventDefault in bootstrap.
+			// Keep dragPan.disable for multi-move strokes so a long pencil drag never pans.
 			this._map?.dragPan.disable();
 			this.isDragging = true;
 			this.pushHistory();
@@ -277,7 +281,6 @@ export class SketchState implements SketchStateLike {
 		}
 
 		if (this.currentTool === 'rectangle') {
-			event.originalEvent.preventDefault();
 			this._map?.dragPan.disable();
 			this.isDragging = true;
 			this.pushHistory();
@@ -294,13 +297,10 @@ export class SketchState implements SketchStateLike {
 		}
 
 		if (this.currentTool === 'line' || this.currentTool === 'polygon') {
-			// Without this, the map's default drag handler steals the gesture and
-			// pans the map on every click — and trying to drag a vertex
-			// has the same effect. Match the pencil/rectangle behaviour:
-			// prevent default + disable map drag, then let handleMapClick
-			// add the new vertex on mouseup.
-			event.originalEvent.preventDefault();
-			this._map?.dragPan.disable();
+			// Arm a vertex placement; actual add happens on mouseup (see bootstrap).
+			// Do not toggle dragPan — MapMouseEvent.preventDefault already blocks pan
+			// for this press, and dragPan.disable/enable was dropping MapLibre clicks.
+			this._linePolyStroke = true;
 		}
 	}
 
@@ -332,8 +332,19 @@ export class SketchState implements SketchStateLike {
 		}
 	}
 
-	handleMapMouseUp() {
+	handleMapMouseUp(event?: MapPointerEvent) {
 		if (this.phase !== 'editing') return;
+
+		if (
+			this._linePolyStroke &&
+			event &&
+			(this.currentTool === 'line' || this.currentTool === 'polygon')
+		) {
+			this._linePolyStroke = false;
+			this.addLineOrPolygonPoint(event.point);
+		} else {
+			this._linePolyStroke = false;
+		}
 
 		if (this.activePencilShape) {
 			if (this.activePencilShape.points.length < 2) {
@@ -366,29 +377,34 @@ export class SketchState implements SketchStateLike {
 	}
 
 	handleMapClick(event: MapPointerEvent) {
+		// Trim picks only — line/polygon vertices are placed on mouseup so we
+		// do not depend on MapLibre's click synthesis after pan suppression.
 		if (this.phase === 'routed' && this.trimMode) {
 			this.handleTrimClick(event);
-			return;
 		}
-		if (this.phase !== 'editing' || (this.currentTool !== 'line' && this.currentTool !== 'polygon'))
-			return;
+	}
+
+	private addLineOrPolygonPoint(point: Point) {
+		const tool = this.currentTool;
+		if (tool !== 'line' && tool !== 'polygon') return;
+
 		this.pushHistory();
 
-		if (!this.draft || this.draft.type !== this.currentTool) {
+		if (!this.draft || this.draft.type !== tool) {
 			this.finishDraft();
 			this.draft = {
 				id: crypto.randomUUID(),
-				points: [event.point],
-				type: this.currentTool
+				points: [point],
+				type: tool
 			};
 		} else {
 			this.draft = {
 				...this.draft,
-				points: [...this.draft.points, event.point]
+				points: [...this.draft.points, point]
 			};
 		}
 
-		this.status = `${toolName(this.currentTool)} point added.`;
+		this.status = `${toolName(tool)} point added.`;
 		this.render();
 	}
 
