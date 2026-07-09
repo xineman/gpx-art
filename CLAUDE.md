@@ -122,7 +122,7 @@ Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareS
 
 Waypoints UI: `buildRoutePlan` + `RouteDebugSection` (inside Route settings) list per-shape routing waypoints and can overlay them on the map.
 
-Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.).
+Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.). Default public fallback is FOSSGIS `https://routing.openstreetmap.de/routed-bike` (real bicycle extract). Do not use `router.project-osrm.org` — car-only graph; `/bike/` still returns driving.
 
 ## Other notes
 

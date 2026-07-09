@@ -4,11 +4,16 @@ import { env } from '$env/dynamic/public';
 // migrating off the public OSRM demo or switching modality (car/bike/foot).
 
 // PUBLIC_OSRM_BASE_URL targets a local osrm-routed container (e.g. port 5050 on
-// macOS where 5000 is AirPlay Receiver). Public demo is the fallback for CI.
-const DEFAULT_OSRM_BASE_URL = 'https://router.project-osrm.org';
+// macOS where 5000 is AirPlay Receiver). Public fallback is the FOSSGIS bike
+// instance — NOT router.project-osrm.org, which only extracts the car profile
+// and ignores the path segment (so /bike/ still returns driving routes).
+// FOSSGIS fair-use: ~1 req/s, valid User-Agent; prefer self-hosted for real use.
+// https://routing.openstreetmap.de/about.html
+const DEFAULT_OSRM_BASE_URL = 'https://routing.openstreetmap.de/routed-bike';
 
-// Bike profile: rideable output — cycle paths, residential streets; avoids
-// motorways / car-only one-ways. Self-hosted instances can swap profiles.
+// Bike profile path segment. On single-dataset osrm-routed instances (local or
+// FOSSGIS routed-bike) any label works; keep 'bike' for clarity. Car demos use
+// 'driving' + a car-extracted base URL.
 export const OSRM_BASE_URL = env.PUBLIC_OSRM_BASE_URL || DEFAULT_OSRM_BASE_URL;
 export const OSRM_PROFILE = 'bike';
 

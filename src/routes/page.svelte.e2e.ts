@@ -57,7 +57,7 @@ async function stubOsrm(page: Page) {
 	]);
 
 	// Match any URL containing the OSRM /route endpoint,
-	// regardless of host (router.project-osrm.org on production, or
+	// regardless of host (FOSSGIS routed-bike public fallback, or
 	// localhost:5050 on a developer's local osrm-routed setup).
 	await page.route(/\/route\/v1\//, async (route) => {
 		const url = route.request().url();
@@ -220,9 +220,10 @@ test.describe('route trimming', () => {
 		await seedRoutedPhase(page, stubRoutePoints);
 
 		// Count OSRM requests so we can assert the bridge call was skipped.
+		// Match any host that serves /route/v1/ (local, FOSSGIS, legacy demo).
 		let osrmCalls = 0;
 		page.on('request', (req) => {
-			if (/router\.project-osrm\.org/.test(req.url())) osrmCalls += 1;
+			if (/\/route\/v1\//.test(req.url())) osrmCalls += 1;
 		});
 
 		await page.locator('button[aria-label="Trim route"]').click();
