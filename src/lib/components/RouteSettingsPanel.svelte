@@ -10,6 +10,7 @@
 	} from '$lib/routing/options';
 	import { neutralActionButton } from '$lib/constants/styles';
 	import type { SketchState } from '$lib/sketch/state.svelte';
+	import RouteDebugSection from './RouteDebugSection.svelte';
 
 	type Props = {
 		sketch: SketchState;
@@ -21,9 +22,9 @@
 	let { sketch, open = false, onOpenChange, class: extraClass = '' }: Props = $props();
 
 	const fidelityHint: Record<RouteFidelity, string> = {
-		loose: 'Coarser freehand, more road detours OK',
+		loose: 'Prefers simpler roads; freehand can wander more',
 		balanced: 'Default — good for most sketches',
-		strict: 'Tighter hug of the sketch (more OSRM work)'
+		strict: 'Stays closer to your sketch (may take longer)'
 	};
 
 	let menuButton: HTMLButtonElement | undefined = $state();
@@ -92,7 +93,7 @@
 		aria-expanded={open}
 		class="{neutralActionButton} relative {open ? 'bg-[#e6b84a]' : ''}"
 		onclick={toggle}
-		title="Route settings — fidelity and corner softness"
+		title="Route settings — how the sketch becomes a ride"
 		type="button"
 	>
 		<Settings size={18} />
@@ -107,7 +108,7 @@
 	{#if open}
 		<section
 			bind:this={menuElement}
-			class="absolute bottom-[calc(100%+6px)] left-0 z-[600] flex w-[min(280px,calc(100vw-36px))] flex-col gap-[10px] rounded-lg border border-[#2c2924]/15 bg-[#fff7df]/95 py-[10px] pr-[12px] pl-[12px] shadow-[0_18px_50px_rgb(27_26_23_/_0.20)]"
+			class="absolute bottom-[calc(100%+6px)] left-0 z-[600] flex max-h-[min(420px,calc(100vh-120px))] w-[min(280px,calc(100vw-36px))] flex-col gap-[10px] overflow-y-auto rounded-lg border border-[#2c2924]/15 bg-[#fff7df]/95 py-[10px] pr-[12px] pl-[12px] shadow-[0_18px_50px_rgb(27_26_23_/_0.20)]"
 			aria-label="Route settings"
 		>
 			<header class="flex items-center justify-between gap-[10px]">
@@ -119,7 +120,7 @@
 					class="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-bold tracking-wide text-[#1e7d62] uppercase hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-40"
 					disabled={!isNonDefault}
 					onclick={resetDefaults}
-					title="Restore Balanced fidelity and default corner inset"
+					title="Restore Balanced follow-sketch and default corner softness"
 				>
 					Reset
 				</button>
@@ -127,7 +128,7 @@
 
 			<label class="flex flex-col gap-[4px]">
 				<span class="text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase">
-					Fidelity
+					Follow sketch
 				</span>
 				<select
 					class="min-h-[32px] cursor-pointer rounded-md border border-[#2c2924]/15 bg-[#efe1b9] px-[8px] text-[13px] font-bold text-[#2c2924] outline-none focus-visible:ring-2 focus-visible:ring-[#1e7d62]/40"
@@ -161,18 +162,22 @@
 					value={sketch.cornerInsetMeters}
 					oninput={onCornerInput}
 					class="h-[6px] w-full cursor-pointer accent-[#1e7d62]"
-					title="How far before a geometric corner the route softens (0 = hard corners)"
+					title="How much rectangle and polygon corners are rounded on the route (0 = sharp)"
 				/>
 				<span class="text-[11px] leading-[1.3] text-[#67604f]">
-					Higher softens rectangle/polygon corners on the road network.
+					Higher rounds sharp corners so the ride feels smoother.
 				</span>
 			</label>
 
 			{#if sketch.phase === 'routed'}
 				<p class="m-0 text-[11px] leading-[1.3] text-[#67604f]">
-					Re-route to apply changes to the current path.
+					Re-route to apply these settings to the current path.
 				</p>
 			{/if}
+
+			<div class="border-t border-[#2c2924]/12 pt-[10px]">
+				<RouteDebugSection {sketch} />
+			</div>
 		</section>
 	{/if}
 </div>

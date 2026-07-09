@@ -118,7 +118,7 @@ Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareS
 4. **Stitch / clean** — decode polylines and stitch (bridge gaps >2 m with `/route`). **Once** on the full path, `cleanRoutedPathOnNetwork` fixes local reverse spurs/hairpins by re-routing kept endpoints (budget `ROUTE_CLEAN_MAX_BRIDGES`; ignores full-tour near-revisits so rectangles do not request-storm).
 5. **Export / trim** — `pointsToGpx`; trim can re-bridge cut endpoints.
 
-Debug: `buildRoutePlan(..., callKinds)` + `RouteDebugPanel` show per-chunk match/fallback outcomes.
+Waypoints UI: `buildRoutePlan` + `RouteDebugSection` (inside Route settings) list per-shape routing waypoints and can overlay them on the map.
 
 Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.).
 
