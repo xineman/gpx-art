@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app where the user draws shapes on a Leaflet/OSM map, converts the sketch into a rideable GPX route via OSRM, and exports it.
+**GPX Art** — a SvelteKit web app where the user draws shapes on a MapLibre/vector map, converts the sketch into a rideable GPX route via OSRM, and exports it.
 
 ## Commands
 
@@ -26,7 +26,7 @@ To run a single Playwright test, use the standard `npx playwright test <path>` (
 
 - **SvelteKit 2 + Svelte 5** in runes mode. `svelte.config.js` forces `runes: true` for every file outside `node_modules`, so use `$state`, `$derived`, `$props()`, `$effect` — not the legacy stores/`export let` API.
 - **TypeScript** strict mode (`tsconfig.json` extends `.svelte-kit/tsconfig.json`).
-- **Leaflet** for the map; loaded with a dynamic `await import('leaflet')` in `src/lib/map/bootstrap.ts` so it never runs server-side. Always import the types as `import type * as Leaflet from 'leaflet'`.
+- **MapLibre GL JS** for the map (vector tiles via OpenFreeMap style URL); loaded with a dynamic `await import('maplibre-gl')` in `src/lib/map/bootstrap.ts` so it never runs server-side. App domain coords stay `{ lat, lng }`; GeoJSON uses `[lng, lat]` via `src/lib/map/coords.ts`. Pointer tools use map-agnostic `MapPointerEvent` from `src/lib/map/types.ts`.
 - **Tailwind CSS 4** via `@tailwindcss/vite`. Theme/stylesheet lives in `src/routes/layout.css`; shared component class strings live in `src/lib/constants/styles.ts` (`toolButtonBase`, `neutralActionButton`, `primaryActionButton`).
 - **Lucide icons** from `@lucide/svelte`.
 - **Playwright** for e2e only; the one example test is at `src/routes/demo/playwright/page.svelte.e2e.ts`.
@@ -34,7 +34,7 @@ To run a single Playwright test, use the standard `npx playwright test <path>` (
 
 ## High-level architecture
 
-The app is a single full-bleed Leaflet map at `src/routes/+page.svelte` with floating UI panels overlaid on top. State lives in one class; map and UI are dumb consumers.
+The app is a single full-bleed MapLibre map at `src/routes/+page.svelte` with floating UI panels overlaid on top. State lives in one class; map and UI are dumb consumers.
 
 ### State (`src/lib/sketch/`)
 
@@ -50,7 +50,7 @@ The app is a single full-bleed Leaflet map at `src/routes/+page.svelte` with flo
 
 The class also holds **non-reactive** scratch fields (`activePencilShape`, `activeRectangleShape`, `previousTool`) — plain refs that survive across mousedown/mousemove/mouseup without triggering reactivity. The active shape is also pushed into `shapes` (mutated in place + array reassignment) so the renderer redraws on every move.
 
-The map handle is attached after Leaflet finishes loading: `sketch.attachMap({ L, map, drawingLayer })` and detached in the page's `onMount` cleanup. All map events (`mousedown`, `mousemove`, `mouseup`, `click`, `dblclick`, `contextmenu`) are wired in `bootstrap.ts` and forwarded to `handleMap*` methods on the state.
+The map handle is attached after MapLibre finishes loading: `sketch.attachMap({ map })` and detached in the page's `onMount` cleanup. All map events (`mousedown`, `mousemove`, `mouseup`, `click`, `dblclick`, `contextmenu`) are wired in `bootstrap.ts` and forwarded to `handleMap*` methods on the state. Drawing tools call `map.dragPan.disable()` / `enable()` while sketching.
 
 ### Derived helpers (`src/lib/sketch/derived.ts`)
 
@@ -63,8 +63,10 @@ Pure functions over a `SketchStateLike` interface (just `shapes` + `draft`) — 
 
 ### Map (`src/lib/map/`)
 
-- `bootstrap.ts` — `createMap(el, state)` dynamically imports Leaflet, builds the map with the constants from `src/lib/constants/map.ts` (centered on Warsaw by default at zoom 12), wires event handlers, and returns a `MapController` whose `teardown()` calls `map.off()` then `map.remove()`.
-- `renderer.ts` — `renderLayers(L, drawingLayer, shapes, draft, onVertexMove?, canEditCommitted?)` clears the layer group and redraws all shapes. Polygons/rectangles use `L.polygon` with fill; lines/pencils use `L.polyline`. Drafts get orange (`#f26b3a`) stroke and point markers; committed shapes get dark stroke (`#2c2924`). `canEditCommitted(shape)` is the gate that lets callers expose draggable vertex handles on otherwise-committed shapes (line, polygon, and rectangle pass it today; pencil does not).
+- `bootstrap.ts` — `createMap(el, state)` dynamically imports MapLibre, loads the vector style from `STYLE_URL` in `src/lib/constants/map.ts` (Warsaw default, zoom 12), waits for `load`, registers GeoJSON sources/layers (`sources.ts`), wires event handlers, and returns a `MapController` whose `teardown()` calls `map.remove()`.
+- `sources.ts` — fixed source/layer ids for sketch fills/lines/vertices, route, trim, chevrons, debug.
+- `renderer.ts` — `renderLayers(map, shapes, draft, …)` builds GeoJSON FeatureCollections and `setData`s each source (no LayerGroup clear/rebuild). Drafts get orange (`#f26b3a`); committed shapes get dark stroke (`#2c2924`). Vertex/trim drag uses `queryRenderedFeatures` + document-level move/up. `canEditCommitted(shape)` gates committed vertex handles (line, polygon, rectangle; not pencil).
+- `coords.ts` — `{ lat, lng }` ↔ GeoJSON `[lng, lat]` helpers.
 
 ### Components (`src/lib/components/`)
 
@@ -77,11 +79,11 @@ All four panels take `state: SketchState` as a prop (no store, no context):
 
 ### UI-panel hit-testing during drag
 
-`+page.svelte` overrides Leaflet's normal hit-testing: every panel wrapper has `data-panel="status|palette|action|error"`, and during a drag the panels switch to `pointer-events: none` so map drag events fall through. A `mousemove` listener on the map calls `getBoundingClientRect()` on the cached `panelElements` to figure out which panel (if any) the cursor is over and dims it (`opacity-30`). The cache is built once in `onMount` because `getBoundingClientRect` works regardless of `pointer-events`. If you add a new panel, give its wrapper `data-panel="..."` so the dim-while-dragging effect covers it.
+`+page.svelte` overrides normal hit-testing during draw: every panel wrapper has `data-panel="status|palette|action|error"`, and during a drag the panels switch to `pointer-events: none` so map drag events fall through. A `mousemove` listener on the map calls `getBoundingClientRect()` on the cached `panelElements` to figure out which panel (if any) the cursor is over and dims it (`opacity-30`). The cache is built once in `onMount` because `getBoundingClientRect` works regardless of `pointer-events`. If you add a new panel, give its wrapper `data-panel="..."` so the dim-while-dragging effect covers it.
 
 ### Constants & types
 
-- `src/lib/constants/map.ts` — `TILE_URL`, `TILE_ATTRIBUTION`, `MAP_CENTER`, `MAP_ZOOM`, `MAX_ZOOM`.
+- `src/lib/constants/map.ts` — `STYLE_URL` (OpenFreeMap Liberty), `MAP_ATTRIBUTION`, `MAP_CENTER`, `MAP_ZOOM`, `MAX_ZOOM`.
 - `src/lib/constants/styles.ts` — shared Tailwind class strings (keep new shared classes here rather than inlining).
 - `src/lib/types/sketch.ts` — `Point`, `Tool`, `ShapeType`, `Phase`, `Shape`, `Snapshot`, plus the `TOOLS` and `PHASES` const tuples that drive the type unions.
 - `src/lib/tools/names.ts` — `toolName()` for display labels.
@@ -111,7 +113,7 @@ Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareS
 1. **TSP order** — GTSP with flip (`solveClusterTspWithFlipFromCosts`). Prefer OSRM `/table` road distances when N ≤ `TSP_ROAD_COST_LIMIT`, else haversine. Closed shapes (polygon/rectangle) use **entry = exit** (full loop, leave from start corner). May reverse a shape.
 2. **Preprocess** (`prepareShapeRoute`)
    - **Pencil** → densify 60 m + RDP 30 m → chunked `/match`.
-   - **Structured** → always `/route`: short edges = corners only; long multi-edge = **adaptive per-edge** (parallel): try A→B first; densify vias only if path strays >`STRUCTURED_EDGE_DEVIATION_METERS` *and* densified fit is better without exploding length (avoids river/park via forced detours).
+   - **Structured** → always `/route`: short edges = corners only; long multi-edge = **adaptive per-edge** (parallel): try A→B first; densify vias only if path strays >`STRUCTURED_EDGE_DEVIATION_METERS` _and_ densified fit is better without exploding length (avoids river/park via forced detours).
 3. **OSRM** (shape geometries + inter-shape links in **parallel**)
    - Pencil: chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`); per chunk detour/NoMatch → sparse `/route`.
    - Structured: single `/route` with hard vias; bearings retry without bearings on failure.
@@ -126,5 +128,5 @@ Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike p
 
 - `pnpm` is the only supported package manager (`.npmrc` has `engine-strict=true`). Use the local `pnpm-store` (`.pnpm-store/`), not a global cache.
 - `playwright.config.ts` boots the preview server on port 4173 with `npm run build && npm run preview` — give it generous time on first run.
-- No backend; everything runs client-side. Leaflet tiles come from OpenStreetMap.
+- No backend; everything runs client-side. Vector basemap comes from OpenFreeMap (OSM data); routing still uses OSRM.
 - The `demo/` route exists only to host the Playwright example; the real app lives at `/`.

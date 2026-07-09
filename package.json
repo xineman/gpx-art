@@ -22,7 +22,7 @@
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/vite": "^4.2.2",
-		"@types/leaflet": "^1.9.21",
+		"@types/geojson": "^7946.0.16",
 		"@types/node": "^24",
 		"eslint": "^10.4.0",
 		"eslint-config-prettier": "^10.1.8",
@@ -41,6 +41,6 @@
 	},
 	"dependencies": {
 		"@lucide/svelte": "^1.17.0",
-		"leaflet": "^1.9.4"
+		"maplibre-gl": "^5.24.0"
 	}
 }

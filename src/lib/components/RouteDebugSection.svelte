@@ -16,7 +16,7 @@
 
 	// Toggle handler. Goes through the state's setter so the map repaints
 	// in the same frame — a direct field write would only update the
-	// reactive state but not the Leaflet markers.
+	// reactive state but not the debug map markers.
 	function onToggle(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
 		sketch.setRouteDebugVisible(target.checked);
@@ -30,9 +30,7 @@
 -->
 <div class="flex min-h-0 flex-col gap-[6px] {extraClass}">
 	<header class="flex items-center justify-between gap-[10px]">
-		<h3 class="m-0 text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase">
-			Waypoints
-		</h3>
+		<h3 class="m-0 text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase">Waypoints</h3>
 		<label
 			class="flex cursor-pointer items-center gap-[6px] text-[11px] font-bold tracking-wide text-[#2c2924]/75 uppercase"
 			title="Show the routing waypoints on the map"

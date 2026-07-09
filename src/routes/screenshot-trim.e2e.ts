@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 // Throwaway screenshot harness for the trim panel redesign. Captures
 // the panel at each of the three states so the design can be reviewed
 // without manually driving the app. Lives next to the e2e tests so it
-// reuses the same preview-server + Leaflet bootstrap.
+// reuses the same preview-server + MapLibre bootstrap.
 
 // A 10-point route stub. Coords are picked so that map-level state
 // (centered on Warsaw at zoom 12) renders a recognisable polyline.
@@ -23,7 +23,7 @@ const stubRoutePoints = [
 test.describe('trim panel screenshots', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await page.waitForSelector('.leaflet-container');
+		await page.waitForSelector('.maplibregl-canvas');
 	});
 
 	test('capture trim panel in each state', async ({ page }) => {

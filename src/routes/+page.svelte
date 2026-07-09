@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type * as Leaflet from 'leaflet';
+	import type { MapMouseEvent } from 'maplibre-gl';
 	import { SketchState } from '$lib/sketch/state.svelte';
 	import { createMap } from '$lib/map/bootstrap';
 	import ActionBar from '$lib/components/ActionBar.svelte';
@@ -46,12 +46,12 @@
 			}
 			mapHandle = handle;
 			sketch.attachMap(handle);
-			handle.map.on('mousemove', (event: Leaflet.LeafletMouseEvent) => {
+			handle.map.on('mousemove', (event: MapMouseEvent) => {
 				if (!sketch.isDragging) {
 					hoveredPanel = null;
 					return;
 				}
-				const original = event.originalEvent as MouseEvent;
+				const original = event.originalEvent;
 				const x = original.clientX;
 				const y = original.clientY;
 				let found: string | null = null;

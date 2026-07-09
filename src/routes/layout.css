@@ -12,7 +12,7 @@
 	}
 
 	button,
-	.leaflet-container {
+	.maplibregl-map {
 		@apply font-[inherit];
 	}
 
@@ -22,7 +22,14 @@
 }
 
 @layer components {
-	.leaflet-control-attribution {
+	.maplibregl-ctrl-attrib {
 		@apply rounded-tl-full text-[10px];
+	}
+
+	/* Full-bleed map: MapLibre needs the canvas container to fill the host. */
+	.maplibregl-map,
+	.maplibregl-canvas-container,
+	.maplibregl-canvas {
+		@apply h-full w-full;
 	}
 }

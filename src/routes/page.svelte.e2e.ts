@@ -80,7 +80,7 @@ async function stubOsrm(page: Page) {
 
 // Drive the app into routed phase by injecting a known routedPath. This
 // is faster and more reliable than drawing a shape + clicking Route, and
-// it does not depend on Leaflet mouse coordinate math. The test hook
+// it does not depend on map mouse coordinate math. The test hook
 // __gpxArtTest.sketch is set up in +page.svelte.
 async function seedRoutedPhase(page: Page, points: { lat: number; lng: number }[]) {
 	await page.evaluate((pts) => {
@@ -98,7 +98,7 @@ test.describe('route trimming', () => {
 	test.beforeEach(async ({ page }) => {
 		await stubOsrm(page);
 		await page.goto('/');
-		await page.waitForSelector('.leaflet-container');
+		await page.waitForSelector('.maplibregl-canvas');
 	});
 
 	test('trim button appears in routed phase', async ({ page }) => {

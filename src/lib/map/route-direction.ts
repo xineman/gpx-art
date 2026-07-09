@@ -17,7 +17,7 @@ export type ChevronPlacement = {
 	x: number;
 	y: number;
 	/** Travel bearing in screen radians: 0 = east, positive = clockwise
-	 *  (Leaflet's y-down pixel space). */
+	 *  (map canvas y-down pixel space). */
 	angle: number;
 };
 

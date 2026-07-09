@@ -1,7 +1,7 @@
 import { SvelteDate } from 'svelte/reactivity';
-import type * as Leaflet from 'leaflet';
+import type { Map as MapLibreMap } from 'maplibre-gl';
 import { distanceBetween } from '$lib/geometry/distance';
-import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
+import { rectanglePoints, resizeRectangle } from '$lib/geometry/point';
 import { buildRoutePlan, type RouteDebugBatch } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { cleanRoutedPathOnNetwork } from '$lib/routing/cleanPath';
@@ -15,7 +15,11 @@ import {
 	type RouteFidelity,
 	type RoutingOptions
 } from '$lib/routing/options';
-import { isClosedShapeType, prepareShapeRoute, routePreparedStructured } from '$lib/routing/pipeline';
+import {
+	isClosedShapeType,
+	prepareShapeRoute,
+	routePreparedStructured
+} from '$lib/routing/pipeline';
 import {
 	buildFlipTspHaversineCosts,
 	buildFlipTspRoadCosts,
@@ -24,6 +28,7 @@ import {
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
+import type { MapPointerEvent } from '$lib/map/types';
 import { canRoute, distanceLabel, routeInputPoints, type SketchStateLike } from './derived';
 import { cloneShape, cloneShapes } from './cloning';
 import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
@@ -31,8 +36,6 @@ import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
 const ROUTE_SETTINGS_STORAGE_KEY = 'gpx-art.routeSettings';
 /** Debounce before auto re-routing when route settings change (slider-friendly). */
 const SETTINGS_REROUTE_DEBOUNCE_MS = 400;
-
-type L = typeof import('leaflet');
 
 const MAX_UNDO = 40;
 // Max distance (meters) from a click to the routedPath polyline for the
@@ -45,14 +48,7 @@ const MAX_UNDO = 40;
 const TRIM_PICK_MAX_DISTANCE_METERS = 40;
 
 export interface MapHandle {
-	L: L;
-	map: Leaflet.Map;
-	drawingLayer: Leaflet.LayerGroup;
-	routeLayer: Leaflet.LayerGroup;
-	// Optional debug layer for the OSRM batch overlay. Optional so test
-	// harnesses that build a MapHandle by hand (e.g. Playwright) can
-	// omit it — the renderer no-ops when the layer is undefined.
-	debugLayer?: Leaflet.LayerGroup;
+	map: MapLibreMap;
 }
 
 export class SketchState implements SketchStateLike {
@@ -103,11 +99,7 @@ export class SketchState implements SketchStateLike {
 	activeRectangleShape: Shape | null = null;
 	previousTool: Tool | null = null;
 
-	private _L: L | undefined;
-	private _map: Leaflet.Map | undefined;
-	private _drawingLayer: Leaflet.LayerGroup | undefined;
-	private _routeLayer: Leaflet.LayerGroup | undefined;
-	private _debugLayer: Leaflet.LayerGroup | undefined;
+	private _map: MapLibreMap | undefined;
 	/** Timer for debounced auto re-route after settings changes. */
 	private _settingsRerouteTimer: ReturnType<typeof setTimeout> | null = null;
 	/** If settings change while a route is in flight, re-run once it finishes. */
@@ -121,25 +113,19 @@ export class SketchState implements SketchStateLike {
 	pointLabel = $derived(`${routeInputPoints(this).length} sketch pts`);
 
 	attachMap(handle: MapHandle) {
-		this._L = handle.L;
 		this._map = handle.map;
-		this._drawingLayer = handle.drawingLayer;
-		this._routeLayer = handle.routeLayer;
-		this._debugLayer = handle.debugLayer;
 		// Chevrons are placed in screen space against the current viewport.
 		// Rebuild on zoom (density / projection) and on pan (which stretch
 		// of a long close-up path is on screen). zoomend/moveend — not the
 		// continuous zoom/move events — avoid thrashing mid-gesture.
-		this._map.on('zoomend moveend', this._onMapViewChange);
+		this._map.on('zoomend', this._onMapViewChange);
+		this._map.on('moveend', this._onMapViewChange);
 	}
 
 	detachMap() {
-		this._map?.off('zoomend moveend', this._onMapViewChange);
-		this._L = undefined;
+		this._map?.off('zoomend', this._onMapViewChange);
+		this._map?.off('moveend', this._onMapViewChange);
 		this._map = undefined;
-		this._drawingLayer = undefined;
-		this._routeLayer = undefined;
-		this._debugLayer = undefined;
 	}
 
 	// Bound once so attach/detach can add/remove the same function ref.
@@ -271,15 +257,15 @@ export class SketchState implements SketchStateLike {
 		this.status = tool === 'pan' ? 'Map navigation active.' : `${toolName(tool)} ready.`;
 	}
 
-	handleMapMouseDown(event: Leaflet.LeafletMouseEvent) {
+	handleMapMouseDown(event: MapPointerEvent) {
 		if (this.phase !== 'editing') return;
 
 		if (this.currentTool === 'pencil') {
 			event.originalEvent.preventDefault();
-			this._map?.dragging.disable();
+			this._map?.dragPan.disable();
 			this.isDragging = true;
 			this.pushHistory();
-			const firstPoint = toPoint(event.latlng);
+			const firstPoint = event.point;
 			this.activePencilShape = {
 				id: crypto.randomUUID(),
 				points: [firstPoint],
@@ -292,10 +278,10 @@ export class SketchState implements SketchStateLike {
 
 		if (this.currentTool === 'rectangle') {
 			event.originalEvent.preventDefault();
-			this._map?.dragging.disable();
+			this._map?.dragPan.disable();
 			this.isDragging = true;
 			this.pushHistory();
-			const point = toPoint(event.latlng);
+			const point = event.point;
 			this.dragOrigin = point;
 			this.activeRectangleShape = {
 				id: crypto.randomUUID(),
@@ -309,20 +295,20 @@ export class SketchState implements SketchStateLike {
 
 		if (this.currentTool === 'line' || this.currentTool === 'polygon') {
 			// Without this, the map's default drag handler steals the gesture and
-			// pans the map on every click — and trying to drag a vertex marker
-			// (which lives inside the drawing layer) has the same effect. Match
-			// the pencil/rectangle behaviour: prevent default + disable map drag,
-			// then let handleMapClick add the new vertex on mouseup.
+			// pans the map on every click — and trying to drag a vertex
+			// has the same effect. Match the pencil/rectangle behaviour:
+			// prevent default + disable map drag, then let handleMapClick
+			// add the new vertex on mouseup.
 			event.originalEvent.preventDefault();
-			this._map?.dragging.disable();
+			this._map?.dragPan.disable();
 		}
 	}
 
-	handleMapMouseMove(event: Leaflet.LeafletMouseEvent) {
+	handleMapMouseMove(event: MapPointerEvent) {
 		if (this.phase !== 'editing') return;
 
 		if (this.activePencilShape && this.currentTool === 'pencil') {
-			const nextPoint = toPoint(event.latlng);
+			const nextPoint = event.point;
 			const previous = this.activePencilShape.points.at(-1);
 			if (!previous || distanceBetween(previous, nextPoint) > 8) {
 				this.activePencilShape.points = [...this.activePencilShape.points, nextPoint];
@@ -336,7 +322,7 @@ export class SketchState implements SketchStateLike {
 
 		if (this.activeRectangleShape && this.dragOrigin && this.currentTool === 'rectangle') {
 			const origin = this.dragOrigin;
-			const newPoints = rectanglePoints(origin, toPoint(event.latlng));
+			const newPoints = rectanglePoints(origin, event.point);
 			this.activeRectangleShape.points = newPoints;
 			const activeId = this.activeRectangleShape.id;
 			this.shapes = this.shapes.map((shape) =>
@@ -374,12 +360,12 @@ export class SketchState implements SketchStateLike {
 			this.status = 'Rectangle added.';
 		}
 
-		this._map?.dragging.enable();
+		this._map?.dragPan.enable();
 		this.isDragging = false;
 		this.render();
 	}
 
-	handleMapClick(event: Leaflet.LeafletMouseEvent) {
+	handleMapClick(event: MapPointerEvent) {
 		if (this.phase === 'routed' && this.trimMode) {
 			this.handleTrimClick(event);
 			return;
@@ -392,13 +378,13 @@ export class SketchState implements SketchStateLike {
 			this.finishDraft();
 			this.draft = {
 				id: crypto.randomUUID(),
-				points: [toPoint(event.latlng)],
+				points: [event.point],
 				type: this.currentTool
 			};
 		} else {
 			this.draft = {
 				...this.draft,
-				points: [...this.draft.points, toPoint(event.latlng)]
+				points: [...this.draft.points, event.point]
 			};
 		}
 
@@ -412,13 +398,13 @@ export class SketchState implements SketchStateLike {
 	// click restarts the flow with the new click as the start. A click on
 	// the same vertex as the previous pick resets both picks so the user
 	// can correct a misclick without leaving trim mode.
-	private handleTrimClick(event: Leaflet.LeafletMouseEvent) {
+	private handleTrimClick(event: MapPointerEvent) {
 		if (!this.routedPath || this.routedPath.length < 2) {
 			this.status = 'Nothing to trim.';
 			this.trimHint = '';
 			return;
 		}
-		const click = toPoint(event.latlng);
+		const click = event.point;
 		const { index, distance } = nearestRouteVertexIndex(this.routedPath, click);
 		if (distance > TRIM_PICK_MAX_DISTANCE_METERS) {
 			this.trimHint = `Pick closer to the route — the click was ${Math.round(distance)} m off.`;
@@ -816,7 +802,7 @@ export class SketchState implements SketchStateLike {
 
 		// Endpoints immediately outside the cut span. After the splice,
 		// the route has to traverse from `before` to `after` (when both
-		// exist); without a bridge, Leaflet would draw a straight-line
+		// exist); without a bridge, the map would draw a straight-line
 		// jump cut that OSRM's /route can replace with real streets.
 		const before = lo > 0 ? this.routedPath[lo - 1] : null;
 		const after = hi < this.routedPath.length - 1 ? this.routedPath[hi + 1] : null;
@@ -1052,9 +1038,7 @@ export class SketchState implements SketchStateLike {
 
 	private render() {
 		renderLayers(
-			this._L,
 			this._map,
-			this._drawingLayer,
 			this.shapes,
 			this.draft,
 			(shapeId, pointIndex, point, isDraft) =>
@@ -1066,16 +1050,12 @@ export class SketchState implements SketchStateLike {
 			// down on an existing vertex drags that vertex instead of
 			// beginning a new shape — start new shapes in empty space.
 			(shape) => shape.type !== 'pencil',
-			this._routeLayer,
 			this.routedPath,
 			this.trimMode,
 			this.trimStart,
 			this.trimEnd,
 			(which, point) => this.dropTrimHandle(which, point),
 			// OSRM batch debug overlay: render only when the toggle is on.
-			// The layer itself is always created (in bootstrap) so toggling
-			// is a state change, not a map mutation.
-			this._debugLayer,
 			this.routeDebugVisible ? this.routeDebugBatches : []
 		);
 	}
