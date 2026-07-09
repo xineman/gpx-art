@@ -18,6 +18,14 @@ import {
 	type RouteResult
 } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
+import {
+	clampCornerInset,
+	CORNER_INSET_DEFAULT_METERS,
+	isRouteFidelity,
+	resolveRoutingOptions,
+	type RouteFidelity,
+	type RoutingOptions
+} from '$lib/routing/options';
 import { isClosedShapeType, prepareShapeRoute, routePreparedStructured } from '$lib/routing/pipeline';
 import {
 	buildFlipTspHaversineCosts,
@@ -30,6 +38,8 @@ import { renderLayers } from '$lib/map/renderer';
 import { canRoute, distanceLabel, routeInputPoints, type SketchStateLike } from './derived';
 import { cloneShape, cloneShapes } from './cloning';
 import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
+
+const ROUTE_SETTINGS_STORAGE_KEY = 'gpx-art.routeSettings';
 
 type L = typeof import('leaflet');
 
@@ -90,6 +100,11 @@ export class SketchState implements SketchStateLike {
 	routeDebugVisible = $state(false);
 	routeDebugBatches = $state<RouteDebugBatch[]>([]);
 
+	// Route fidelity + corner inset — session prefs, not undo history.
+	// Persisted in localStorage; applied on the next createRoute() only.
+	routeFidelity = $state<RouteFidelity>('balanced');
+	cornerInsetMeters = $state(CORNER_INSET_DEFAULT_METERS);
+
 	// Non-reactive scratch — see Preservation note #1. Plain refs that survive across
 	// mousedown/mousemove/mouseup without triggering reactivity.
 	activePencilShape: Shape | null = null;
@@ -141,6 +156,60 @@ export class SketchState implements SketchStateLike {
 		if (this.phase !== 'editing') return;
 		if (tool === this.currentTool) return;
 		this.applyTool(tool);
+	}
+
+	/** Resolve live OSRM knobs from the current UI prefs. */
+	routingOptions(): RoutingOptions {
+		return resolveRoutingOptions(this.routeFidelity, this.cornerInsetMeters);
+	}
+
+	setRouteFidelity(fidelity: RouteFidelity) {
+		if (this.routeFidelity === fidelity) return;
+		this.routeFidelity = fidelity;
+		this.persistRouteSettings();
+	}
+
+	setCornerInsetMeters(meters: number) {
+		const next = clampCornerInset(meters);
+		if (this.cornerInsetMeters === next) return;
+		this.cornerInsetMeters = next;
+		this.persistRouteSettings();
+	}
+
+	/** Load route prefs from localStorage (call once on app start). */
+	loadRouteSettings() {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			const raw = localStorage.getItem(ROUTE_SETTINGS_STORAGE_KEY);
+			if (!raw) return;
+			const parsed = JSON.parse(raw) as {
+				fidelity?: unknown;
+				cornerInsetMeters?: unknown;
+			};
+			if (isRouteFidelity(parsed.fidelity)) {
+				this.routeFidelity = parsed.fidelity;
+			}
+			if (typeof parsed.cornerInsetMeters === 'number') {
+				this.cornerInsetMeters = clampCornerInset(parsed.cornerInsetMeters);
+			}
+		} catch {
+			// Ignore corrupt prefs — keep defaults.
+		}
+	}
+
+	private persistRouteSettings() {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			localStorage.setItem(
+				ROUTE_SETTINGS_STORAGE_KEY,
+				JSON.stringify({
+					fidelity: this.routeFidelity,
+					cornerInsetMeters: this.cornerInsetMeters
+				})
+			);
+		} catch {
+			// Quota / private mode — non-fatal.
+		}
 	}
 
 	// Setter for the /match batch debug overlay toggle. Goes through a
@@ -510,8 +579,9 @@ export class SketchState implements SketchStateLike {
 			const { order, directions } = solveClusterTspWithFlipFromCosts(shapes.length, costs);
 
 			this.status = 'Routing along your shapes…';
+			const routeOpts = this.routingOptions();
 			const prepared = order.map((shapeIdx, visitIdx) =>
-				prepareShapeRoute(shapes[shapeIdx], directions[visitIdx], visitIdx)
+				prepareShapeRoute(shapes[shapeIdx], directions[visitIdx], visitIdx, routeOpts)
 			);
 
 			// Parallel OSRM: all shapes (match / single route / per-edge route)
@@ -526,10 +596,13 @@ export class SketchState implements SketchStateLike {
 					prepared.map(async (p): Promise<ShapeOsrmResult> => {
 						if (p.points.length < 2) return { kind: 'empty' };
 						if (p.callKind === 'match') {
-							return { kind: 'match', matched: await getMatchedRoute(p.points) };
+							return {
+								kind: 'match',
+								matched: await getMatchedRoute(p.points, routeOpts)
+							};
 						}
 						// Structured: may fan out to one /route per sketch edge.
-						const routed = await routePreparedStructured(p);
+						const routed = await routePreparedStructured(p, routeOpts);
 						return { kind: 'route', geometries: routed.geometries };
 					})
 				),
@@ -555,7 +628,12 @@ export class SketchState implements SketchStateLike {
 					// Align the debug plan with the anchors actually sent.
 					if (outcomes.length === 1 && outcomes[0].kind === 'routed') {
 						processedPoints[i] =
-							result.matched.routeAnchors ?? sparseFallbackAnchors(prepared[i].points);
+							result.matched.routeAnchors ??
+							sparseFallbackAnchors(
+								prepared[i].points,
+								routeOpts.matchFallbackRdpTolerance,
+								routeOpts.matchFallbackMaxVias
+							);
 						callKinds[i] = 'route';
 					}
 					for (const geometry of result.matched.geometries) {

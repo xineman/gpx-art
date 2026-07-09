@@ -4,13 +4,12 @@ import {
 	MATCH_FALLBACK_MAX_VIAS,
 	MATCH_FALLBACK_RDP_TOLERANCE,
 	MATCH_MAX_POINTS,
-	MATCH_RADIUS_METERS,
-	MATCH_RADIUS_WAYPOINT_METERS,
 	OSRM_BASE_URL,
 	OSRM_PROFILE
 } from '$lib/constants/routing';
 import { totalDistance } from '$lib/geometry/distance';
 import type { Point } from '$lib/types/sketch';
+import { defaultRoutingOptions, type RoutingOptions } from './options';
 import { simplifyRdp } from './rdp';
 
 // ---------------------------------------------------------------------------
@@ -184,18 +183,25 @@ async function fetchRoute(points: Point[], options: GetRouteOptions): Promise<Ro
 //      falls back to the same sparse anchors (or a per-chunk sparse route)
 //
 // Never sends the full densified trace as hard /route vias.
-export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
+export async function getMatchedRoute(
+	points: Point[],
+	options: RoutingOptions = defaultRoutingOptions()
+): Promise<MatchResult> {
 	if (points.length < 2) {
 		throw new Error('OSRM /match requires at least 2 trace points.');
 	}
 
 	const sketchDistance = totalDistance(points);
-	const anchors = sparseFallbackAnchors(points);
+	const anchors = sparseFallbackAnchors(
+		points,
+		options.matchFallbackRdpTolerance,
+		options.matchFallbackMaxVias
+	);
 	let sparse: RouteResult | null = null;
 
 	try {
 		sparse = await getRoute(anchors, { continueStraight: true });
-		if (isSparseRouteAcceptable(sketchDistance, sparse.distance)) {
+		if (isSparseRouteAcceptable(sketchDistance, sparse.distance, options.detourRatio)) {
 			return {
 				geometries: [sparse.geometry],
 				distance: sparse.distance,
@@ -211,7 +217,7 @@ export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 	}
 
 	// Sparse chording, detoured, or failed: escalate to chunked /match.
-	return matchChunksWithSparseFallback(points, sparse, anchors);
+	return matchChunksWithSparseFallback(points, sparse, anchors, options);
 }
 
 export function chunkPointsForMatch(
@@ -332,11 +338,14 @@ export function matchingIndexesInTraceOrder(
 async function matchChunksWithSparseFallback(
 	points: Point[],
 	wholeSparse: RouteResult | null,
-	wholeAnchors: Point[]
+	wholeAnchors: Point[],
+	options: RoutingOptions
 ): Promise<MatchResult> {
 	const chunks = chunkPointsForMatch(points);
 	const results = await Promise.all(
-		chunks.map((chunk) => getBestRouteForChunk(chunk, wholeSparse, wholeAnchors, points))
+		chunks.map((chunk) =>
+			getBestRouteForChunk(chunk, wholeSparse, wholeAnchors, points, options)
+		)
 	);
 
 	const geometries: string[] = [];
@@ -368,11 +377,19 @@ async function getBestRouteForChunk(
 	chunk: Point[],
 	wholeSparse: RouteResult | null,
 	wholeAnchors: Point[],
-	wholePoints: Point[]
+	wholePoints: Point[],
+	options: RoutingOptions
 ): Promise<MatchResult> {
 	try {
-		const matched = await getMatchChunk(chunk);
-		return await maybeRejectDetour(matched, chunk, wholeSparse, wholeAnchors, wholePoints);
+		const matched = await getMatchChunk(chunk, options);
+		return await maybeRejectDetour(
+			matched,
+			chunk,
+			wholeSparse,
+			wholeAnchors,
+			wholePoints,
+			options
+		);
 	} catch (err) {
 		// Whole chunk rejected because a waypoint couldn't snap inside its
 		// radius. Prefer shape-level sparse when it already exists; otherwise
@@ -381,7 +398,7 @@ async function getBestRouteForChunk(
 			if (wholeSparse && chunkPointsForMatch(wholePoints).length === 1) {
 				return sparseResultAsMatch(wholeSparse, wholeAnchors, 'NoMatch');
 			}
-			return getSparseRouteAsMatchResult(chunk, 'NoMatch');
+			return getSparseRouteAsMatchResult(chunk, 'NoMatch', options);
 		}
 		throw err;
 	}
@@ -392,12 +409,13 @@ async function maybeRejectDetour(
 	chunk: Point[],
 	wholeSparse: RouteResult | null,
 	wholeAnchors: Point[],
-	wholePoints: Point[]
+	wholePoints: Point[],
+	options: RoutingOptions
 ): Promise<MatchResult> {
 	const sketchDistance = totalDistance(chunk);
 	// Fast path: matched length is plausible vs the chunk polyline — no
 	// extra network call. Intentional curves have large sketchDistance.
-	if (matched.distance <= DETOUR_RATIO * Math.max(sketchDistance, 1)) {
+	if (matched.distance <= options.detourRatio * Math.max(sketchDistance, 1)) {
 		return matched;
 	}
 
@@ -405,15 +423,33 @@ async function maybeRejectDetour(
 	// route-first call). Multi-chunk shapes need per-chunk sparse baselines.
 	const singleChunk = chunkPointsForMatch(wholePoints).length === 1;
 	if (singleChunk && wholeSparse) {
-		if (isPathologicalDetour(matched.distance, sketchDistance, wholeSparse.distance)) {
+		if (
+			isPathologicalDetour(
+				matched.distance,
+				sketchDistance,
+				wholeSparse.distance,
+				options.detourRatio
+			)
+		) {
 			return sparseResultAsMatch(wholeSparse, wholeAnchors, 'Detour');
 		}
 		return matched;
 	}
 
-	const anchors = sparseFallbackAnchors(chunk);
+	const anchors = sparseFallbackAnchors(
+		chunk,
+		options.matchFallbackRdpTolerance,
+		options.matchFallbackMaxVias
+	);
 	const sparse = await getRoute(anchors, { continueStraight: true });
-	if (isPathologicalDetour(matched.distance, sketchDistance, sparse.distance)) {
+	if (
+		isPathologicalDetour(
+			matched.distance,
+			sketchDistance,
+			sparse.distance,
+			options.detourRatio
+		)
+	) {
 		return sparseResultAsMatch(sparse, anchors, 'Detour');
 	}
 	return matched;
@@ -434,16 +470,18 @@ function sparseResultAsMatch(
 	};
 }
 
-async function getMatchChunk(points: Point[]): Promise<MatchResult> {
+async function getMatchChunk(
+	points: Point[],
+	options: RoutingOptions = defaultRoutingOptions()
+): Promise<MatchResult> {
 	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
 	// Per-coordinate radius: waypoints (index 0 and length-1) get the relaxed
-	// MATCH_RADIUS_WAYPOINT_METERS so anchors 25-50 m off the road network
-	// (plaza boundaries, park entrances) still snap — without this, a chunk
-	// whose start/end anchor is just outside the 30 m tracepoint radius
-	// returns NoMatch for the whole chunk and we lose the curve detail.
-	// Tracepoints keep the tight 30 m so the HMM candidate set stays small.
+	// waypoint radius so anchors 25-50 m off the road network still snap.
+	// Tracepoints keep the tighter radius so the HMM candidate set stays small.
 	const radii = points.map((_, i) =>
-		i === 0 || i === points.length - 1 ? MATCH_RADIUS_WAYPOINT_METERS : MATCH_RADIUS_METERS
+		i === 0 || i === points.length - 1
+			? options.matchRadiusWaypointMeters
+			: options.matchRadiusMeters
 	);
 	const params = new URLSearchParams({
 		overview: 'full',
@@ -484,9 +522,14 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 
 async function getSparseRouteAsMatchResult(
 	points: Point[],
-	code: 'NoMatch' | 'Detour'
+	code: 'NoMatch' | 'Detour',
+	options: RoutingOptions = defaultRoutingOptions()
 ): Promise<MatchResult> {
-	const anchors = sparseFallbackAnchors(points);
+	const anchors = sparseFallbackAnchors(
+		points,
+		options.matchFallbackRdpTolerance,
+		options.matchFallbackMaxVias
+	);
 	const route = await getRoute(anchors, { continueStraight: true });
 	return sparseResultAsMatch(route, anchors, code);
 }

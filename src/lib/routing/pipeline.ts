@@ -1,15 +1,8 @@
-import {
-	RDP_TOLERANCE_PENCIL,
-	STRUCTURED_BEARING_RANGE_DEG,
-	STRUCTURED_CORNER_INSET_METERS,
-	STRUCTURED_EDGE_DEVIATION_METERS,
-	STRUCTURED_EDGE_VIA_MIN_METERS,
-	STRUCTURED_MAX_VIAS_PER_EDGE,
-	STRUCTURED_VIA_SPACING_METERS
-} from '$lib/constants/routing';
+import { STRUCTURED_BEARING_RANGE_DEG } from '$lib/constants/routing';
 import { distanceBetween, initialBearingDegrees } from '$lib/geometry/distance';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 import { usesMatchApi, type RouteCallKind } from './batchPlan';
+import { defaultRoutingOptions, type RoutingOptions } from './options';
 import type { GetRouteOptions, RouteBearing, RouteResult } from './osrm';
 import { getRoute } from './osrm';
 import { decodePolyline } from './polyline';
@@ -17,6 +10,7 @@ import { sampleTrace } from './sample';
 import { simplifyRdp } from './rdp';
 
 export type { RouteCallKind };
+export type { RoutingOptions };
 
 // One shape after TSP direction choice, ready for an OSRM call.
 export type PreparedShapeRoute = {
@@ -93,15 +87,18 @@ export function routingChain(shape: Shape, reversed: boolean): Point[] {
 }
 
 // Whether a structured shape needs intermediate vias / per-edge handling.
-export function needsStructuredEdgeVias(chain: Point[]): boolean {
-	return maxEdgeMeters(chain) >= STRUCTURED_EDGE_VIA_MIN_METERS;
+export function needsStructuredEdgeVias(
+	chain: Point[],
+	minEdgeMeters = defaultRoutingOptions().structuredEdgeViaMinMeters
+): boolean {
+	return maxEdgeMeters(chain) >= minEdgeMeters;
 }
 
 // Densify a single edge for hard /route vias.
 export function densifyStructuredVias(
 	chain: Point[],
-	spacingMeters = STRUCTURED_VIA_SPACING_METERS,
-	maxVias = STRUCTURED_MAX_VIAS_PER_EDGE
+	spacingMeters = defaultRoutingOptions().structuredViaSpacingMeters,
+	maxVias = defaultRoutingOptions().structuredMaxViasPerEdge
 ): Point[] {
 	if (chain.length < 2) return chain.slice();
 	if (maxVias < 2) {
@@ -213,24 +210,29 @@ export function routeOptionsForSegment(segment: Point[]): GetRouteOptions {
 export async function routeAdaptiveEdge(
 	a: Point,
 	b: Point,
-	routeFn: typeof getRoute = getRoute
+	routeFn: typeof getRoute = getRoute,
+	options: RoutingOptions = defaultRoutingOptions()
 ): Promise<RouteResult> {
 	const simple = await routeFn([a, b], { continueStraight: true });
 	const simplePath = decodePolyline(simple.geometry);
 	const simpleDev = maxDeviationFromSegment(simplePath, a, b);
 	const simpleMean = meanDeviationFromSegment(simplePath, a, b);
 
-	if (simpleDev <= STRUCTURED_EDGE_DEVIATION_METERS) {
+	if (simpleDev <= options.structuredEdgeDeviationMeters) {
 		return simple;
 	}
 
 	// Edge is short enough that densify wouldn't add points.
 	const edgeLen = distanceBetween(a, b);
-	if (edgeLen < STRUCTURED_EDGE_VIA_MIN_METERS) {
+	if (edgeLen < options.structuredEdgeViaMinMeters) {
 		return simple;
 	}
 
-	const vias = densifyStructuredVias([a, b]);
+	const vias = densifyStructuredVias(
+		[a, b],
+		options.structuredViaSpacingMeters,
+		options.structuredMaxViasPerEdge
+	);
 	if (vias.length <= 2) {
 		return simple;
 	}
@@ -244,7 +246,7 @@ export async function routeAdaptiveEdge(
 		// Accept densified only if it hugs the edge better and length is sane.
 		const betterFit =
 			denseMean < simpleMean * 0.85 || denseDev < simpleDev * 0.85;
-		const lengthOk = dense.distance <= simple.distance * 1.35;
+		const lengthOk = dense.distance <= simple.distance * options.detourRatio;
 		if (betterFit && lengthOk) {
 			return dense;
 		}
@@ -278,7 +280,7 @@ export function insetAlongEdge(from: Point, to: Point, meters: number): Point {
  */
 export function softCornerEdgePairs(
 	corners: Point[],
-	insetMeters = STRUCTURED_CORNER_INSET_METERS
+	insetMeters = defaultRoutingOptions().structuredCornerInsetMeters
 ): Array<{ a: Point; b: Point }> {
 	const pairs: Array<{ a: Point; b: Point }> = [];
 	for (let i = 1; i < corners.length; i++) {
@@ -295,14 +297,15 @@ export function softCornerEdgePairs(
 // Route a prepared structured shape: adaptive per-edge with soft corners,
 // or single /route for short shapes.
 export async function routePreparedStructured(
-	prepared: PreparedShapeRoute
+	prepared: PreparedShapeRoute,
+	options: RoutingOptions = defaultRoutingOptions()
 ): Promise<{ geometries: string[]; distance: number; duration: number }> {
 	if (prepared.edgeCorners && prepared.edgeCorners.length >= 2) {
 		const corners = prepared.edgeCorners;
-		const pairs = softCornerEdgePairs(corners);
+		const pairs = softCornerEdgePairs(corners, options.structuredCornerInsetMeters);
 		// Route each soft edge + corner bridges between consecutive soft ends.
 		const edgeResults = await Promise.all(
-			pairs.map(({ a, b }) => routeAdaptiveEdge(a, b))
+			pairs.map(({ a, b }) => routeAdaptiveEdge(a, b, getRoute, options))
 		);
 
 		// Bridge soft end of edge i to soft start of edge i+1 (rounded corner).
@@ -359,7 +362,12 @@ export async function routePreparedStructured(
 }
 
 // Preprocess one shape for OSRM.
-export function prepareShapeRoute(shape: Shape, reversed: boolean, shapeIndex = 0): PreparedShapeRoute {
+export function prepareShapeRoute(
+	shape: Shape,
+	reversed: boolean,
+	shapeIndex = 0,
+	options: RoutingOptions = defaultRoutingOptions()
+): PreparedShapeRoute {
 	const { entry, exit } = shapeEndpoints(shape, reversed);
 	const chain = routingChain(shape, reversed);
 
@@ -377,8 +385,8 @@ export function prepareShapeRoute(shape: Shape, reversed: boolean, shapeIndex = 
 	// Pencil: densify + mild RDP (sketch length / rare /match escalate).
 	// Live path is getMatchedRoute → sparse /route on MATCH_FALLBACK_* anchors.
 	if (usesMatchApi(shape.type)) {
-		let pts = sampleTrace(chain);
-		const rdpped = simplifyRdp(pts, RDP_TOLERANCE_PENCIL);
+		let pts = sampleTrace(chain, options.matchSampleSpacingMeters);
+		const rdpped = simplifyRdp(pts, options.rdpTolerancePencil);
 		pts = rdpped.length >= 2 ? rdpped : chain;
 		return {
 			shape,
@@ -391,7 +399,7 @@ export function prepareShapeRoute(shape: Shape, reversed: boolean, shapeIndex = 
 	}
 
 	// Structured short: single corner /route.
-	if (!needsStructuredEdgeVias(chain)) {
+	if (!needsStructuredEdgeVias(chain, options.structuredEdgeViaMinMeters)) {
 		return {
 			shape,
 			shapeIndex,
