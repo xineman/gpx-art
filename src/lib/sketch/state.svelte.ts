@@ -2,19 +2,21 @@ import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
-import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
 import {
 	attachOutcomes,
 	buildRoutePlan,
-	usesMatchApi,
 	type RouteDebugBatch
 } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
-import { getMatchedRoute, getRoute, type ChunkOutcome } from '$lib/routing/osrm';
+import { cleanRoutedPathOnNetwork } from '$lib/routing/cleanPath';
+import { getMatchedRoute, getRoute, type ChunkOutcome, type MatchResult, type RouteResult } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
-import { simplifyRdp } from '$lib/routing/rdp';
-import { sampleTrace } from '$lib/routing/sample';
-import { solveClusterTspWithFlip } from '$lib/routing/tsp';
+import { isClosedShapeType, prepareShapeRoute, routePreparedStructured } from '$lib/routing/pipeline';
+import {
+	buildFlipTspHaversineCosts,
+	buildFlipTspRoadCosts,
+	solveClusterTspWithFlipFromCosts
+} from '$lib/routing/tsp';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
@@ -487,107 +489,85 @@ export class SketchState implements SketchStateLike {
 		try {
 			const last = shapes.map((s) => s.points[s.points.length - 1]);
 			const first = shapes.map((s) => s.points[0]);
+			const closed = shapes.map((s) => isClosedShapeType(s.type));
 
-			// Optimised order + direction for each shape. The solver picks
-			// the visit order, but also which endpoint is the entry and which
-			// is the exit — tracing a shape in reverse is allowed when it
-			// minimises the inter-shape travel distance. See
-			// solveClusterTspWithFlip in $lib/routing/tsp for the full
-			// algorithm explanation.
+			// Optimised order + direction. Prefer OSRM /table road costs when
+			// N is small; fall back to haversine. Closed shapes use entry=exit
+			// (full loop, leave from start). See $lib/routing/tsp.
 			this.status = 'Optimizing order between shapes…';
-			const { order, directions } = solveClusterTspWithFlip(first, last);
+			const roadCosts = await buildFlipTspRoadCosts(first, last, closed);
+			const costs = roadCosts ?? buildFlipTspHaversineCosts(first, last, closed);
+			const { order, directions } = solveClusterTspWithFlipFromCosts(shapes.length, costs);
 
 			this.status = 'Routing along your shapes…';
+			const prepared = order.map((shapeIdx, visitIdx) =>
+				prepareShapeRoute(shapes[shapeIdx], directions[visitIdx], visitIdx)
+			);
+
+			// Parallel OSRM: all shapes (match / single route / per-edge route)
+			// + inter-shape links, then stitch in visit order.
+			type ShapeOsrmResult =
+				| { kind: 'empty' }
+				| { kind: 'match'; matched: MatchResult }
+				| { kind: 'route'; geometries: string[] };
+
+			const [shapeResults, linkResults] = await Promise.all([
+				Promise.all(
+					prepared.map(async (p): Promise<ShapeOsrmResult> => {
+						if (p.points.length < 2) return { kind: 'empty' };
+						if (p.callKind === 'match') {
+							return { kind: 'match', matched: await getMatchedRoute(p.points) };
+						}
+						// Structured: may fan out to one /route per sketch edge.
+						const routed = await routePreparedStructured(p);
+						return { kind: 'route', geometries: routed.geometries };
+					})
+				),
+				prepared.length < 2
+					? Promise.resolve([] as RouteResult[])
+					: Promise.all(
+							// Two-point links: no intermediate vias, continue_straight irrelevant.
+							prepared.slice(0, -1).map((p, i) => getRoute([p.exit, prepared[i + 1].entry]))
+						)
+			]);
+
 			const polylines: Point[] = [];
-			// Mirror the per-shape points the pipeline is about to hand to
-			// OSRM, in TSP-solved order. Consumed by buildRoutePlan after
-			// the loop to populate routeDebugBatches — the visualization
-			// shows exactly what the API received.
-			const processedPoints: Point[][] = [];
-			// Per-chunk /match outcomes aligned with `order` (so the i-th
-			// entry corresponds to the i-th TSP-ordered shape). Shapes that
-			// go through getMatchedRoute push chunkOutcomes; pure /route
-			// shapes push undefined. attachOutcomes uses this for the legend.
+			const processedPoints: Point[][] = prepared.map((p) => p.points);
 			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
-			for (let i = 0; i < order.length; i++) {
-				const shape = shapes[order[i]];
-				const isClosed = shape.type === 'polygon' || shape.type === 'rectangle';
-				const isReversed = directions[i];
 
-				// Reverse the vertex list when the solver chose to trace this
-				// shape backwards. shape.points is always stored as an open
-				// chain in drawn order; reversing it produces an open chain
-				// in reverse-drawn order. RDP simplification is
-				// direction-agnostic (chord distances are the same), so either
-				// input gives equally valid simplified anchors.
-				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
-
-				// Sample into a GPS-like trace, then RDP. For /match paths the
-				// densified interiors are soft guidance; for short structured
-				// /route paths RDP usually collapses straight edges back to
-				// corners so we don't force densified hard vias.
-				let pts = sampleTrace(isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints);
-
-				// Pencil uses the higher RDP tolerance (noisy freehand).
-				// Structured shapes keep the tighter tolerance so intentional
-				// corners survive. Strip the closing point before simplifying
-				// so the chord back to start isn't degenerate.
-				const rdpTolerance = shape.type === 'pencil' ? RDP_TOLERANCE_PENCIL : RDP_TOLERANCE;
-				const rdpped = simplifyRdp(isClosed ? pts.slice(0, -1) : pts, rdpTolerance);
-				pts = isClosed && rdpped.length > 0 ? [...rdpped, rdpped[0]] : rdpped;
-
-				// Degenerate fallback: if simplification produced too little
-				// to work with, route the raw shape instead so we still
-				// produce something.
-				if (pts.length < 2) {
-					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
-				}
-
-				processedPoints.push(pts);
-
-				// Pencil always /match. Structured shapes /match once densified
-				// edges leave enough points that hard /route vias would either
-				// detour or lose long-edge fidelity (faster arterial between
-				// corners). Short corner lists stay on /route.
-				if (usesMatchApi(shape.type, pts.length)) {
-					const { geometries, chunkOutcomes } = await getMatchedRoute(pts);
-					chunkOutcomesByShape.push(chunkOutcomes);
-					for (const geometry of geometries) {
+			for (let i = 0; i < prepared.length; i++) {
+				const result = shapeResults[i];
+				if (result.kind === 'match') {
+					chunkOutcomesByShape.push(result.matched.chunkOutcomes);
+					for (const geometry of result.matched.geometries) {
+						await appendGeometryToPath(polylines, geometry);
+					}
+				} else if (result.kind === 'route') {
+					chunkOutcomesByShape.push(undefined);
+					for (const geometry of result.geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
 				} else {
 					chunkOutcomesByShape.push(undefined);
-					const { geometry } = await getRoute(pts);
-					await appendGeometryToPath(polylines, geometry);
 				}
 
-				if (i < order.length - 1) {
-					// Transitions are always 2 points — no simplification needed.
-					// The exit of the current shape and the entry of the next
-					// depend on their chosen directions: forward means
-					// entry=first, exit=last; reverse swaps them.
-					const currentShape = shape;
-					const nextShape = shapes[order[i + 1]];
-					const currentExit = isReversed
-						? currentShape.points[0]
-						: currentShape.points[currentShape.points.length - 1];
-					const nextEntry = directions[i + 1]
-						? nextShape.points[nextShape.points.length - 1]
-						: nextShape.points[0];
-					const { geometry: link } = await getRoute([currentExit, nextEntry]);
-					await appendGeometryToPath(polylines, link);
+				if (i < linkResults.length) {
+					await appendGeometryToPath(polylines, linkResults[i].geometry);
 				}
 			}
 
-			this.routedPath = polylines;
+			// Single cleanup pass with a hard /route budget. Pass sketch
+			// corners so wasteful approach loops near geometric vertices
+			// (e.g. Powązkowska) can be collapsed.
+			const sketchCorners = shapes.flatMap((s) => s.points);
+			this.routedPath = await cleanRoutedPathOnNetwork(polylines, undefined, {
+				corners: sketchCorners
+			});
 
-			// Build the /match batch debug plan from the SAME points we
-			// just sent to OSRM, then attach the per-chunk outcomes so the
-			// legend can show whether /match was used or fell back to /route.
-			// Persisted on the state so the legend and on-map overlay can
-			// render via renderRouteDebug.
-			const orderedShapes = order.map((idx) => shapes[idx]);
-			const plan = buildRoutePlan(orderedShapes, processedPoints);
+			// Debug plan uses the SAME points + callKinds we sent to OSRM.
+			const orderedShapes = prepared.map((p) => p.shape);
+			const callKinds = prepared.map((p) => p.callKind);
+			const plan = buildRoutePlan(orderedShapes, processedPoints, callKinds);
 			this.routeDebugBatches = attachOutcomes(plan, chunkOutcomesByShape);
 
 			this.phase = 'routed';
@@ -992,6 +972,9 @@ export class SketchState implements SketchStateLike {
 }
 
 async function appendGeometryToPath(path: Point[], geometry: string) {
+	// Decode only here. Network cleanup runs once on the full stitched path
+	// (see createRoute) with a hard bridge budget — cleaning every chunk
+	// caused request storms when false-positive "loops" re-routed forever.
 	const points = decodePolyline(geometry);
 	if (points.length === 0) return;
 

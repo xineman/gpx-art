@@ -13,6 +13,40 @@ import { totalDistance } from '$lib/geometry/distance';
 import type { Point } from '$lib/types/sketch';
 import { simplifyRdp } from './rdp';
 
+// ---------------------------------------------------------------------------
+// /table — road-network pairwise distances for TSP transition costs
+// ---------------------------------------------------------------------------
+
+// Fetch an N×N road-distance matrix (meters) via OSRM /table.
+// `distances[i][j]` is the bike-network length from points[i] to points[j].
+// Throws on HTTP / OSRM errors; callers that want haversine fallback catch.
+export async function getDistanceTable(points: Point[]): Promise<number[][]> {
+	if (points.length === 0) return [];
+	if (points.length === 1) return [[0]];
+
+	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
+	const url = `${OSRM_BASE_URL}/table/v1/${OSRM_PROFILE}/${coords}?annotations=distance`;
+
+	const response = await fetch(url, { headers: { Accept: 'application/json' } });
+	if (!response.ok) {
+		throw new Error(`OSRM table request failed: ${response.status} ${response.statusText}`);
+	}
+
+	const body = (await response.json()) as OsrmTableResponse;
+	if (body.code !== 'Ok') {
+		throw new Error(
+			`OSRM table error: ${body.code}${body.message ? ` — ${body.message}` : ''}`
+		);
+	}
+	if (!body.distances || body.distances.length !== points.length) {
+		throw new Error('OSRM table returned an unexpected distances matrix.');
+	}
+
+	return body.distances.map((row) =>
+		row.map((d) => (d === null || !Number.isFinite(d) ? Infinity : d))
+	);
+}
+
 export type RouteResult = {
 	geometry: string;
 	distance: number;
@@ -42,6 +76,17 @@ export type MatchResult = {
 	chunkOutcomes: ChunkOutcome[];
 };
 
+export type RouteBearing = { bearing: number; range: number };
+
+export type GetRouteOptions = {
+	// Force the route to keep going straight at intermediate waypoints
+	// (no U-turn even if faster). Essential for multi-via structured edges.
+	continueStraight?: boolean;
+	// Per-waypoint OSRM bearings constraint. null = unconstrained.
+	// When set and the request fails, getRoute retries once without bearings.
+	bearings?: Array<RouteBearing | null>;
+};
+
 // Thin wrapper around OSRM /route. Waypoints are ordered — this function does
 // NOT solve the TSP. For TSP solving, see ./tsp.ts and the createRoute()
 // pipeline in state.svelte.ts which first solves cluster ordering and then
@@ -59,13 +104,49 @@ export type MatchResult = {
 // handful of geometric anchors. Passing an explicit finite radius would
 // re-introduce `NoSegment` failures for mid-block anchors; passing
 // `radiuses=0` would demand exact road matches and break those same anchors.
-export async function getRoute(points: Point[]): Promise<RouteResult> {
+//
+// Multi-via structured shapes pass continueStraight + sketch-aligned bearings
+// so OSRM does not reverse at each intermediate snap.
+export async function getRoute(points: Point[], options: GetRouteOptions = {}): Promise<RouteResult> {
 	if (points.length < 2) {
 		throw new Error('OSRM /route requires at least 2 waypoints.');
 	}
 
+	try {
+		return await fetchRoute(points, options);
+	} catch (err) {
+		// Bearings can be too tight against OSM geometry — fall back once.
+		if (options.bearings && options.bearings.length > 0) {
+			const { bearings: _b, ...rest } = options;
+			return fetchRoute(points, rest);
+		}
+		throw err;
+	}
+}
+
+async function fetchRoute(points: Point[], options: GetRouteOptions): Promise<RouteResult> {
 	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
-	const url = `${OSRM_BASE_URL}/route/v1/${OSRM_PROFILE}/${coords}?overview=full&geometries=polyline&steps=false`;
+	const params = new URLSearchParams({
+		overview: 'full',
+		geometries: 'polyline',
+		steps: 'false'
+	});
+
+	// Only meaningful with intermediate waypoints; still safe for 2-point.
+	if (options.continueStraight ?? points.length > 2) {
+		params.set('continue_straight', 'true');
+	}
+
+	if (options.bearings && options.bearings.length === points.length) {
+		params.set(
+			'bearings',
+			options.bearings
+				.map((b) => (b ? `${Math.round(b.bearing)},${Math.round(b.range)}` : ''))
+				.join(';')
+		);
+	}
+
+	const url = `${OSRM_BASE_URL}/route/v1/${OSRM_PROFILE}/${coords}?${params.toString()}`;
 
 	const response = await fetch(url, { headers: { Accept: 'application/json' } });
 	if (!response.ok) {
@@ -393,4 +474,11 @@ type OsrmMatchResponse = {
 		duration: number;
 		confidence: number;
 	}>;
+};
+
+type OsrmTableResponse = {
+	code: string;
+	message?: string;
+	// null when OSRM cannot route between a pair
+	distances?: Array<Array<number | null>>;
 };

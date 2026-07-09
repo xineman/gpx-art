@@ -1,6 +1,8 @@
-import { MATCH_DEBUG_PALETTE, STRUCTURED_MATCH_MIN_POINTS } from '$lib/constants/routing';
+import { MATCH_DEBUG_PALETTE } from '$lib/constants/routing';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 import { chunkPointsForMatch, type ChunkOutcome } from './osrm';
+
+export type RouteCallKind = 'match' | 'route';
 
 // One entry in the /match batch debug overlay. Represents a contiguous slice
 // of points that the routing pipeline would forward to a single OSRM call —
@@ -10,7 +12,7 @@ export interface RouteDebugBatch {
 	// original shape array. Stable across calls with the same shape order.
 	shapeIndex: number;
 	shapeType: ShapeType;
-	// 'match' for chunked soft traces; 'route' for sparse hard-via shapes.
+	// 'match' for chunked soft traces; 'route' for hard-via shapes.
 	callKind: 'match' | 'route';
 	// 0-based chunk index within the shape. Always 0 for /route shapes
 	// (no chunking) — chunkCount is 1 in that case.
@@ -32,27 +34,26 @@ export interface RouteDebugBatch {
 	outcome?: ChunkOutcome;
 }
 
-// Whether createRoute / buildRoutePlan should send this processed point list
-// through /match (soft) rather than /route (hard vias). Pencil always matches;
-// structured shapes match once densified edges leave enough points that hard
-// vias would either detour or lose long-edge fidelity.
-export function usesMatchApi(shapeType: ShapeType, processedPointCount: number): boolean {
-	if (shapeType === 'pencil') return true;
-	return processedPointCount >= STRUCTURED_MATCH_MIN_POINTS;
+// Whether createRoute / prepareShapeRoute should send this shape through
+// chunked /match. Only freehand pencil uses /match; structured shapes always
+// use /route (optionally with sparse edge vias) for speed.
+export function usesMatchApi(shapeType: ShapeType): boolean {
+	return shapeType === 'pencil';
 }
 
 // Build the per-call debug plan from the TSP-ordered shapes and the points
 // each shape would actually forward to OSRM.
 //
-// `orderedShapes` and `processedPoints` must be aligned: processedPoints[i]
-// is the sample+rdp'd point list for orderedShapes[i]. These are the SAME
-// points the createRoute() pipeline hands to getMatchedRoute or getRoute.
+// `orderedShapes`, `processedPoints`, and `callKinds` must be aligned:
+// processedPoints[i] / callKinds[i] describe orderedShapes[i]. callKinds come
+// from prepareShapeRoute so debug matches the live API decision.
 //
 // Color assignment is per-batch (not per-shape) so adjacent chunks read as
 // different colors. Returns an empty array when nothing is routable.
 export function buildRoutePlan(
 	orderedShapes: Shape[],
-	processedPoints: Point[][]
+	processedPoints: Point[][],
+	callKinds: RouteCallKind[]
 ): RouteDebugBatch[] {
 	const batches: RouteDebugBatch[] = [];
 	let batchIndex = 0;
@@ -61,6 +62,7 @@ export function buildRoutePlan(
 	for (let i = 0; i < orderedShapes.length; i++) {
 		const shape = orderedShapes[i];
 		const points = processedPoints[i] ?? [];
+		const callKind = callKinds[i] ?? 'route';
 
 		if (points.length < 2) {
 			continue;
@@ -68,9 +70,8 @@ export function buildRoutePlan(
 
 		const currentShapeIndex = shapeIndex;
 		shapeIndex++;
-		const useMatch = usesMatchApi(shape.type, points.length);
 
-		if (useMatch) {
+		if (callKind === 'match') {
 			const chunks = chunkPointsForMatch(points);
 			chunks.forEach((chunk, chunkIndex) => {
 				const startIndex = points.indexOf(chunk[0]);

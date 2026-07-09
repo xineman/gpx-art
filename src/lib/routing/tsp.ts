@@ -1,6 +1,7 @@
 import { distanceBetween } from '$lib/geometry/distance';
 import type { Point } from '$lib/types/sketch';
-import { TSP_EXACT_LIMIT, TWO_OPT_MAX_ITERATIONS } from '$lib/constants/routing';
+import { TSP_EXACT_LIMIT, TSP_ROAD_COST_LIMIT, TWO_OPT_MAX_ITERATIONS } from '$lib/constants/routing';
+import { getDistanceTable } from './osrm';
 
 // Solve an open-path TSP over a square distance matrix.
 //
@@ -184,79 +185,96 @@ export interface FlipTspResult {
 	order: number[];
 	/** `directions[i]` is `true` if the i-th visited shape should be routed in reverse. */
 	directions: boolean[];
-	/** Total transition distance along the chosen path (haversine meters). */
+	/** Total transition distance along the chosen path (meters). */
 	cost: number;
 }
 
-// Solve the open-path Generalized TSP with shape-direction choices.
-//
-// Each shape has two possible "states":
-//   F_i — traced in drawn order:  entry = first[i], exit = last[i]
-//   R_i — traced in reverse order: entry = last[i],  exit = first[i]
-//
-// We pick exactly one state per shape, and an order to visit them, that
-// minimizes the total transition distance. Transition cost between any
-// two states is the haversine distance between the corresponding
-// endpoints. Internal shape cost is assumed independent of direction —
-// OSRM `/route` length is similar whether the same vertex set is visited
-// forward or backward, modulo minor asymmetries in left/right turns at
-// intersections; a small effect dwarfed by the inter-shape transitions.
-//
-// State encoding for the DP:
-//   - mask : N bits. Bit k is set iff we've committed to a direction for
-//     shape k.
-//   - j    : 0 ≤ j < 2N. j < N means we ended at F_j; j ≥ N means we ended
-//     at R_(j-N).
-//
-// The DP always has 2N "ending nodes" available, but a valid mask covers
-// exactly N shapes (one per pair {F_i, R_i}). Total states: 2^N · 2N —
-// same exponential as the plain TSP, just one extra factor of 2 from the
-// direction doubling. For N = 14 that's ~460k states and ~6M transitions
-// — well under a second in the browser.
-//
-// For N > TSP_EXACT_LIMIT we degrade to the existing `solveClusterTsp`
-// over the directional cost matrix (all shapes forward). This isn't
-// optimal — it loses the direction choice — but it's a safe, monotone
-// fallback until a GTSP heuristic lands.
-export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspResult {
-	const n = first.length;
-	if (n === 0) return { order: [], directions: [], cost: 0 };
-	if (n === 1) return { order: [0], directions: [false], cost: 0 };
-
-	if (n > TSP_EXACT_LIMIT) {
-		// Direction-unaware fallback. Same F_i → F_j cost matrix the old
-		// solver used, run through the existing entry point.
-		const cost = last.map((_, i) =>
-			first.map((_, j) => (i === j ? Infinity : distanceBetween(last[i], first[j])))
-		);
-		const order = solveClusterTsp(cost);
-		return { order, directions: order.map(() => false), cost: pathCost(order, cost) };
+// Entry/exit points for one directed shape state.
+// Open: forward entry=first exit=last; reverse swaps.
+// Closed full-loop: exit equals entry (start corner of the oriented ring).
+export function shapeStateEndpoints(
+	first: Point,
+	last: Point,
+	reversed: boolean,
+	closed: boolean
+): { entry: Point; exit: Point } {
+	if (closed) {
+		const start = reversed ? last : first;
+		return { entry: start, exit: start };
 	}
+	return {
+		entry: reversed ? last : first,
+		exit: reversed ? first : last
+	};
+}
 
-	// Build the 2N x 2N cost matrix.
-	//   F_i lives at index i      (i < n)
-	//   R_i lives at index n + i  (i < n)
+// Build the 2N×2N GTSP cost matrix (F_i at i, R_i at n+i) from a pairwise
+// distance function between exit→entry points.
+export function buildFlipTspCosts(
+	first: Point[],
+	last: Point[],
+	closed: boolean[],
+	distance: (from: Point, to: Point) => number
+): number[][] {
+	const n = first.length;
 	const SZ = 2 * n;
 	const c: number[][] = [];
 	for (let i = 0; i < SZ; i++) c.push(new Array(SZ).fill(Infinity));
+
 	for (let i = 0; i < n; i++) {
 		for (let j = 0; j < n; j++) {
 			if (i === j) continue;
-			c[i][j] = distanceBetween(last[i], first[j]); // F_i → F_j
-			c[i][n + j] = distanceBetween(last[i], last[j]); // F_i → R_j
-			c[n + i][j] = distanceBetween(first[i], first[j]); // R_i → F_j
-			c[n + i][n + j] = distanceBetween(first[i], last[j]); // R_i → R_j
+			const fI = shapeStateEndpoints(first[i], last[i], false, closed[i] ?? false);
+			const rI = shapeStateEndpoints(first[i], last[i], true, closed[i] ?? false);
+			const fJ = shapeStateEndpoints(first[j], last[j], false, closed[j] ?? false);
+			const rJ = shapeStateEndpoints(first[j], last[j], true, closed[j] ?? false);
+
+			c[i][j] = distance(fI.exit, fJ.entry); // F_i → F_j
+			c[i][n + j] = distance(fI.exit, rJ.entry); // F_i → R_j
+			c[n + i][j] = distance(rI.exit, fJ.entry); // R_i → F_j
+			c[n + i][n + j] = distance(rI.exit, rJ.entry); // R_i → R_j
 		}
 	}
-	// F_i → R_i and R_i → F_i would mean "visit the same shape mid-tour
-	// and flip its direction", which isn't in our model. Mark unreachable.
+
+	// Same-shape F↔R is not a valid mid-tour flip.
 	for (let i = 0; i < n; i++) {
 		c[i][n + i] = Infinity;
 		c[n + i][i] = Infinity;
 	}
 
-	// dp[mask][j] = min-cost open path starting at any node, visiting
-	// every shape in `mask`, ending at node j.
+	return c;
+}
+
+export function buildFlipTspHaversineCosts(
+	first: Point[],
+	last: Point[],
+	closed: boolean[] = first.map(() => false)
+): number[][] {
+	return buildFlipTspCosts(first, last, closed, distanceBetween);
+}
+
+// Pure GTSP solve over a prebuilt 2N×2N cost matrix (same encoding as
+// buildFlipTspCosts). For N > TSP_EXACT_LIMIT falls back to forward-only
+// shape TSP using F_i → F_j submatrix.
+export function solveClusterTspWithFlipFromCosts(n: number, cost: number[][]): FlipTspResult {
+	if (n === 0) return { order: [], directions: [], cost: 0 };
+	if (n === 1) return { order: [0], directions: [false], cost: 0 };
+
+	if (n > TSP_EXACT_LIMIT) {
+		// Direction-unaware fallback: F_i → F_j only (top-left n×n block).
+		const forward: number[][] = [];
+		for (let i = 0; i < n; i++) {
+			const row = new Array(n).fill(Infinity);
+			for (let j = 0; j < n; j++) {
+				if (i !== j) row[j] = cost[i][j];
+			}
+			forward.push(row);
+		}
+		const order = solveClusterTsp(forward);
+		return { order, directions: order.map(() => false), cost: pathCost(order, forward) };
+	}
+
+	const SZ = 2 * n;
 	const fullMask = (1 << n) - 1;
 	const dp: number[][] = [];
 	const parent: number[][] = [];
@@ -265,16 +283,11 @@ export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspR
 		parent.push(new Array(SZ).fill(-1));
 	}
 
-	// Base case: any single shape can be started at either of its two
-	// direction-states with zero cost. After this, masks strictly grow.
 	for (let k = 0; k < n; k++) {
-		dp[1 << k][k] = 0; // start at F_k
-		dp[1 << k][n + k] = 0; // start at R_k
+		dp[1 << k][k] = 0;
+		dp[1 << k][n + k] = 0;
 	}
 
-	// Iterate masks in integer order — every predecessor of (mask, j) lives
-	// in a smaller mask (we remove one shape to extend), so its dp entry
-	// has already been computed by the time we reach (mask, j).
 	for (let m = 1; m <= fullMask; m++) {
 		for (let j = 0; j < SZ; j++) {
 			if (dp[m][j] === Infinity) continue;
@@ -284,12 +297,11 @@ export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspR
 			const remaining = fullMask ^ m;
 			if (remaining === 0) continue;
 
-			// Extend with any not-yet-visited shape, in either direction.
 			for (let k = 0; k < n; k++) {
 				if ((remaining & (1 << k)) === 0) continue;
 				const newMask = m | (1 << k);
 				for (const kNode of [k, n + k]) {
-					const newCost = dp[m][j] + c[j][kNode];
+					const newCost = dp[m][j] + cost[j][kNode];
 					if (newCost < dp[newMask][kNode]) {
 						dp[newMask][kNode] = newCost;
 						parent[newMask][kNode] = j;
@@ -299,7 +311,6 @@ export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspR
 		}
 	}
 
-	// The optimal tour ends at whichever node minimises the full-mask cost.
 	let bestEnd = -1;
 	let bestCost = Infinity;
 	for (let j = 0; j < SZ; j++) {
@@ -309,10 +320,6 @@ export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspR
 		}
 	}
 
-	// Walk parent pointers backward. Each step peels the current node's
-	// shape out of the mask; we record the shape index and its direction
-	// (R_ if the node index was ≥ n) in reverse so the unshifted sequence
-	// reads in visit order.
 	const order: number[] = [];
 	const directions: boolean[] = [];
 	let curMask = fullMask;
@@ -327,4 +334,62 @@ export function solveClusterTspWithFlip(first: Point[], last: Point[]): FlipTspR
 	}
 
 	return { order, directions, cost: bestCost };
+}
+
+// Solve the open-path Generalized TSP with shape-direction choices.
+//
+// Each shape has two possible "states":
+//   F_i — drawn order (open: entry=first exit=last; closed: entry=exit=first)
+//   R_i — reverse     (open: entry=last exit=first; closed: entry=exit=last)
+//
+// Closed shapes full-loop and leave from the start corner, so transition
+// costs use entry=exit for those shapes.
+//
+// `closed[i]` marks polygon/rectangle shapes. Defaults to all open.
+export function solveClusterTspWithFlip(
+	first: Point[],
+	last: Point[],
+	closed: boolean[] = first.map(() => false)
+): FlipTspResult {
+	const n = first.length;
+	if (n === 0) return { order: [], directions: [], cost: 0 };
+	if (n === 1) return { order: [0], directions: [false], cost: 0 };
+
+	const cost = buildFlipTspHaversineCosts(first, last, closed);
+	return solveClusterTspWithFlipFromCosts(n, cost);
+}
+
+// Road-network GTSP costs via OSRM /table. Returns null when N is outside
+// [2, TSP_ROAD_COST_LIMIT] or the table call fails — caller uses haversine.
+export async function buildFlipTspRoadCosts(
+	first: Point[],
+	last: Point[],
+	closed: boolean[] = first.map(() => false)
+): Promise<number[][] | null> {
+	const n = first.length;
+	if (n < 2 || n > TSP_ROAD_COST_LIMIT) return null;
+
+	// Anchor list: index i = first[i], index n+i = last[i].
+	const anchors: Point[] = [...first, ...last];
+	try {
+		const table = await getDistanceTable(anchors);
+		const roadDistance = (from: Point, to: Point) => {
+			const fromIdx = anchorIndex(anchors, from);
+			const toIdx = anchorIndex(anchors, to);
+			if (fromIdx < 0 || toIdx < 0) return distanceBetween(from, to);
+			const d = table[fromIdx][toIdx];
+			return Number.isFinite(d) ? d : distanceBetween(from, to);
+		};
+		return buildFlipTspCosts(first, last, closed, roadDistance);
+	} catch {
+		return null;
+	}
+}
+
+function anchorIndex(anchors: Point[], p: Point): number {
+	// Prefer reference equality (points come from first/last arrays), then
+	// exact lat/lng match for closed-state aliases.
+	const ref = anchors.indexOf(p);
+	if (ref >= 0) return ref;
+	return anchors.findIndex((a) => a.lat === p.lat && a.lng === p.lng);
 }

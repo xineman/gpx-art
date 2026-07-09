@@ -106,20 +106,21 @@ While a drawing tool is active, mousing down on an existing vertex will start dr
 
 ## Routing pipeline (`src/lib/routing/` + `SketchState.createRoute`)
 
-Live end-to-end (not a stub):
+Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareShapeRoute`), `tsp.ts`, and `batchPlan.ts`.
 
-1. **TSP order** — `solveClusterTspWithFlip` orders multi-shape visits and may reverse a shape.
-2. **Preprocess** — `sampleTrace` densifies long edges; `simplifyRdp` prunes minor wiggles (higher tolerance for pencil).
-3. **OSRM**
-   - **Pencil** and densified structured shapes (`usesMatchApi`) → chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`).
-   - **Short structured** (few corners) → single `/route` with hard vias.
-   - Per match chunk: keep match unless pathologically long (`DETOUR_RATIO` vs sketch + sparse baseline), else sparse `/route`; `NoMatch` also falls back to **sparse** anchors (RDP + max vias), never full densified chunk.
-4. **Stitch** — decode polylines; bridge gaps >2 m with `/route`; inter-shape links via `/route`.
+1. **TSP order** — GTSP with flip (`solveClusterTspWithFlipFromCosts`). Prefer OSRM `/table` road distances when N ≤ `TSP_ROAD_COST_LIMIT`, else haversine. Closed shapes (polygon/rectangle) use **entry = exit** (full loop, leave from start corner). May reverse a shape.
+2. **Preprocess** (`prepareShapeRoute`)
+   - **Pencil** → densify 60 m + RDP 30 m → chunked `/match`.
+   - **Structured** → always `/route`: short edges = corners only; long multi-edge = **adaptive per-edge** (parallel): try A→B first; densify vias only if path strays >`STRUCTURED_EDGE_DEVIATION_METERS` *and* densified fit is better without exploding length (avoids river/park via forced detours).
+3. **OSRM** (shape geometries + inter-shape links in **parallel**)
+   - Pencil: chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`); per chunk detour/NoMatch → sparse `/route`.
+   - Structured: single `/route` with hard vias; bearings retry without bearings on failure.
+4. **Stitch / clean** — decode polylines and stitch (bridge gaps >2 m with `/route`). **Once** on the full path, `cleanRoutedPathOnNetwork` fixes local reverse spurs/hairpins by re-routing kept endpoints (budget `ROUTE_CLEAN_MAX_BRIDGES`; ignores full-tour near-revisits so rectangles do not request-storm).
 5. **Export / trim** — `pointsToGpx`; trim can re-bridge cut endpoints.
 
-Debug: `buildRoutePlan` + `RouteDebugPanel` show per-chunk match/fallback outcomes.
+Debug: `buildRoutePlan(..., callKinds)` + `RouteDebugPanel` show per-chunk match/fallback outcomes.
 
-Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, etc.).
+Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.).
 
 ## Other notes
 
