@@ -3,7 +3,12 @@ import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
 import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
-import { buildRoutePlan, type RouteDebugBatch, attachOutcomes } from '$lib/routing/batchPlan';
+import {
+	attachOutcomes,
+	buildRoutePlan,
+	usesMatchApi,
+	type RouteDebugBatch
+} from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { getMatchedRoute, getRoute, type ChunkOutcome } from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
@@ -486,11 +491,9 @@ export class SketchState implements SketchStateLike {
 			// shows exactly what the API received.
 			const processedPoints: Point[][] = [];
 			// Per-chunk /match outcomes aligned with `order` (so the i-th
-			// entry corresponds to the i-th TSP-ordered shape). Pencil
-			// shapes push the chunkOutcomes list returned by
-			// getMatchedRoute; non-pencil shapes push undefined because
-			// their single /route call has no fallback path. attachOutcomes
-			// below uses this to populate `outcome` on each batch.
+			// entry corresponds to the i-th TSP-ordered shape). Shapes that
+			// go through getMatchedRoute push chunkOutcomes; pure /route
+			// shapes push undefined. attachOutcomes uses this for the legend.
 			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
 			for (let i = 0; i < order.length; i++) {
 				const shape = shapes[order[i]];
@@ -505,23 +508,16 @@ export class SketchState implements SketchStateLike {
 				// input gives equally valid simplified anchors.
 				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
 
-				// Sample the original drawing into a GPS-like trace for OSRM.
-				// Interior points are soft guidance instead of hard via stops,
-				// which lets the route stay on nearby streets instead of
-				// detouring through exact sketch vertices.
+				// Sample into a GPS-like trace, then RDP. For /match paths the
+				// densified interiors are soft guidance; for short structured
+				// /route paths RDP usually collapses straight edges back to
+				// corners so we don't force densified hard vias.
 				let pts = sampleTrace(isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints);
 
-				// RDP-simplify the sampled trace. Pencil strokes use the higher
-				// tolerance (RDP_TOLERANCE_PENCIL) because their curves
-				// have many fine-grained points whose perpendicular
-				// distance sits just above RDP_TOLERANCE; without the
-				// higher value, /match sees the full noisy trace and
-				// runs slow. Structured shapes use the default tolerance
-				// — they're effectively a no-op for them anyway since
-				// their input has only a handful of vertices. Strip the
-				// closing point before simplifying so the chord back to
-				// start isn't degenerate (would swallow every interior
-				// point).
+				// Pencil uses the higher RDP tolerance (noisy freehand).
+				// Structured shapes keep the tighter tolerance so intentional
+				// corners survive. Strip the closing point before simplifying
+				// so the chord back to start isn't degenerate.
 				const rdpTolerance = shape.type === 'pencil' ? RDP_TOLERANCE_PENCIL : RDP_TOLERANCE;
 				const rdpped = simplifyRdp(isClosed ? pts.slice(0, -1) : pts, rdpTolerance);
 				pts = isClosed && rdpped.length > 0 ? [...rdpped, rdpped[0]] : rdpped;
@@ -535,21 +531,17 @@ export class SketchState implements SketchStateLike {
 
 				processedPoints.push(pts);
 
-				if (shape.type === 'pencil') {
-					// /match handles the noise and outliers that pencil
-					// strokes accumulate. The HMM can drop tracepoints that
-					// don't snap, which is the reason /match exists.
+				// Pencil always /match. Structured shapes /match once densified
+				// edges leave enough points that hard /route vias would either
+				// detour or lose long-edge fidelity (faster arterial between
+				// corners). Short corner lists stay on /route.
+				if (usesMatchApi(shape.type, pts.length)) {
 					const { geometries, chunkOutcomes } = await getMatchedRoute(pts);
 					chunkOutcomesByShape.push(chunkOutcomes);
 					for (const geometry of geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
 				} else {
-					// Structured shapes (rectangle / line / polygon) have
-					// user-clicked corners with no outliers to drop. /route
-					// via the RDP'd anchors is exact and ~20× faster than
-					// /match for these — the public demo's `TooBig`
-					// radius rejection goes away too.
 					chunkOutcomesByShape.push(undefined);
 					const { geometry } = await getRoute(pts);
 					await appendGeometryToPath(polylines, geometry);

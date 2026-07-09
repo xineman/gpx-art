@@ -65,10 +65,14 @@
 				classes: 'bg-emerald-100 text-emerald-800'
 			};
 		}
-		// Fallback. `code` is the OSRM error string that triggered the /route
-		// fallback (currently only `NoMatch`). The discriminator stays in the
-		// shape so a future error type can be humanized here without changing
-		// the legend pill.
+		// Fallback. `code` is why sparse /route replaced the match:
+		// NoMatch (OSRM reject) or Detour (pathologically long match).
+		if (outcome.code === 'Detour') {
+			return {
+				label: 'fallback · detour',
+				classes: 'bg-orange-100 text-orange-800'
+			};
+		}
 		return {
 			label: `fallback · ${outcome.code}`,
 			classes: 'bg-amber-100 text-amber-800'

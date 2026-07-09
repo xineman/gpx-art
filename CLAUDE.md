@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app where the user draws shapes on a Leaflet/OSM map, with the intent to convert the sketch into a rideable GPX route and export it. Sketching and rendering are working; routing/GPX export is being re-implemented (see "Pending work" below).
+**GPX Art** — a SvelteKit web app where the user draws shapes on a Leaflet/OSM map, converts the sketch into a rideable GPX route via OSRM, and exports it.
 
 ## Commands
 
@@ -104,9 +104,22 @@ Implemented in `SketchState.handleKeydown/handleKeyup`:
 
 While a drawing tool is active, mousing down on an existing vertex will start dragging that vertex instead of beginning a new shape. Start new shapes in empty space.
 
-## Pending work
+## Routing pipeline (`src/lib/routing/` + `SketchState.createRoute`)
 
-The routing/GPX-export pipeline is a stub. `SketchState.createRoute()`, `backToEditing()`, and `downloadGpx()` are placeholders awaiting re-implementation, and the `phase` transitions to/from `routing` and `routed` are not yet wired up (ActionBar's `Route`, `Edit`, and `GPX` buttons call into these no-ops). Recent commit history (`Remove routing`, `Refactor the codebase`) reflects that the routing layer was ripped out to be rebuilt.
+Live end-to-end (not a stub):
+
+1. **TSP order** — `solveClusterTspWithFlip` orders multi-shape visits and may reverse a shape.
+2. **Preprocess** — `sampleTrace` densifies long edges; `simplifyRdp` prunes minor wiggles (higher tolerance for pencil).
+3. **OSRM**
+   - **Pencil** and densified structured shapes (`usesMatchApi`) → chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`).
+   - **Short structured** (few corners) → single `/route` with hard vias.
+   - Per match chunk: keep match unless pathologically long (`DETOUR_RATIO` vs sketch + sparse baseline), else sparse `/route`; `NoMatch` also falls back to **sparse** anchors (RDP + max vias), never full densified chunk.
+4. **Stitch** — decode polylines; bridge gaps >2 m with `/route`; inter-shape links via `/route`.
+5. **Export / trim** — `pointsToGpx`; trim can re-bridge cut endpoints.
+
+Debug: `buildRoutePlan` + `RouteDebugPanel` show per-chunk match/fallback outcomes.
+
+Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, etc.).
 
 ## Other notes
 

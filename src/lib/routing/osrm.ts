@@ -1,12 +1,17 @@
 import {
+	DETOUR_RATIO,
 	MATCH_CHUNK_OVERLAP,
+	MATCH_FALLBACK_MAX_VIAS,
+	MATCH_FALLBACK_RDP_TOLERANCE,
 	MATCH_MAX_POINTS,
 	MATCH_RADIUS_METERS,
 	MATCH_RADIUS_WAYPOINT_METERS,
 	OSRM_BASE_URL,
 	OSRM_PROFILE
 } from '$lib/constants/routing';
+import { totalDistance } from '$lib/geometry/distance';
 import type { Point } from '$lib/types/sketch';
+import { simplifyRdp } from './rdp';
 
 export type RouteResult = {
 	geometry: string;
@@ -16,15 +21,15 @@ export type RouteResult = {
 
 // Per-chunk outcome for a /match call: either the match was used as-is
 // (with the avg confidence across its matchings) or the pipeline fell
-// through to /route because /match returned NoMatch (a waypoint couldn't
-// snap inside its radius). Surfaced via the batch debug legend so the user
-// can see which chunks needed the fallback and why.
+// through to sparse /route. Surfaced via the batch debug legend.
 //
-// `code` keeps OSRM's exact reason string for the legend; introducing a new
-// fallback reason would extend the discriminated union here.
+// `code`:
+//   - NoMatch — OSRM rejected the chunk (waypoint outside radius)
+//   - Detour  — match succeeded but geometry was pathologically longer than
+//               the sketch / a sparse-route baseline
 export type ChunkOutcome =
 	| { kind: 'matched'; confidence: number }
-	| { kind: 'fallback'; code: 'NoMatch' };
+	| { kind: 'fallback'; code: 'NoMatch' | 'Detour' };
 
 export type MatchResult = {
 	geometries: string[];
@@ -32,9 +37,8 @@ export type MatchResult = {
 	duration: number;
 	confidence: number;
 	// One entry per chunk dispatched, in dispatch order. For chunk-level
-	// callers (getMatchChunk, getBestRouteForChunk, getRouteAsMatchResult)
-	// this is always a single-element array; getMatchedRoute concatenates
-	// them into the final per-shape list.
+	// callers this is always a single-element array; getMatchedRoute
+	// concatenates them into the final per-shape list.
 	chunkOutcomes: ChunkOutcome[];
 };
 
@@ -85,19 +89,18 @@ export async function getRoute(points: Point[]): Promise<RouteResult> {
 	};
 }
 
-// Map-match a hand-drawn trace to the road network.
+// Map-match a hand-drawn (or densified) trace to the road network.
 //
 // OSRM /match is better suited than /route for dense sketch points because it
 // treats the input as a noisy trace and can drop outliers (`tracepoints: null`)
 // instead of forcing the route through every anchor. The public demo endpoint
 // allows only small traces, so split longer shapes into overlapping chunks.
 //
-// Chunks are dispatched in parallel. The chunks are independent once split,
-// and a complex Warsaw pencil stroke produces 5–6 chunks that each take
-// ~20–30 s — sequential would be 100–150 s, parallel is the max. Local
-// `osrm-routed` is multi-threaded by default, so 5–6 simultaneous requests
-// are fine. Promise.all preserves fail-fast semantics (one chunk's hard
-// error aborts createRoute) matching the previous sequential behaviour.
+// Per chunk: /match → optional detour-ratio reject → sparse /route fallback
+// on NoMatch or Detour (never full-chunk hard vias).
+//
+// Chunks are dispatched in parallel. Promise.all preserves fail-fast
+// semantics (one chunk's hard error aborts createRoute).
 export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 	if (points.length < 2) {
 		throw new Error('OSRM /match requires at least 2 trace points.');
@@ -114,9 +117,6 @@ export async function getMatchedRoute(points: Point[]): Promise<MatchResult> {
 	let matchingCount = 0;
 	for (const result of results) {
 		geometries.push(...result.geometries);
-		// Each chunk-level MatchResult has exactly one ChunkOutcome describing
-		// that chunk's dispatch outcome. Concatenate in dispatch order so the
-		// returned list aligns with `chunks`.
 		chunkOutcomes.push(...result.chunkOutcomes);
 		distance += result.distance;
 		duration += result.duration;
@@ -162,6 +162,52 @@ export function chunkPointsForMatch(
 	return chunks;
 }
 
+// Collapse a densified chunk to a short list of hard vias for /route fallback.
+// Endpoints always survive; interiors come from a high-tolerance RDP pass and
+// are capped so /route cannot weave through every sample.
+export function sparseFallbackAnchors(
+	points: Point[],
+	toleranceMeters = MATCH_FALLBACK_RDP_TOLERANCE,
+	maxVias = MATCH_FALLBACK_MAX_VIAS
+): Point[] {
+	if (points.length < 2) return points.slice();
+	if (maxVias < 2) {
+		throw new Error('Fallback max vias must be at least 2.');
+	}
+
+	let anchors = simplifyRdp(points, toleranceMeters);
+	if (anchors.length < 2) {
+		anchors = [points[0], points[points.length - 1]];
+	}
+	// RDP can drop a shared endpoint reference equality — force ends to the
+	// original chunk endpoints so stitched chunks still join.
+	anchors[0] = points[0];
+	anchors[anchors.length - 1] = points[points.length - 1];
+
+	if (anchors.length <= maxVias) return anchors;
+
+	const subsampled: Point[] = [];
+	for (let i = 0; i < maxVias; i++) {
+		const idx = Math.round((i * (anchors.length - 1)) / (maxVias - 1));
+		subsampled.push(anchors[idx]);
+	}
+	return subsampled;
+}
+
+// Pure decision helper for the detour gate (unit-tested without fetch).
+// Reject when the matched path is longer than ratio × the better of sketch
+// length and a sparse-route baseline. Intentional curves inflate L_sketch,
+// so they survive; plaza loops inflate only L_match.
+export function isPathologicalDetour(
+	matchDistance: number,
+	sketchDistance: number,
+	sparseRouteDistance: number,
+	ratio = DETOUR_RATIO
+): boolean {
+	const baseline = Math.max(sketchDistance, sparseRouteDistance, 1);
+	return matchDistance > ratio * baseline;
+}
+
 export function matchingIndexesInTraceOrder(
 	tracepoints: Array<OsrmMatchTracepoint | null>,
 	matchingCount: number
@@ -186,18 +232,39 @@ export function matchingIndexesInTraceOrder(
 
 async function getBestRouteForChunk(points: Point[]): Promise<MatchResult> {
 	try {
-		return await getMatchChunk(points);
+		const matched = await getMatchChunk(points);
+		return await maybeRejectDetour(matched, points);
 	} catch (err) {
 		// Whole chunk rejected because a waypoint couldn't snap inside its
-		// radius. Fall through to /route with the full chunk points (not just
-		// endpoints) so the route still follows the shape's trajectory. The
-		// NoMatch code is captured into the chunk outcome so the batch
-		// debug legend can surface per-chunk why the fallback was needed.
+		// radius. Sparse /route (not full-chunk vias) keeps shape without
+		// turning soft tracepoints into mandatory stops.
 		if (err instanceof OsrmApiError && err.code === 'NoMatch') {
-			return getRouteAsMatchResult(points);
+			return getSparseRouteAsMatchResult(points, 'NoMatch');
 		}
 		throw err;
 	}
+}
+
+async function maybeRejectDetour(matched: MatchResult, points: Point[]): Promise<MatchResult> {
+	const sketchDistance = totalDistance(points);
+	// Fast path: matched length is plausible vs the input polyline — no
+	// extra network call. Intentional curves have large sketchDistance.
+	if (matched.distance <= DETOUR_RATIO * Math.max(sketchDistance, 1)) {
+		return matched;
+	}
+
+	const anchors = sparseFallbackAnchors(points);
+	const sparse = await getRoute(anchors);
+	if (isPathologicalDetour(matched.distance, sketchDistance, sparse.distance)) {
+		return {
+			geometries: [sparse.geometry],
+			distance: sparse.distance,
+			duration: sparse.duration,
+			confidence: 1,
+			chunkOutcomes: [{ kind: 'fallback', code: 'Detour' }]
+		};
+	}
+	return matched;
 }
 
 async function getMatchChunk(points: Point[]): Promise<MatchResult> {
@@ -236,10 +303,7 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 		throw new Error('OSRM returned no match.');
 	}
 
-	const totalConfidence = matchings.reduce(
-		(sum, matching) => sum + matching.confidence,
-		0
-	);
+	const totalConfidence = matchings.reduce((sum, matching) => sum + matching.confidence, 0);
 	const avgConfidence = totalConfidence / matchings.length;
 
 	return {
@@ -251,14 +315,18 @@ async function getMatchChunk(points: Point[]): Promise<MatchResult> {
 	};
 }
 
-async function getRouteAsMatchResult(points: Point[]): Promise<MatchResult> {
-	const route = await getRoute(points);
+async function getSparseRouteAsMatchResult(
+	points: Point[],
+	code: 'NoMatch' | 'Detour'
+): Promise<MatchResult> {
+	const anchors = sparseFallbackAnchors(points);
+	const route = await getRoute(anchors);
 	return {
 		geometries: [route.geometry],
 		distance: route.distance,
 		duration: route.duration,
 		confidence: 1,
-		chunkOutcomes: [{ kind: 'fallback', code: 'NoMatch' }]
+		chunkOutcomes: [{ kind: 'fallback', code }]
 	};
 }
 

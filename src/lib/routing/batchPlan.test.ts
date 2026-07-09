@@ -1,10 +1,22 @@
 import { describe, expect, test } from 'vitest';
-import { attachOutcomes, buildRoutePlan } from './batchPlan';
-import { MATCH_DEBUG_PALETTE } from '$lib/constants/routing';
+import { attachOutcomes, buildRoutePlan, usesMatchApi } from './batchPlan';
+import { MATCH_DEBUG_PALETTE, STRUCTURED_MATCH_MIN_POINTS } from '$lib/constants/routing';
 import type { Point, Shape } from '$lib/types/sketch';
 
 const point = (lat: number, lng: number): Point => ({ lat, lng });
 const shape = (id: string, type: Shape['type'], points: Point[]): Shape => ({ id, type, points });
+
+describe('usesMatchApi', () => {
+	test('always matches pencil', () => {
+		expect(usesMatchApi('pencil', 2)).toBe(true);
+	});
+
+	test('routes short structured shapes and matches densified ones', () => {
+		expect(usesMatchApi('rectangle', STRUCTURED_MATCH_MIN_POINTS - 1)).toBe(false);
+		expect(usesMatchApi('line', STRUCTURED_MATCH_MIN_POINTS)).toBe(true);
+		expect(usesMatchApi('polygon', STRUCTURED_MATCH_MIN_POINTS + 2)).toBe(true);
+	});
+});
 
 describe('buildRoutePlan', () => {
 	test('returns an empty plan for empty input', () => {
@@ -18,7 +30,7 @@ describe('buildRoutePlan', () => {
 		expect(buildRoutePlan(shapes, processed)).toEqual([]);
 	});
 
-	test('emits a single route batch for a structured shape', () => {
+	test('emits a single route batch for a short structured shape', () => {
 		const shapes = [shape('a', 'rectangle', [point(0, 0), point(0, 1), point(1, 1), point(1, 0)])];
 		const processed = [[point(0, 0), point(0, 1), point(1, 1), point(1, 0)]];
 
@@ -36,6 +48,18 @@ describe('buildRoutePlan', () => {
 			endIndex: 4
 		});
 		expect(plan[0].points).toHaveLength(4);
+	});
+
+	test('chunks a densified structured shape through /match', () => {
+		// ≥ STRUCTURED_MATCH_MIN_POINTS after sample+RDP → soft /match path.
+		const points = Array.from({ length: 12 }, (_, i) => point(i * 0.001, i * 0.001));
+		const shapes = [shape('a', 'line', points.slice(0, 3))];
+
+		const plan = buildRoutePlan(shapes, [points]);
+
+		expect(plan.length).toBeGreaterThanOrEqual(1);
+		expect(plan.every((b) => b.callKind === 'match')).toBe(true);
+		expect(plan[0].shapeType).toBe('line');
 	});
 
 	test('chunks a pencil shape using MATCH_MAX_POINTS=10 with overlap', () => {
@@ -118,7 +142,7 @@ describe('attachOutcomes', () => {
 		const plan = buildRoutePlan([shape('a', 'pencil', points)], [points]);
 		const outcomes = [
 			{ kind: 'matched' as const, confidence: 0.91 },
-			{ kind: 'fallback' as const, reason: 'no_match' as const, code: 'NoMatch' as const },
+			{ kind: 'fallback' as const, code: 'NoMatch' as const },
 			{ kind: 'matched' as const, confidence: 0.74 }
 		];
 

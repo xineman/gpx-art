@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { MATCH_RADIUS_METERS, MATCH_RADIUS_WAYPOINT_METERS } from '$lib/constants/routing';
-import { chunkPointsForMatch, getMatchedRoute, matchingIndexesInTraceOrder } from './osrm';
+import {
+	MATCH_FALLBACK_MAX_VIAS,
+	MATCH_RADIUS_METERS,
+	MATCH_RADIUS_WAYPOINT_METERS
+} from '$lib/constants/routing';
+import {
+	chunkPointsForMatch,
+	getMatchedRoute,
+	isPathologicalDetour,
+	matchingIndexesInTraceOrder,
+	sparseFallbackAnchors
+} from './osrm';
 
 const point = (n: number) => ({ lat: 52 + n * 0.001, lng: 21 + n * 0.001 });
 
@@ -44,6 +54,61 @@ describe('chunkPointsForMatch', () => {
 	});
 });
 
+describe('sparseFallbackAnchors', () => {
+	test('always returns at least the two endpoints', () => {
+		const points = [point(0), point(1)];
+		expect(sparseFallbackAnchors(points)).toEqual(points);
+	});
+
+	test('collapses a long collinear chunk and always keeps endpoints', () => {
+		// ~10 m steps along lng — all collinear, so RDP collapses to ends.
+		const points = Array.from({ length: 20 }, (_, i) => ({
+			lat: 52,
+			lng: 21 + i * 0.0001
+		}));
+		const anchors = sparseFallbackAnchors(points);
+
+		expect(anchors[0]).toEqual(points[0]);
+		expect(anchors.at(-1)).toEqual(points[points.length - 1]);
+		expect(anchors.length).toBeLessThan(points.length);
+		expect(anchors.length).toBeLessThanOrEqual(MATCH_FALLBACK_MAX_VIAS);
+	});
+
+	test('caps dense zig-zags at MATCH_FALLBACK_MAX_VIAS', () => {
+		// Alternating north/south jogs so RDP keeps many corners.
+		const points = Array.from({ length: 30 }, (_, i) => ({
+			lat: 52 + (i % 2 === 0 ? 0 : 0.001),
+			lng: 21 + i * 0.0002
+		}));
+		const anchors = sparseFallbackAnchors(points);
+
+		expect(anchors.length).toBeLessThanOrEqual(MATCH_FALLBACK_MAX_VIAS);
+		expect(anchors[0]).toEqual(points[0]);
+		expect(anchors.at(-1)).toEqual(points[points.length - 1]);
+	});
+});
+
+describe('isPathologicalDetour', () => {
+	test('keeps matches that track the sketch length', () => {
+		expect(isPathologicalDetour(1000, 950, 900)).toBe(false);
+	});
+
+	test('rejects plaza-style inflation vs short sketch and short sparse route', () => {
+		// Match weaves 2 km; sketch and sparse baseline are ~1 km.
+		expect(isPathologicalDetour(2000, 1000, 1050)).toBe(true);
+	});
+
+	test('keeps intentional curves where sketch length is already large', () => {
+		// Heart lobe: match ≈ sketch, sparse chord-route is shorter.
+		expect(isPathologicalDetour(3000, 2900, 1200)).toBe(false);
+	});
+
+	test('keeps when sparse route is also long (road network requires detour)', () => {
+		// Match 2 km; sketch short but sparse route also ~2 km → not pathological.
+		expect(isPathologicalDetour(2000, 1000, 1900)).toBe(false);
+	});
+});
+
 describe('matchingIndexesInTraceOrder', () => {
 	test('orders matchings by their first non-null tracepoint and appends unseen matchings', () => {
 		const order = matchingIndexesInTraceOrder(
@@ -80,6 +145,7 @@ describe('getMatchedRoute', () => {
 				JSON.stringify({
 					code: 'Ok',
 					tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+					// distance near sketch length so detour gate does not fire
 					matchings: [{ geometry: 'matched', distance: 100, duration: 20, confidence: 0.8 }]
 				}),
 				{ status: 200 }
@@ -91,28 +157,20 @@ describe('getMatchedRoute', () => {
 
 		expect(result.geometries).toEqual(['matched']);
 		expect(url).toContain('/match/v1/bike/');
-		// Per-coordinate radii: waypoints (index 0 and 5) get the relaxed
-		// MATCH_RADIUS_WAYPOINT_METERS; tracepoints (1..4) keep the tighter
-		// MATCH_RADIUS_METERS so HMM candidate sets stay small.
 		expect(url).toContain(
 			`radiuses=${MATCH_RADIUS_WAYPOINT_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_METERS}%3B${MATCH_RADIUS_WAYPOINT_METERS}`
 		);
 		expect(url).toContain('waypoints=0%3B5');
-		// 6 points fits one chunk (max 10) so chunkOutcomes is a single
-		// matched entry carrying the per-matching confidence.
 		expect(result.chunkOutcomes).toEqual([{ kind: 'matched', confidence: 0.8 }]);
 	});
 
 	test('dispatches all chunks in parallel rather than serially', async () => {
-		// 20 anchors → 3 overlapping chunks (stride = 10 - 2 = 8).
 		const points = Array.from({ length: 20 }, (_, i) => point(i));
 		const perChunkDelayMs = 40;
-		const fetchStarted: number[] = [];
 		let activeConcurrent = 0;
 		let peakConcurrent = 0;
 
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-			fetchStarted.push(performance.now());
 			activeConcurrent++;
 			peakConcurrent = Math.max(peakConcurrent, activeConcurrent);
 			await new Promise((r) => setTimeout(r, perChunkDelayMs));
@@ -129,12 +187,11 @@ describe('getMatchedRoute', () => {
 
 		const result = await getMatchedRoute(points);
 
-		expect(fetchStarted).toHaveLength(3);
 		expect(peakConcurrent).toBe(3);
 		expect(result.geometries).toEqual(['g', 'g', 'g']);
 	});
 
-	test('falls back from NoMatch to a /route through the full chunk points', async () => {
+	test('falls back from NoMatch to a sparse /route (not full chunk)', async () => {
 		const points = Array.from({ length: 6 }, (_, i) => point(i));
 		const fetchMock = vi
 			.spyOn(globalThis, 'fetch')
@@ -155,25 +212,81 @@ describe('getMatchedRoute', () => {
 
 		const result = await getMatchedRoute(points);
 		const fallbackUrl = String(fetchMock.mock.calls[1][0]);
+		const coordPart = fallbackUrl.split('/route/v1/bike/')[1]?.split('?')[0] ?? '';
+		const viaCount = coordPart.split(';').length;
 
 		expect(result.geometries).toEqual(['fallback']);
 		expect(fallbackUrl).toContain('/route/v1/bike/');
-		// The fallback /route uses the FULL chunk points (not just endpoints)
-		// so the route still follows the shape's trajectory when /match
-		// rejects a chunk. See commit 6366b8e "Fix route fallback".
-		expect(fallbackUrl).toContain(points.map((p) => `${p.lng},${p.lat}`).join(';'));
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		// The chunk outcome captures why the fallback was needed so the
-		// batch debug legend can surface it.
-		expect(result.chunkOutcomes).toEqual([
-			{ kind: 'fallback', code: 'NoMatch' }
-		]);
+		// Sparse anchors: fewer (or equal only if already short) than full chunk.
+		expect(viaCount).toBeLessThanOrEqual(points.length);
+		expect(viaCount).toBeLessThanOrEqual(MATCH_FALLBACK_MAX_VIAS);
+		// Endpoints preserved.
+		expect(coordPart.startsWith(`${points[0].lng},${points[0].lat}`)).toBe(true);
+		expect(coordPart.endsWith(`${points[5].lng},${points[5].lat}`)).toBe(true);
+		expect(result.chunkOutcomes).toEqual([{ kind: 'fallback', code: 'NoMatch' }]);
+	});
+
+	test('rejects pathologically long matches via sparse /route (Detour)', async () => {
+		// sketchDistance for 6 spaced points is small; match claims 50 km.
+		const points = Array.from({ length: 6 }, (_, i) => point(i));
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+						matchings: [
+							{ geometry: 'woven', distance: 50_000, duration: 3600, confidence: 0.5 }
+						]
+					}),
+					{ status: 200 }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						code: 'Ok',
+						routes: [{ geometry: 'straight', distance: 800, duration: 120 }]
+					}),
+					{ status: 200 }
+				)
+			);
+
+		const result = await getMatchedRoute(points);
+
+		expect(result.geometries).toEqual(['straight']);
+		expect(result.chunkOutcomes).toEqual([{ kind: 'fallback', code: 'Detour' }]);
+		expect(String(fetchMock.mock.calls[1][0])).toContain('/route/v1/bike/');
+	});
+
+	test('keeps a long match when sketch polyline is also long (intentional curve)', async () => {
+		// Points far apart → large totalDistance; match distance similar.
+		const points = Array.from({ length: 6 }, (_, i) => ({
+			lat: 52 + i * 0.01,
+			lng: 21 + (i % 2) * 0.01
+		}));
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					code: 'Ok',
+					tracepoints: [{ matchings_index: 0, waypoint_index: 0, alternatives_count: 0 }],
+					// ~5.5 km — under DETOUR_RATIO × sketch length for this zig-zag
+					matchings: [{ geometry: 'curve', distance: 5500, duration: 900, confidence: 0.7 }]
+				}),
+				{ status: 200 }
+			)
+		);
+
+		const result = await getMatchedRoute(points);
+
+		expect(result.geometries).toEqual(['curve']);
+		expect(result.chunkOutcomes).toEqual([{ kind: 'matched', confidence: 0.7 }]);
+		// No sparse-route comparator call.
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	test('emits one chunk outcome per chunk in dispatch order', async () => {
-		// 20 anchors → 3 overlapping chunks (stride = 10 - 2 = 8). All three
-		// /match calls succeed, so chunkOutcomes should have 3 matched entries
-		// in the order chunks were dispatched (Promise.all preserves order).
 		const points = Array.from({ length: 20 }, (_, i) => point(i));
 		const confidences = [0.91, 0.72, 0.85];
 		const fetchMock = vi.spyOn(globalThis, 'fetch');
@@ -198,17 +311,6 @@ describe('getMatchedRoute', () => {
 	});
 
 	test('emits fallback outcomes for individual chunks that fail while others match', async () => {
-		// 20 anchors → 3 chunks. Middle chunk returns NoMatch, others match.
-		// Each chunk gets its own /route fallback (when needed) or stays as
-		// /match geometry; the outcome list interleaves matched and fallback
-		// entries in dispatch order so the legend can color them
-		// independently.
-		//
-		// Mock order matches fetch-call order: Promise.all issues all three
-		// /match fetches in chunk order before any resolve, so the /route
-		// fallback for the failing chunk only fires AFTER chunk 1's /match
-		// returns NoMatch — meaning the fallback is the 4th fetch, not the
-		// 3rd.
 		const points = Array.from({ length: 20 }, (_, i) => point(i));
 		vi.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(

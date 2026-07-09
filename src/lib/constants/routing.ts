@@ -48,14 +48,37 @@ export const OSRM_PROFILE = 'bike';
 // chunk could match) rather than route usability. Pencil traces are
 // systematically low-confidence even when the matched geometry is correct,
 // because the tracepoints are collinear — every nearby road looks equally
-// plausible. We therefore trust every /match result OSRM returns and only
-// fall back to /route on a hard `NoMatch` (a waypoint couldn't snap inside
-// its radius).
+// plausible. We therefore never reject a match on confidence alone.
+//
+// Fallback ladder (per chunk):
+//   1. /match succeeds and length is not pathologically inflated → keep it.
+//   2. /match succeeds but L_match > DETOUR_RATIO * max(L_sketch, L_sparse)
+//      → sparse /route (code: Detour). Catches station/plaza weaves.
+//   3. /match returns NoMatch → sparse /route (code: NoMatch).
+// Sparse /route uses RDP'd anchors (MATCH_FALLBACK_*), never the full densified
+// chunk — full-chunk /route turns soft tracepoints into hard vias and detours.
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
 export const MATCH_RADIUS_METERS = 30;
 export const MATCH_RADIUS_WAYPOINT_METERS = 100;
+
+// Sparse /route fallback after NoMatch or detour rejection. Higher RDP than
+// pencil preprocessing so only major corners survive as hard vias; cap keeps
+// public-demo /route URLs short and prevents mid-block weave.
+export const MATCH_FALLBACK_RDP_TOLERANCE = 50;
+export const MATCH_FALLBACK_MAX_VIAS = 6;
+
+// Matched geometry is rejected when longer than this factor times
+// max(sketch polyline length, sparse-route length). 1.35 keeps intentional
+// curves (heart lobes, U-turns) while dropping multi-block plaza loops.
+export const DETOUR_RATIO = 1.35;
+
+// Structured shapes (line / polygon / rectangle) use /route when the
+// processed point list is short (corners only). Once densified edges leave
+// this many points, switch to /match so long sides follow the drawn edge
+// softly instead of taking a faster arterial between corners.
+export const STRUCTURED_MATCH_MIN_POINTS = 6;
 
 // Eight-hue palette used by the /match batch debug overlay (see
 // $lib/routing/batchPlan). Each batch of points the routing pipeline sends to
