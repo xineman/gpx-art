@@ -104,15 +104,29 @@ export class SketchState implements SketchStateLike {
 		this._drawingLayer = handle.drawingLayer;
 		this._routeLayer = handle.routeLayer;
 		this._debugLayer = handle.debugLayer;
+		// Chevrons are placed in screen space against the current viewport.
+		// Rebuild on zoom (density / projection) and on pan (which stretch
+		// of a long close-up path is on screen). zoomend/moveend — not the
+		// continuous zoom/move events — avoid thrashing mid-gesture.
+		this._map.on('zoomend moveend', this._onMapViewChange);
 	}
 
 	detachMap() {
+		this._map?.off('zoomend moveend', this._onMapViewChange);
 		this._L = undefined;
 		this._map = undefined;
 		this._drawingLayer = undefined;
 		this._routeLayer = undefined;
 		this._debugLayer = undefined;
 	}
+
+	// Bound once so attach/detach can add/remove the same function ref.
+	private _onMapViewChange = () => {
+		// Only the route chrome depends on the viewport today; skip work
+		// while sketching so pan/zoom stay light in the edit phase.
+		if (!this.routedPath || this.routedPath.length < 2) return;
+		this.render();
+	};
 
 	setTool(tool: Tool) {
 		if (this.phase !== 'editing') return;
