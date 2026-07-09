@@ -158,7 +158,7 @@ describe('prepareShapeRoute', () => {
 		expect(prepared.edgeCorners).toEqual(prepared.points);
 	});
 
-	test('pencil always matches', () => {
+	test('pencil uses match callKind (route-first pipeline entry)', () => {
 		const pts = Array.from({ length: 5 }, (_, i) => point(52 + i * deg(10), 21));
 		expect(prepareShapeRoute(shape('p', 'pencil', pts), false).callKind).toBe('match');
 	});

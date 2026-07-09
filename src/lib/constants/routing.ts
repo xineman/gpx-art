@@ -50,28 +50,32 @@ export const OSRM_PROFILE = 'bike';
 // because the tracepoints are collinear — every nearby road looks equally
 // plausible. We therefore never reject a match on confidence alone.
 //
-// Fallback ladder (per chunk):
-//   1. /match succeeds and length is not pathologically inflated → keep it.
-//   2. /match succeeds but L_match > DETOUR_RATIO * max(L_sketch, L_sparse)
-//      → sparse /route (code: Detour). Catches station/plaza weaves.
-//   3. /match returns NoMatch → sparse /route (code: NoMatch).
-// Sparse /route uses RDP'd anchors (MATCH_FALLBACK_*), never the full densified
-// chunk — full-chunk /route turns soft tracepoints into hard vias and detours.
+// Pencil routing is route-first (see getMatchedRoute):
+//   1. Sparse /route on RDP'd anchors (MATCH_FALLBACK_*) — one fast call.
+//   2. Accept if length is within DETOUR_RATIO of the sketch polyline
+//      (not a chord shortcut, not a hard-via detour).
+//   3. Else escalate to chunked /match (soft HMM). Per-chunk ladder:
+//        a. /match OK and not pathologically long → keep it.
+//        b. /match too long vs max(L_sketch, L_sparse) → sparse /route (Detour).
+//        c. NoMatch → sparse /route (NoMatch).
+// Full densified traces are never sent as hard /route vias (weaves/detours).
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
 export const MATCH_RADIUS_METERS = 30;
 export const MATCH_RADIUS_WAYPOINT_METERS = 100;
 
-// Sparse /route fallback after NoMatch or detour rejection. Higher RDP than
-// pencil preprocessing so only major corners survive as hard vias; cap keeps
-// public-demo /route URLs short and prevents mid-block weave.
-export const MATCH_FALLBACK_RDP_TOLERANCE = 50;
-export const MATCH_FALLBACK_MAX_VIAS = 6;
+// Sparse /route anchors for pencil (primary + match fallback). Mild RDP is
+// enough now that /route is primary — we no longer need match-era aggressive
+// sparsification. Cap still bounds public-demo URL length / mid-block weave.
+export const MATCH_FALLBACK_RDP_TOLERANCE = 25;
+export const MATCH_FALLBACK_MAX_VIAS = 12;
 
-// Matched geometry is rejected when longer than this factor times
-// max(sketch polyline length, sparse-route length). 1.35 keeps intentional
-// curves (heart lobes, U-turns) while dropping multi-block plaza loops.
+// Length-gate ratio for route-first accept and match detour rejection.
+// Sparse is rejected (escalate to /match) when L_sketch > ratio × L_sparse
+// (chording curves) or L_sparse > ratio × L_sketch (hard-via detour).
+// Match is rejected when L_match > ratio × max(L_sketch, L_sparse).
+// 1.35 keeps intentional curves while dropping plaza weaves / chords.
 export const DETOUR_RATIO = 1.35;
 
 // Structured shapes (line / polygon / rectangle) always use /route — never
@@ -186,13 +190,14 @@ export const TWO_OPT_MAX_ITERATIONS = 1000;
 
 // Ramer–Douglas–Peucker simplification tolerances.
 //
-//   - RDP_TOLERANCE_PENCIL — free-form pencil strokes (default 30 m).
-//                            Prunes minor freehand wiggles while keeping major
-//                            inflections before chunked /match.
+//   - RDP_TOLERANCE_PENCIL — free-form pencil preprocess after densify.
+//                            Mild (10 m): only micro freehand wiggles. Sparse
+//                            /route has its own anchors (MATCH_FALLBACK_*);
+//                            denser points help sketch-length gates and rare
+//                            /match escalation. Was 30 m when /match was primary.
 //   - RDP_TOLERANCE        — retained for sparse-fallback / future structured
 //                            use. Structured shapes no longer RDP densified
-//                            match samples (that collapsed long straight edges
-//                            back to corners and defeated long-edge /match).
+//                            samples (that collapsed long straight edges).
 //
 // Note on OSRM snapping: we deliberately omit the `radiuses=` parameter
 // from the `/route` URL. When omitted, OSRM's default for `/route` is
@@ -202,4 +207,4 @@ export const TWO_OPT_MAX_ITERATIONS = 1000;
 // anchors reliably fail with `NoSegment` when a finite radius is set, so
 // the implicit unlimited default is the right behaviour here.
 export const RDP_TOLERANCE = 10;
-export const RDP_TOLERANCE_PENCIL = 30;
+export const RDP_TOLERANCE_PENCIL = 10;

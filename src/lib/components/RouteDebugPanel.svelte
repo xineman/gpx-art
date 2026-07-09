@@ -37,21 +37,19 @@
 		sketch.setRouteDebugVisible(target.checked);
 	}
 
-	// Status pill for a batch. The pre-outcome pill was just `match` /
-	// `route`; now the per-chunk outcome drives the label and color so the
-	// user can see at a glance which /match calls were used as-is and
-	// which fell back to /route. The "matched 0.NN" confidence is the
-	// most informative single number for "is this match trustworthy?" so
-	// it's shown to two decimals (not verbose, and avoids a tooltip).
-	//
-	// Structured-shape batches keep the blue "route" pill — they have no
-	// fallback path and no outcome field.
+	// Status pill for a batch. Per-chunk outcomes drive the label when
+	// present: route-first sparse /route, matched HMM, or match→route
+	// fallback (NoMatch / Detour). Structured shapes have no outcome and
+	// keep the blue "route" pill.
 	type PillStyle = { label: string; classes: string };
 	function statusPill(batch: RouteDebugBatch): PillStyle {
+		const outcome = batch.outcome;
+		if (outcome?.kind === 'routed') {
+			return { label: 'route-first', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
+		}
 		if (batch.callKind === 'route') {
 			return { label: 'route', classes: 'bg-[#1d4ed8]/15 text-[#1d4ed8]' };
 		}
-		const outcome = batch.outcome;
 		if (!outcome) {
 			// Defensive: a plan that never had attachOutcomes applied (e.g.
 			// a future code path that builds the plan before calls return).

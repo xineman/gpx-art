@@ -7,7 +7,7 @@ const point = (lat: number, lng: number): Point => ({ lat, lng });
 const shape = (id: string, type: Shape['type'], points: Point[]): Shape => ({ id, type, points });
 
 describe('usesMatchApi', () => {
-	test('only pencil uses /match', () => {
+	test('only pencil uses the pencil/match pipeline', () => {
 		expect(usesMatchApi('pencil')).toBe(true);
 		expect(usesMatchApi('rectangle')).toBe(false);
 		expect(usesMatchApi('line')).toBe(false);

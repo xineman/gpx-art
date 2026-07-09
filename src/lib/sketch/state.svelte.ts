@@ -9,7 +9,14 @@ import {
 } from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
 import { cleanRoutedPathOnNetwork } from '$lib/routing/cleanPath';
-import { getMatchedRoute, getRoute, type ChunkOutcome, type MatchResult, type RouteResult } from '$lib/routing/osrm';
+import {
+	getMatchedRoute,
+	getRoute,
+	sparseFallbackAnchors,
+	type ChunkOutcome,
+	type MatchResult,
+	type RouteResult
+} from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
 import { isClosedShapeType, prepareShapeRoute, routePreparedStructured } from '$lib/routing/pipeline';
 import {
@@ -533,12 +540,21 @@ export class SketchState implements SketchStateLike {
 
 			const polylines: Point[] = [];
 			const processedPoints: Point[][] = prepared.map((p) => p.points);
+			const callKinds = prepared.map((p) => p.callKind);
 			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
 
 			for (let i = 0; i < prepared.length; i++) {
 				const result = shapeResults[i];
 				if (result.kind === 'match') {
-					chunkOutcomesByShape.push(result.matched.chunkOutcomes);
+					const outcomes = result.matched.chunkOutcomes;
+					chunkOutcomesByShape.push(outcomes);
+					// Route-first success: one sparse /route, not chunked /match.
+					// Align the debug plan with the anchors actually sent.
+					if (outcomes.length === 1 && outcomes[0].kind === 'routed') {
+						processedPoints[i] =
+							result.matched.routeAnchors ?? sparseFallbackAnchors(prepared[i].points);
+						callKinds[i] = 'route';
+					}
 					for (const geometry of result.matched.geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
@@ -564,9 +580,9 @@ export class SketchState implements SketchStateLike {
 				corners: sketchCorners
 			});
 
-			// Debug plan uses the SAME points + callKinds we sent to OSRM.
+			// Debug plan uses the points + callKinds actually sent to OSRM
+			// (route-first pencil may rewrite to sparse anchors + 'route').
 			const orderedShapes = prepared.map((p) => p.shape);
-			const callKinds = prepared.map((p) => p.callKind);
 			const plan = buildRoutePlan(orderedShapes, processedPoints, callKinds);
 			this.routeDebugBatches = attachOutcomes(plan, chunkOutcomesByShape);
 

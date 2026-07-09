@@ -34,9 +34,10 @@ export interface RouteDebugBatch {
 	outcome?: ChunkOutcome;
 }
 
-// Whether createRoute / prepareShapeRoute should send this shape through
-// chunked /match. Only freehand pencil uses /match; structured shapes always
-// use /route (optionally with sparse edge vias) for speed.
+// Whether createRoute / prepareShapeRoute should send this shape through the
+// pencil pipeline (getMatchedRoute: sparse /route first, /match only if fit
+// is poor). Structured shapes always use hard /route (optionally adaptive
+// per-edge) and never enter that ladder.
 export function usesMatchApi(shapeType: ShapeType): boolean {
 	return shapeType === 'pencil';
 }

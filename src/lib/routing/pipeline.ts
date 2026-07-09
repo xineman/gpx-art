@@ -374,6 +374,8 @@ export function prepareShapeRoute(shape: Shape, reversed: boolean, shapeIndex = 
 		};
 	}
 
+	// Pencil: densify + mild RDP (sketch length / rare /match escalate).
+	// Live path is getMatchedRoute → sparse /route on MATCH_FALLBACK_* anchors.
 	if (usesMatchApi(shape.type)) {
 		let pts = sampleTrace(chain);
 		const rdpped = simplifyRdp(pts, RDP_TOLERANCE_PENCIL);
