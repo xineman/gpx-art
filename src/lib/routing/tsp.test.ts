@@ -1,9 +1,16 @@
-import { describe, expect, test } from 'vitest';
-import { solveClusterTspWithFlip, type FlipTspResult } from './tsp';
+import { describe, expect, test, vi, afterEach } from 'vitest';
+import {
+	buildFlipTspHaversineCosts,
+	buildFlipTspRoadCosts,
+	shapeStateEndpoints,
+	solveClusterTspWithFlip,
+	solveClusterTspWithFlipFromCosts,
+	type FlipTspResult
+} from './tsp';
 
 // Small helper to make the tests readable: pick the right endpoint for a
-// shape given the direction the solver chose. Mirrors the helper logic in
-// state.svelte.ts — if those diverge, the integration test catches it.
+// shape given the direction the solver chose. Mirrors shapeStateEndpoints
+// for open shapes.
 function endpoint(
 	pts: { lat: number; lng: number }[],
 	isReversed: boolean,
@@ -14,6 +21,10 @@ function endpoint(
 	if (which === 'entry') return isReversed ? b : a;
 	return isReversed ? a : b;
 }
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe('solveClusterTspWithFlip', () => {
 	test('0 shapes -> empty result', () => {
@@ -185,5 +196,121 @@ describe('solveClusterTspWithFlip', () => {
 		expect(a.order).toEqual(b.order);
 		expect(a.directions).toEqual(b.directions);
 		expect(a.cost).toBe(b.cost);
+	});
+
+	test('closed shapes use entry=exit so cost is start-corner distance', () => {
+		// Two closed shapes. Start corners close; opposite corners far.
+		// first[0] near first[1]; last[0] far from everything.
+		const first = [
+			{ lat: 52.22, lng: 21.0 },
+			{ lat: 52.2201, lng: 21.0001 }
+		];
+		const last = [
+			{ lat: 52.23, lng: 21.01 },
+			{ lat: 52.24, lng: 21.02 }
+		];
+		const closed = [true, true];
+
+		const r = solveClusterTspWithFlip(first, last, closed);
+
+		// Forward→forward transition cost ≈ distance(first[0], first[1])
+		const hav = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+			const R = 6371000;
+			const toRad = (deg: number) => (deg * Math.PI) / 180;
+			const dLat = toRad(b.lat - a.lat);
+			const dLng = toRad(b.lng - a.lng);
+			const x =
+				Math.sin(dLat / 2) ** 2 +
+				Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+			return 2 * R * Math.asin(Math.sqrt(x));
+		};
+
+		// Optimal is either F0→F1 or F1→F0 (start corners), not last→first open-style.
+		expect(r.cost).toBeLessThan(hav(last[0], first[1]) * 0.5);
+		expect(r.cost).toBeCloseTo(hav(first[0], first[1]), 0);
+	});
+
+	test('shapeStateEndpoints closed reverse pins both ends to last', () => {
+		const first = { lat: 1, lng: 2 };
+		const last = { lat: 3, lng: 4 };
+		expect(shapeStateEndpoints(first, last, false, true)).toEqual({
+			entry: first,
+			exit: first
+		});
+		expect(shapeStateEndpoints(first, last, true, true)).toEqual({
+			entry: last,
+			exit: last
+		});
+	});
+
+	test('FromCosts matches solveClusterTspWithFlip for haversine matrix', () => {
+		const first = [
+			{ lat: 52.22, lng: 21.0 },
+			{ lat: 52.23, lng: 21.005 }
+		];
+		const last = [
+			{ lat: 52.22, lng: 21.001 },
+			{ lat: 52.235, lng: 21.006 }
+		];
+		const costs = buildFlipTspHaversineCosts(first, last, [false, false]);
+		const fromCosts = solveClusterTspWithFlipFromCosts(2, costs);
+		const direct = solveClusterTspWithFlip(first, last);
+		expect(fromCosts.order).toEqual(direct.order);
+		expect(fromCosts.directions).toEqual(direct.directions);
+		expect(fromCosts.cost).toBe(direct.cost);
+	});
+});
+
+describe('buildFlipTspRoadCosts', () => {
+	test('returns null for a single shape', async () => {
+		const r = await buildFlipTspRoadCosts([{ lat: 52, lng: 21 }], [{ lat: 52.01, lng: 21 }]);
+		expect(r).toBeNull();
+	});
+
+	test('builds a matrix from OSRM table distances', async () => {
+		const first = [
+			{ lat: 52.22, lng: 21.0 },
+			{ lat: 52.23, lng: 21.005 }
+		];
+		const last = [
+			{ lat: 52.22, lng: 21.001 },
+			{ lat: 52.235, lng: 21.006 }
+		];
+		// 4 anchors → 4×4 matrix of deterministic distances
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					code: 'Ok',
+					distances: [
+						[0, 100, 200, 300],
+						[100, 0, 400, 500],
+						[200, 400, 0, 600],
+						[300, 500, 600, 0]
+					]
+				}),
+				{ status: 200 }
+			)
+		);
+
+		const costs = await buildFlipTspRoadCosts(first, last, [false, false]);
+		expect(costs).not.toBeNull();
+		// F0→F1: exit F0 = last[0] = anchors[2], entry F1 = first[1] = anchors[1]
+		// → table[2][1] = 400
+		expect(costs![0][1]).toBe(400);
+	});
+
+	test('returns null when table request fails', async () => {
+		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network'));
+		const costs = await buildFlipTspRoadCosts(
+			[
+				{ lat: 52.22, lng: 21.0 },
+				{ lat: 52.23, lng: 21.005 }
+			],
+			[
+				{ lat: 52.22, lng: 21.001 },
+				{ lat: 52.235, lng: 21.006 }
+			]
+		);
+		expect(costs).toBeNull();
 	});
 });

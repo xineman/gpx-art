@@ -2,19 +2,44 @@ import { SvelteDate } from 'svelte/reactivity';
 import type * as Leaflet from 'leaflet';
 import { distanceBetween } from '$lib/geometry/distance';
 import { rectanglePoints, resizeRectangle, toPoint } from '$lib/geometry/point';
-import { RDP_TOLERANCE, RDP_TOLERANCE_PENCIL } from '$lib/constants/routing';
+import {
+	attachOutcomes,
+	buildRoutePlan,
+	type RouteDebugBatch
+} from '$lib/routing/batchPlan';
 import { pointsToGpx } from '$lib/routing/gpx';
-import { getMatchedRoute, getRoute } from '$lib/routing/osrm';
+import { cleanRoutedPathOnNetwork } from '$lib/routing/cleanPath';
+import {
+	getMatchedRoute,
+	getRoute,
+	sparseFallbackAnchors,
+	type ChunkOutcome,
+	type MatchResult,
+	type RouteResult
+} from '$lib/routing/osrm';
 import { decodePolyline } from '$lib/routing/polyline';
-import { simplifyRdp } from '$lib/routing/rdp';
-import { sampleTrace } from '$lib/routing/sample';
-import { solveClusterTspWithFlip } from '$lib/routing/tsp';
+import {
+	clampCornerInset,
+	CORNER_INSET_DEFAULT_METERS,
+	isRouteFidelity,
+	resolveRoutingOptions,
+	type RouteFidelity,
+	type RoutingOptions
+} from '$lib/routing/options';
+import { isClosedShapeType, prepareShapeRoute, routePreparedStructured } from '$lib/routing/pipeline';
+import {
+	buildFlipTspHaversineCosts,
+	buildFlipTspRoadCosts,
+	solveClusterTspWithFlipFromCosts
+} from '$lib/routing/tsp';
 import type { Phase, Point, Shape, Snapshot, Tool } from '$lib/types/sketch';
 import { toolName } from '$lib/tools/names';
 import { renderLayers } from '$lib/map/renderer';
 import { canRoute, distanceLabel, routeInputPoints, type SketchStateLike } from './derived';
 import { cloneShape, cloneShapes } from './cloning';
 import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
+
+const ROUTE_SETTINGS_STORAGE_KEY = 'gpx-art.routeSettings';
 
 type L = typeof import('leaflet');
 
@@ -33,6 +58,10 @@ export interface MapHandle {
 	map: Leaflet.Map;
 	drawingLayer: Leaflet.LayerGroup;
 	routeLayer: Leaflet.LayerGroup;
+	// Optional debug layer for the /match batch overlay. Optional so test
+	// harnesses that build a MapHandle by hand (e.g. Playwright) can
+	// omit it — the renderer no-ops when the layer is undefined.
+	debugLayer?: Leaflet.LayerGroup;
 }
 
 export class SketchState implements SketchStateLike {
@@ -63,6 +92,19 @@ export class SketchState implements SketchStateLike {
 	isDragging = $state(false);
 	isSpacePan = $state(false);
 
+	// /match batch debug overlay. routeDebugVisible is the user's preference
+	// (persisted across undo via Snapshot.routeDebugVisible);
+	// routeDebugBatches is the captured plan from the most recent
+	// createRoute() call and is intentionally NOT snapshotted — it is a
+	// transient view of the last route, recomputed on the next routing.
+	routeDebugVisible = $state(false);
+	routeDebugBatches = $state<RouteDebugBatch[]>([]);
+
+	// Route fidelity + corner inset — session prefs, not undo history.
+	// Persisted in localStorage; applied on the next createRoute() only.
+	routeFidelity = $state<RouteFidelity>('balanced');
+	cornerInsetMeters = $state(CORNER_INSET_DEFAULT_METERS);
+
 	// Non-reactive scratch — see Preservation note #1. Plain refs that survive across
 	// mousedown/mousemove/mouseup without triggering reactivity.
 	activePencilShape: Shape | null = null;
@@ -73,6 +115,7 @@ export class SketchState implements SketchStateLike {
 	private _map: Leaflet.Map | undefined;
 	private _drawingLayer: Leaflet.LayerGroup | undefined;
 	private _routeLayer: Leaflet.LayerGroup | undefined;
+	private _debugLayer: Leaflet.LayerGroup | undefined;
 
 	canRoute = $derived(canRoute(this));
 	hasDrawing = $derived(this.shapes.length > 0 || !!this.draft);
@@ -84,19 +127,99 @@ export class SketchState implements SketchStateLike {
 		this._map = handle.map;
 		this._drawingLayer = handle.drawingLayer;
 		this._routeLayer = handle.routeLayer;
+		this._debugLayer = handle.debugLayer;
+		// Chevrons are placed in screen space against the current viewport.
+		// Rebuild on zoom (density / projection) and on pan (which stretch
+		// of a long close-up path is on screen). zoomend/moveend — not the
+		// continuous zoom/move events — avoid thrashing mid-gesture.
+		this._map.on('zoomend moveend', this._onMapViewChange);
 	}
 
 	detachMap() {
+		this._map?.off('zoomend moveend', this._onMapViewChange);
 		this._L = undefined;
 		this._map = undefined;
 		this._drawingLayer = undefined;
 		this._routeLayer = undefined;
+		this._debugLayer = undefined;
 	}
+
+	// Bound once so attach/detach can add/remove the same function ref.
+	private _onMapViewChange = () => {
+		// Only the route chrome depends on the viewport today; skip work
+		// while sketching so pan/zoom stay light in the edit phase.
+		if (!this.routedPath || this.routedPath.length < 2) return;
+		this.render();
+	};
 
 	setTool(tool: Tool) {
 		if (this.phase !== 'editing') return;
 		if (tool === this.currentTool) return;
 		this.applyTool(tool);
+	}
+
+	/** Resolve live OSRM knobs from the current UI prefs. */
+	routingOptions(): RoutingOptions {
+		return resolveRoutingOptions(this.routeFidelity, this.cornerInsetMeters);
+	}
+
+	setRouteFidelity(fidelity: RouteFidelity) {
+		if (this.routeFidelity === fidelity) return;
+		this.routeFidelity = fidelity;
+		this.persistRouteSettings();
+	}
+
+	setCornerInsetMeters(meters: number) {
+		const next = clampCornerInset(meters);
+		if (this.cornerInsetMeters === next) return;
+		this.cornerInsetMeters = next;
+		this.persistRouteSettings();
+	}
+
+	/** Load route prefs from localStorage (call once on app start). */
+	loadRouteSettings() {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			const raw = localStorage.getItem(ROUTE_SETTINGS_STORAGE_KEY);
+			if (!raw) return;
+			const parsed = JSON.parse(raw) as {
+				fidelity?: unknown;
+				cornerInsetMeters?: unknown;
+			};
+			if (isRouteFidelity(parsed.fidelity)) {
+				this.routeFidelity = parsed.fidelity;
+			}
+			if (typeof parsed.cornerInsetMeters === 'number') {
+				this.cornerInsetMeters = clampCornerInset(parsed.cornerInsetMeters);
+			}
+		} catch {
+			// Ignore corrupt prefs — keep defaults.
+		}
+	}
+
+	private persistRouteSettings() {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			localStorage.setItem(
+				ROUTE_SETTINGS_STORAGE_KEY,
+				JSON.stringify({
+					fidelity: this.routeFidelity,
+					cornerInsetMeters: this.cornerInsetMeters
+				})
+			);
+		} catch {
+			// Quota / private mode — non-fatal.
+		}
+	}
+
+	// Setter for the /match batch debug overlay toggle. Goes through a
+	// method (not a direct field write) so the caller does not have to
+	// remember to call render() — toggling the overlay must repaint the
+	// map immediately to clear or restore the on-map markers.
+	setRouteDebugVisible(visible: boolean) {
+		if (this.routeDebugVisible === visible) return;
+		this.routeDebugVisible = visible;
+		this.render();
 	}
 
 	private applyTool(tool: Tool) {
@@ -320,6 +443,12 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = previous.trimStart ?? null;
 		this.trimEnd = previous.trimEnd ?? null;
 		this.trimHint = previous.trimHint ?? '';
+		this.routeDebugVisible = previous.routeDebugVisible ?? false;
+		// routeDebugBatches is a transient view of the last route, not
+		// part of the document — wipe it on undo so a stale overlay does
+		// not survive a shape-edit undo. The user can click Route again
+		// to recompute.
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -343,6 +472,8 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = next.trimStart ?? null;
 		this.trimEnd = next.trimEnd ?? null;
 		this.trimHint = next.trimHint ?? '';
+		this.routeDebugVisible = next.routeDebugVisible ?? false;
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -375,6 +506,7 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = null;
 		this.trimEnd = null;
 		this.trimHint = '';
+		this.routeDebugBatches = [];
 		this.status = 'Canvas cleared.';
 		this.render();
 	}
@@ -414,12 +546,15 @@ export class SketchState implements SketchStateLike {
 	}
 
 	async createRoute() {
-		// We route over committed shapes only — the user is expected to Finish
-		// any draft before clicking Route (the Route button is still enabled
-		// when only a draft exists, so we error gracefully in that case).
+		// Auto-commit any in-progress draft so Route works in one click.
+		// Finish remains available for commit-without-routing (Esc / button).
+		if (this.draft) {
+			this.finishDraft();
+		}
+
 		const shapes = this.shapes.filter((shape) => shape.points.length >= 2);
 		if (shapes.length === 0) {
-			this.routeError = 'Finish your draft, then add at least one shape with 2+ points.';
+			this.routeError = 'Add at least one shape with 2+ points before routing.';
 			return;
 		}
 
@@ -433,96 +568,105 @@ export class SketchState implements SketchStateLike {
 		try {
 			const last = shapes.map((s) => s.points[s.points.length - 1]);
 			const first = shapes.map((s) => s.points[0]);
+			const closed = shapes.map((s) => isClosedShapeType(s.type));
 
-			// Optimised order + direction for each shape. The solver picks
-			// the visit order, but also which endpoint is the entry and which
-			// is the exit — tracing a shape in reverse is allowed when it
-			// minimises the inter-shape travel distance. See
-			// solveClusterTspWithFlip in $lib/routing/tsp for the full
-			// algorithm explanation.
+			// Optimised order + direction. Prefer OSRM /table road costs when
+			// N is small; fall back to haversine. Closed shapes use entry=exit
+			// (full loop, leave from start). See $lib/routing/tsp.
 			this.status = 'Optimizing order between shapes…';
-			const { order, directions } = solveClusterTspWithFlip(first, last);
+			const roadCosts = await buildFlipTspRoadCosts(first, last, closed);
+			const costs = roadCosts ?? buildFlipTspHaversineCosts(first, last, closed);
+			const { order, directions } = solveClusterTspWithFlipFromCosts(shapes.length, costs);
 
 			this.status = 'Routing along your shapes…';
+			const routeOpts = this.routingOptions();
+			const prepared = order.map((shapeIdx, visitIdx) =>
+				prepareShapeRoute(shapes[shapeIdx], directions[visitIdx], visitIdx, routeOpts)
+			);
+
+			// Parallel OSRM: all shapes (match / single route / per-edge route)
+			// + inter-shape links, then stitch in visit order.
+			type ShapeOsrmResult =
+				| { kind: 'empty' }
+				| { kind: 'match'; matched: MatchResult }
+				| { kind: 'route'; geometries: string[] };
+
+			const [shapeResults, linkResults] = await Promise.all([
+				Promise.all(
+					prepared.map(async (p): Promise<ShapeOsrmResult> => {
+						if (p.points.length < 2) return { kind: 'empty' };
+						if (p.callKind === 'match') {
+							return {
+								kind: 'match',
+								matched: await getMatchedRoute(p.points, routeOpts)
+							};
+						}
+						// Structured: may fan out to one /route per sketch edge.
+						const routed = await routePreparedStructured(p, routeOpts);
+						return { kind: 'route', geometries: routed.geometries };
+					})
+				),
+				prepared.length < 2
+					? Promise.resolve([] as RouteResult[])
+					: Promise.all(
+							// Two-point links: no intermediate vias, continue_straight irrelevant.
+							prepared.slice(0, -1).map((p, i) => getRoute([p.exit, prepared[i + 1].entry]))
+						)
+			]);
+
 			const polylines: Point[] = [];
-			for (let i = 0; i < order.length; i++) {
-				const shape = shapes[order[i]];
-				const isClosed = shape.type === 'polygon' || shape.type === 'rectangle';
-				const isReversed = directions[i];
+			const processedPoints: Point[][] = prepared.map((p) => p.points);
+			const callKinds = prepared.map((p) => p.callKind);
+			const chunkOutcomesByShape: (ChunkOutcome[] | undefined)[] = [];
 
-				// Reverse the vertex list when the solver chose to trace this
-				// shape backwards. shape.points is always stored as an open
-				// chain in drawn order; reversing it produces an open chain
-				// in reverse-drawn order. RDP simplification is
-				// direction-agnostic (chord distances are the same), so either
-				// input gives equally valid simplified anchors.
-				const sourcePoints = isReversed ? [...shape.points].reverse() : shape.points;
-
-				// Sample the original drawing into a GPS-like trace for OSRM.
-				// Interior points are soft guidance instead of hard via stops,
-				// which lets the route stay on nearby streets instead of
-				// detouring through exact sketch vertices.
-				let pts = sampleTrace(isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints);
-
-				// RDP-simplify the sampled trace. Pencil strokes use the higher
-				// tolerance (RDP_TOLERANCE_PENCIL) because their curves
-				// have many fine-grained points whose perpendicular
-				// distance sits just above RDP_TOLERANCE; without the
-				// higher value, /match sees the full noisy trace and
-				// runs slow. Structured shapes use the default tolerance
-				// — they're effectively a no-op for them anyway since
-				// their input has only a handful of vertices. Strip the
-				// closing point before simplifying so the chord back to
-				// start isn't degenerate (would swallow every interior
-				// point).
-				const rdpTolerance = shape.type === 'pencil' ? RDP_TOLERANCE_PENCIL : RDP_TOLERANCE;
-				const rdpped = simplifyRdp(isClosed ? pts.slice(0, -1) : pts, rdpTolerance);
-				pts = isClosed && rdpped.length > 0 ? [...rdpped, rdpped[0]] : rdpped;
-
-				// Degenerate fallback: if simplification produced too little
-				// to work with, route the raw shape instead so we still
-				// produce something.
-				if (pts.length < 2) {
-					pts = isClosed ? [...sourcePoints, sourcePoints[0]] : sourcePoints;
-				}
-
-				if (shape.type === 'pencil') {
-					// /match handles the noise and outliers that pencil
-					// strokes accumulate. The HMM can drop tracepoints that
-					// don't snap, which is the reason /match exists.
-					const { geometries } = await getMatchedRoute(pts);
-					for (const geometry of geometries) {
+			for (let i = 0; i < prepared.length; i++) {
+				const result = shapeResults[i];
+				if (result.kind === 'match') {
+					const outcomes = result.matched.chunkOutcomes;
+					chunkOutcomesByShape.push(outcomes);
+					// Route-first success: one sparse /route, not chunked /match.
+					// Align the debug plan with the anchors actually sent.
+					if (outcomes.length === 1 && outcomes[0].kind === 'routed') {
+						processedPoints[i] =
+							result.matched.routeAnchors ??
+							sparseFallbackAnchors(
+								prepared[i].points,
+								routeOpts.matchFallbackRdpTolerance,
+								routeOpts.matchFallbackMaxVias
+							);
+						callKinds[i] = 'route';
+					}
+					for (const geometry of result.matched.geometries) {
+						await appendGeometryToPath(polylines, geometry);
+					}
+				} else if (result.kind === 'route') {
+					chunkOutcomesByShape.push(undefined);
+					for (const geometry of result.geometries) {
 						await appendGeometryToPath(polylines, geometry);
 					}
 				} else {
-					// Structured shapes (rectangle / line / polygon) have
-					// user-clicked corners with no outliers to drop. /route
-					// via the RDP'd anchors is exact and ~20× faster than
-					// /match for these — the public demo's `TooBig`
-					// radius rejection goes away too.
-					const { geometry } = await getRoute(pts);
-					await appendGeometryToPath(polylines, geometry);
+					chunkOutcomesByShape.push(undefined);
 				}
 
-				if (i < order.length - 1) {
-					// Transitions are always 2 points — no simplification needed.
-					// The exit of the current shape and the entry of the next
-					// depend on their chosen directions: forward means
-					// entry=first, exit=last; reverse swaps them.
-					const currentShape = shape;
-					const nextShape = shapes[order[i + 1]];
-					const currentExit = isReversed
-						? currentShape.points[0]
-						: currentShape.points[currentShape.points.length - 1];
-					const nextEntry = directions[i + 1]
-						? nextShape.points[nextShape.points.length - 1]
-						: nextShape.points[0];
-					const { geometry: link } = await getRoute([currentExit, nextEntry]);
-					await appendGeometryToPath(polylines, link);
+				if (i < linkResults.length) {
+					await appendGeometryToPath(polylines, linkResults[i].geometry);
 				}
 			}
 
-			this.routedPath = polylines;
+			// Single cleanup pass with a hard /route budget. Pass sketch
+			// corners so wasteful approach loops near geometric vertices
+			// (e.g. Powązkowska) can be collapsed.
+			const sketchCorners = shapes.flatMap((s) => s.points);
+			this.routedPath = await cleanRoutedPathOnNetwork(polylines, undefined, {
+				corners: sketchCorners
+			});
+
+			// Debug plan uses the points + callKinds actually sent to OSRM
+			// (route-first pencil may rewrite to sparse anchors + 'route').
+			const orderedShapes = prepared.map((p) => p.shape);
+			const plan = buildRoutePlan(orderedShapes, processedPoints, callKinds);
+			this.routeDebugBatches = attachOutcomes(plan, chunkOutcomesByShape);
+
 			this.phase = 'routed';
 			this.routeBusy = false;
 			this.status = 'Route ready — export or edit.';
@@ -552,6 +696,10 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = null;
 		this.trimEnd = null;
 		this.trimHint = '';
+		// The /match batch overlay describes the route we just left — drop
+		// it alongside routedPath so the user is not left staring at
+		// colored markers over an emptied canvas.
+		this.routeDebugBatches = [];
 		this.status = 'Sketch a shape.';
 		this.render();
 	}
@@ -823,6 +971,11 @@ export class SketchState implements SketchStateLike {
 		this.trimStart = snap.trimStart ?? null;
 		this.trimEnd = snap.trimEnd ?? null;
 		this.trimHint = snap.trimHint ?? '';
+		this.routeDebugVisible = snap.routeDebugVisible ?? false;
+		// Clear the overlay — the import may have changed the shape set
+		// drastically, and the old batches no longer describe the
+		// imported state. Recompute on the next Route click.
+		this.routeDebugBatches = [];
 		this.activePencilShape = null;
 		this.activeRectangleShape = null;
 		this.dragOrigin = null;
@@ -876,7 +1029,12 @@ export class SketchState implements SketchStateLike {
 			this.trimMode,
 			this.trimStart,
 			this.trimEnd,
-			(which, point) => this.dropTrimHandle(which, point)
+			(which, point) => this.dropTrimHandle(which, point),
+			// /match batch debug overlay: render only when the toggle is on.
+			// The layer itself is always created (in bootstrap) so toggling
+			// is a state change, not a map mutation.
+			this._debugLayer,
+			this.routeDebugVisible ? this.routeDebugBatches : []
 		);
 	}
 
@@ -904,12 +1062,16 @@ export class SketchState implements SketchStateLike {
 			trimMode: this.trimMode,
 			trimStart: this.trimStart,
 			trimEnd: this.trimEnd,
-			trimHint: this.trimHint
+			trimHint: this.trimHint,
+			routeDebugVisible: this.routeDebugVisible
 		};
 	}
 }
 
 async function appendGeometryToPath(path: Point[], geometry: string) {
+	// Decode only here. Network cleanup runs once on the full stitched path
+	// (see createRoute) with a hard bridge budget — cleaning every chunk
+	// caused request storms when false-positive "loops" re-routed forever.
 	const points = decodePolyline(geometry);
 	if (points.length === 0) return;
 

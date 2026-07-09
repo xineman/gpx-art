@@ -2,6 +2,8 @@
 	import { RotateCcw, Undo2 } from '@lucide/svelte';
 	import { neutralActionButton } from '$lib/constants/styles';
 	import FileMenu from './FileMenu.svelte';
+	import RouteDebugPanel from './RouteDebugPanel.svelte';
+	import RouteSettingsPanel from './RouteSettingsPanel.svelte';
 	import type { SketchState } from '$lib/sketch/state.svelte';
 
 	type Props = {
@@ -9,15 +11,34 @@
 		class?: string;
 	};
 	let { sketch, class: extraClass = '' }: Props = $props();
+
+	// Only one dock popover at a time — File / Settings / Batches.
+	type DockMenu = 'file' | 'settings' | 'batches' | null;
+	let openMenu = $state<DockMenu>(null);
+
+	function setMenu(id: Exclude<DockMenu, null>, open: boolean) {
+		openMenu = open ? id : openMenu === id ? null : openMenu;
+	}
+
+	// Batches trigger unmounts when the sketch is cleared; drop the open
+	// flag so it doesn't reappear already-open on the next draw.
+	$effect(() => {
+		if (!sketch.hasDrawing && openMenu === 'batches') {
+			openMenu = null;
+		}
+	});
 </script>
 
 <!--
 	HistoryDock — the always-on utility strip. Lives above the StageActions
 	pill and never changes shape, content, or position across phases. Its
-	contents (Undo, Redo, File menu) are phase-orthogonal: history applies
-	to whatever the sketch/route looked like a moment ago, regardless of
-	what the user is doing now. Keeping it stable gives users a fixed
-	visual anchor while the stage pill below it morphs.
+	contents (Undo, Redo, File, Settings, Batches) are phase-orthogonal:
+	history and secondary tooling apply regardless of what the user is doing
+	now. Keeping it stable gives users a fixed visual anchor while the stage
+	pill below it morphs.
+
+	Secondary panels (settings, OSRM batches) open as upward popovers so the
+	map stays clear until the user asks for them.
 -->
 <section
 	class="flex max-w-[calc(100vw-36px)] flex-wrap items-center gap-[7px] rounded-lg border border-[#2c2924]/15 bg-[#fff7df]/95 p-2 shadow-[0_18px_50px_rgb(27_26_23_/_0.20)] max-[620px]:w-full {extraClass}"
@@ -45,5 +66,15 @@
 		<RotateCcw size={18} style="transform: scaleX(-1);" />
 		<span>Redo</span>
 	</button>
-	<FileMenu {sketch} />
+	<FileMenu {sketch} open={openMenu === 'file'} onOpenChange={(open) => setMenu('file', open)} />
+	<RouteSettingsPanel
+		{sketch}
+		open={openMenu === 'settings'}
+		onOpenChange={(open) => setMenu('settings', open)}
+	/>
+	<RouteDebugPanel
+		{sketch}
+		open={openMenu === 'batches'}
+		onOpenChange={(open) => setMenu('batches', open)}
+	/>
 </section>

@@ -43,18 +43,137 @@ export const OSRM_PROFILE = 'bike';
 //     snap at this radius, so /match doesn't reject the whole chunk on
 //     `NoMatch`. Tracepoints stay at 30 m for fast HMM.
 //
-// MATCH_CONFIDENCE_THRESHOLD is the per-matching minimum score we trust.
-// /match can return a matching with confidence close to 0 when most
-// tracepoints were dropped (e.g. one waypoint was 200+ m from any road but
-// still "matched" because the relaxed radius accepted it). Such matchings
-// produce a path indistinguishable from the /route fallback but with
-// added latency. Discard them and force the /route fallback.
+// OSRM /match also reports a per-matching `confidence` score, but the score
+// reflects HMM hypothesis-spread (how many plausible candidate roads the
+// chunk could match) rather than route usability. Pencil traces are
+// systematically low-confidence even when the matched geometry is correct,
+// because the tracepoints are collinear — every nearby road looks equally
+// plausible. We therefore never reject a match on confidence alone.
+//
+// Pencil routing is route-first (see getMatchedRoute):
+//   1. Sparse /route on RDP'd anchors (MATCH_FALLBACK_*) — one fast call.
+//   2. Accept if length is within DETOUR_RATIO of the sketch polyline
+//      (not a chord shortcut, not a hard-via detour).
+//   3. Else escalate to chunked /match (soft HMM). Per-chunk ladder:
+//        a. /match OK and not pathologically long → keep it.
+//        b. /match too long vs max(L_sketch, L_sparse) → sparse /route (Detour).
+//        c. NoMatch → sparse /route (NoMatch).
+// Full densified traces are never sent as hard /route vias (weaves/detours).
 export const MATCH_MAX_POINTS = 10;
 export const MATCH_CHUNK_OVERLAP = 2;
 export const MATCH_SAMPLE_SPACING_METERS = 60;
 export const MATCH_RADIUS_METERS = 30;
 export const MATCH_RADIUS_WAYPOINT_METERS = 100;
-export const MATCH_CONFIDENCE_THRESHOLD = 0.5;
+
+// Sparse /route anchors for pencil (primary + match fallback). Mild RDP is
+// enough now that /route is primary — we no longer need match-era aggressive
+// sparsification. Cap still bounds public-demo URL length / mid-block weave.
+export const MATCH_FALLBACK_RDP_TOLERANCE = 25;
+export const MATCH_FALLBACK_MAX_VIAS = 12;
+
+// Length-gate ratio for route-first accept and match detour rejection.
+// Sparse is rejected (escalate to /match) when L_sketch > ratio × L_sparse
+// (chording curves) or L_sparse > ratio × L_sketch (hard-via detour).
+// Match is rejected when L_match > ratio × max(L_sketch, L_sparse).
+// 1.35 keeps intentional curves while dropping plaza weaves / chords.
+export const DETOUR_RATIO = 1.35;
+
+// Structured shapes (line / polygon / rectangle) always use /route — never
+// chunked /match. Dense /match at pencil spacing turns a city-scale rectangle
+// into dozens of public-demo requests (each multi-second), which is unusable.
+//
+// Long multi-edge shapes are routed **per sketch edge** (parallel /route
+// calls), not as one global via ring. A single /route around a 24 km
+// rectangle with a 30-via cap spreads samples ~800 m apart and OSRM takes
+// multi-block inland shortcuts between them (route length >> perimeter).
+// Per-edge routing forces each side to finish before the next and keeps
+// via spacing honest on that side alone.
+//
+//   - STRUCTURED_EDGE_VIA_MIN_METERS — edge this long may get intermediate vias.
+//   - STRUCTURED_VIA_SPACING_METERS — densify spacing when an edge needs vias.
+//   - STRUCTURED_MAX_VIAS_PER_EDGE — cap densified vias on one edge.
+//   - STRUCTURED_EDGE_DEVIATION_METERS — if a simple A→B /route stays within
+//     this max distance of the sketch edge, keep it (no densify). Densify only
+//     when the path wanders farther *and* densified vias improve fit without
+//     exploding length — avoids river/park edges where forced vias detour more.
+//   - STRUCTURED_BEARING_RANGE_DEG — OSRM bearings when densifying.
+export const STRUCTURED_EDGE_VIA_MIN_METERS = 150;
+export const STRUCTURED_VIA_SPACING_METERS = 300;
+export const STRUCTURED_MAX_VIAS_PER_EDGE = 16;
+export const STRUCTURED_EDGE_DEVIATION_METERS = 250;
+export const STRUCTURED_BEARING_RANGE_DEG = 60;
+export const STRUCTURED_MAX_VIAS = STRUCTURED_MAX_VIAS_PER_EDGE;
+// Stop each edge this far before the geometric corner and start the next
+// edge this far after — then bridge the short corner turn. Prevents hard
+// vertex snaps that pull the route off a main street into a local loop.
+export const STRUCTURED_CORNER_INSET_METERS = 100;
+
+// Post-process on decoded route geometry: detect *local reverse spurs*
+// (via U-turns) and hairpin apexes, then re-call OSRM /route between kept
+// endpoints. Hard bridge budget prevents request storms.
+export const ROUTE_HAIRPIN_MIN_LEG_METERS = 12;
+// Cosine of interior turn: -1 = U-turn, 0 = 90°. Threshold ~120°+ from
+// straight-through so intentional rectangle corners (~90°, cos≈0) stay.
+export const ROUTE_HAIRPIN_MAX_COSINE = -0.45;
+// Reverse-spur / local-detour cleanup.
+//
+// Two patterns:
+//  1) Thin reverse spur — leave a main street, U-turn back near the same point
+//     (Parkowa). chord small, pathLen ≈ 2× reach.
+//  2) Corner approach loop — wander in a neighborhood to hit a geometric
+//     vertex, rejoin further along (NW Powązkowska mess). chord larger
+//     (up to LOCAL_DETOUR_NEAR), path still wasteful vs chord.
+//
+// MAX_METERS caps so a full rectangle tour is never collapsed.
+export const ROUTE_LOOP_NEAR_METERS = 90;
+export const ROUTE_LOOP_MIN_METERS = 80;
+export const ROUTE_LOOP_MAX_METERS = 900;
+export const ROUTE_LOOP_WINDOW = 140;
+export const ROUTE_SPUR_MIN_PATH_TO_REACH = 1.65;
+export const ROUTE_SPUR_MAX_PATH_TO_REACH = 3.15;
+export const ROUTE_SPUR_MIN_DETOUR = 2.2;
+// Wider local detours (corner approach loops).
+export const ROUTE_LOCAL_DETOUR_NEAR_METERS = 220;
+export const ROUTE_LOCAL_DETOUR_MIN_METERS = 150;
+export const ROUTE_LOCAL_DETOUR_MIN_RATIO = 1.65; // pathLen / chord
+// Sketch-corner neighborhood: if the route spends this much path length
+// inside CORNER_RADIUS of a geometric vertex while entry→exit chord is short,
+// collapse the visit (Powązkowska-style corner approach loops).
+export const ROUTE_CORNER_RADIUS_METERS = 350;
+export const ROUTE_CORNER_MIN_PATH_METERS = 160;
+export const ROUTE_CORNER_MIN_PATH_TO_CHORD = 1.35;
+export const ROUTE_CLEAN_MAX_BRIDGES = 12;
+export const ROUTE_CLEAN_SPANS_PER_PASS = 6;
+
+// When building GTSP transition costs, prefer OSRM /table road distances for
+// this many shapes or fewer (and at least 2). Larger N falls back to haversine
+// to bound pre-route latency.
+export const TSP_ROAD_COST_LIMIT = 8;
+
+// Eight-hue palette used by the /match batch debug overlay (see
+// $lib/routing/batchPlan). Each batch of points the routing pipeline sends to
+// OSRM gets a distinct color from this list so the user can see at a glance
+// which sketch points went into which /match call.
+//
+// Distribution: spans the full hue wheel in ~45° steps for maximum
+// perceptual distance. Hue zones that would clash with the existing reserved
+// palette (orange draft #f26b3a, vermilion trim #c8412c) are skipped — instead
+// of pure orange/red we lead with rose (slightly toward magenta) and a deeper
+// amber-yellow, which read as warm but distinct from the draft orange. The
+// blues are kept well clear of the routed-polyline blue (#1d4ed8): sky-500
+// (brighter, more cyan) for batch blues, indigo-500 (slightly violet) for
+// the deepest blue batch. Palettes wrap via modulo — beyond 8 batches the
+// colors repeat, and the batch index in the legend disambiguates.
+export const MATCH_DEBUG_PALETTE: readonly string[] = [
+	'#f43f5e', // rose-500   — warm red, away from vermilion
+	'#facc15', // yellow-400 — bright amber, away from draft orange
+	'#84cc16', // lime-500   — yellow-green
+	'#10b981', // emerald-500 — clean green
+	'#0ea5e9', // sky-500    — bright cyan-blue, away from route blue
+	'#6366f1', // indigo-500 — blue-violet
+	'#a855f7', // purple-500 — vivid purple
+	'#ec4899' // pink-500    — hot magenta
+];
 
 // Above this cluster count, the exact Held-Karp bitmask DP gives way to a
 // nearest-neighbour + 2-opt heuristic. Held-Karp is O(N²·2ᴺ); at N = 14 that's
@@ -69,26 +188,16 @@ export const ROUTE_COLOR = '#1d4ed8';
 // UI thread.
 export const TWO_OPT_MAX_ITERATIONS = 1000;
 
-// Ramer–Douglas–Peucker simplification tolerance applied per shape before
-// handing vertices to OSRM. Drops interior vertices whose perpendicular
-// distance from the chord between their kept neighbours is below this
-// many meters. Outliers — points that bow sharply off the chord — survive
-// because their perpendicular distance exceeds the tolerance.
+// Ramer–Douglas–Peucker simplification tolerances.
 //
-// Two tolerances because the trade-off is shape-specific:
-//   - RDP_TOLERANCE        — rectangles / lines / polygons (default 10 m).
-//                            These have 2–4 user-clicked vertices, so RDP is
-//                            effectively a no-op regardless of value; 10 m
-//                            just means "don't drop a corner".
-//   - RDP_TOLERANCE_PENCIL — free-form pencil strokes (default 30 m).
-//                            10 m keeps most curve points and lets /match
-//                            see a noisy trace — slow. 30 m prunes minor
-//                            curve wiggles while keeping major inflections
-//                            (heart lobes, hairpins, the user's intended
-//                            detours). Combined with chunked /match, this
-//                            cuts chunk count without flattening the input
-//                            shape. /match to real streets further smooths
-//                            whatever the simplification removed.
+//   - RDP_TOLERANCE_PENCIL — free-form pencil preprocess after densify.
+//                            Mild (10 m): only micro freehand wiggles. Sparse
+//                            /route has its own anchors (MATCH_FALLBACK_*);
+//                            denser points help sketch-length gates and rare
+//                            /match escalation. Was 30 m when /match was primary.
+//   - RDP_TOLERANCE        — retained for sparse-fallback / future structured
+//                            use. Structured shapes no longer RDP densified
+//                            samples (that collapsed long straight edges).
 //
 // Note on OSRM snapping: we deliberately omit the `radiuses=` parameter
 // from the `/route` URL. When omitted, OSRM's default for `/route` is
@@ -98,4 +207,4 @@ export const TWO_OPT_MAX_ITERATIONS = 1000;
 // anchors reliably fail with `NoSegment` when a finite radius is set, so
 // the implicit unlimited default is the right behaviour here.
 export const RDP_TOLERANCE = 10;
-export const RDP_TOLERANCE_PENCIL = 30;
+export const RDP_TOLERANCE_PENCIL = 10;

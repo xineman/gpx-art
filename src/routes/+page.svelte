@@ -12,6 +12,7 @@
 
 	let mapElement: HTMLDivElement | undefined = $state();
 	const sketch = new SketchState();
+	sketch.loadRouteSettings();
 	let hoveredPanel = $state<string | null>(null);
 	let mapHandle: { teardown: () => void } | null = null;
 

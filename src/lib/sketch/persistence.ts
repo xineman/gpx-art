@@ -75,6 +75,13 @@ export function parseSnapshotEnvelope(input: unknown): ParseResult {
 		return { ok: false, reason: 'snapshot.trimHint must be a string when present.' };
 	}
 
+	// /match batch debug overlay toggle — optional so older saved files
+	// (pre-feature) still import without a version bump.
+	const routeDebugVisible = snap?.routeDebugVisible;
+	if (routeDebugVisible !== undefined && typeof routeDebugVisible !== 'boolean') {
+		return { ok: false, reason: 'snapshot.routeDebugVisible must be a boolean when present.' };
+	}
+
 	return {
 		ok: true,
 		snapshot: {
@@ -85,7 +92,8 @@ export function parseSnapshotEnvelope(input: unknown): ParseResult {
 			trimMode,
 			trimStart,
 			trimEnd,
-			trimHint
+			trimHint,
+			routeDebugVisible
 		}
 	};
 }

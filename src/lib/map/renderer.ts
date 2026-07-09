@@ -2,6 +2,14 @@ import type * as Leaflet from 'leaflet';
 import { ROUTE_COLOR } from '$lib/constants/routing';
 import { closeShape, toLatLngs } from '$lib/geometry/point';
 import type { Point, Shape } from '$lib/types/sketch';
+import type { RouteDebugBatch } from '$lib/routing/batchPlan';
+import { renderRouteDebug } from './route-debug-layer';
+import {
+	CHEVRON_SIZE_PX,
+	DEFAULT_CHEVRON_OPTIONS,
+	chevronVertices,
+	placeChevronsAlongPath
+} from './route-direction';
 
 type L = typeof import('leaflet');
 type VertexMoveHandler = (
@@ -26,6 +34,12 @@ const TRIM_RED = '#c8412c';
 const TRIM_RED_SOFT = '#f6c5b8';
 const TRIM_HANDLE_FILL = '#fff7df';
 
+// Route direction chrome. Cream fill matches vertex / trim handles so the
+// start anchor and chevron fill read as the same "ink on cream" vocabulary
+// as the rest of the map chrome; stroke stays route blue.
+const ROUTE_HANDLE_FILL = '#fff7df';
+const CHEVRON_STROKE_WEIGHT = 2.5;
+
 export function renderLayers(
 	L: L | undefined,
 	map: Leaflet.Map | undefined,
@@ -39,7 +53,9 @@ export function renderLayers(
 	trimMode: boolean = false,
 	trimStart: number | null = null,
 	trimEnd: number | null = null,
-	onTrimHandleDrop?: TrimHandleMoveHandler
+	onTrimHandleDrop?: TrimHandleMoveHandler,
+	debugLayer?: Leaflet.LayerGroup,
+	routeDebugBatches: readonly RouteDebugBatch[] = []
 ) {
 	if (!L || !drawingLayer) return;
 
@@ -59,6 +75,13 @@ export function renderLayers(
 			addRouteLayer(L, map, routeLayer, routedPath, trimMode, trimStart, trimEnd, onTrimHandleDrop);
 		}
 	}
+
+	if (debugLayer) {
+		debugLayer.clearLayers();
+		if (routeDebugBatches.length > 0) {
+			renderRouteDebug(L, debugLayer, routeDebugBatches);
+		}
+	}
 }
 
 // Render the road-snapped route as a single thick polyline. The route layer is
@@ -66,7 +89,14 @@ export function renderLayers(
 // editing) don't wipe the route — the user can see their sketch and the
 // generated route side-by-side.
 //
-// In trim mode, additionally draws:
+// Direction chrome (always, when not in trim mode):
+//   - start / end anchors so ride order is obvious on loops;
+//   - open V chevrons spaced in *screen* pixels along the path (recomputed
+//     on zoom via the map's zoomend → render path).
+//
+// In trim mode, mid-route chevrons are suppressed so they don't compete with
+// the red-pen cut UI. Start/end anchors stay so the overall ride order remains
+// readable while picking cuts. Additionally draws:
 //   - a dashed red overlay polyline over the marked span (so the user
 //     sees exactly which stretch is going to disappear on Confirm);
 //   - one or two cut handles (cream-filled circleMarkers with red stroke)
@@ -91,6 +121,13 @@ function addRouteLayer(
 		lineCap: 'round',
 		lineJoin: 'round'
 	}).addTo(routeLayer);
+
+	// Start / end stay visible in trim mode; chevrons only when the full
+	// route is the focus (not mid-cut).
+	addRouteEndpoints(L, routeLayer, routedPath);
+	if (!trimMode && map) {
+		addRouteChevrons(L, map, routeLayer, routedPath);
+	}
 
 	if (!trimMode) return;
 
@@ -130,6 +167,96 @@ function addRouteLayer(
 	}
 	if (trimEnd !== null && trimEnd !== trimStart) {
 		addTrimHandle(L, map, routeLayer, routedPath[trimEnd], 'end', onTrimHandleDrop);
+	}
+}
+
+// Distinct start (open cream disc) and end (filled blue disc) so a closed
+// art shape still answers "which way do I ride this?". Non-interactive so
+// they never steal trim picks or map pans.
+function addRouteEndpoints(L: L, routeLayer: Leaflet.LayerGroup, routedPath: Point[]) {
+	const start = routedPath[0];
+	const end = routedPath[routedPath.length - 1];
+
+	L.circleMarker([start.lat, start.lng], {
+		interactive: false,
+		color: ROUTE_COLOR,
+		fillColor: ROUTE_HANDLE_FILL,
+		fillOpacity: 1,
+		radius: 6,
+		weight: 3
+	}).addTo(routeLayer);
+
+	// Coincident start/end (true loops after stitching) — only draw one
+	// start marker; the chevrons carry direction for the rest.
+	const sameEndpoint =
+		Math.abs(start.lat - end.lat) < 1e-9 && Math.abs(start.lng - end.lng) < 1e-9;
+	if (sameEndpoint) return;
+
+	L.circleMarker([end.lat, end.lng], {
+		interactive: false,
+		color: ROUTE_HANDLE_FILL,
+		fillColor: ROUTE_COLOR,
+		fillOpacity: 1,
+		radius: 6,
+		weight: 2.5
+	}).addTo(routeLayer);
+}
+
+// Project the route into layer pixels, place screen-spaced chevrons, draw
+// each as an open V polyline. Requires a live map for latLngToLayerPoint;
+// callers already gate on map being defined.
+//
+// Viewport is the current map frame in layer pixels (padded) so the
+// placement budget is spent on marks you can see — critical when zoomed
+// in, where the full path may be tens of thousands of screen pixels long.
+function addRouteChevrons(
+	L: L,
+	map: Leaflet.Map,
+	routeLayer: Leaflet.LayerGroup,
+	routedPath: Point[]
+) {
+	const screen = routedPath.map((pt) => {
+		const lp = map.latLngToLayerPoint([pt.lat, pt.lng]);
+		return { x: lp.x, y: lp.y };
+	});
+
+	const size = map.getSize();
+	const pad = DEFAULT_CHEVRON_OPTIONS.spacing;
+	const topLeft = map.containerPointToLayerPoint(L.point(-pad, -pad));
+	const bottomRight = map.containerPointToLayerPoint(L.point(size.x + pad, size.y + pad));
+	const viewport = {
+		minX: Math.min(topLeft.x, bottomRight.x),
+		minY: Math.min(topLeft.y, bottomRight.y),
+		maxX: Math.max(topLeft.x, bottomRight.x),
+		maxY: Math.max(topLeft.y, bottomRight.y)
+	};
+
+	const placements = placeChevronsAlongPath(screen, DEFAULT_CHEVRON_OPTIONS, viewport);
+	for (const place of placements) {
+		const verts = chevronVertices(place, place.angle, CHEVRON_SIZE_PX);
+		const latlngs = verts.map((v) => {
+			const ll = map.layerPointToLatLng(L.point(v.x, v.y));
+			return [ll.lat, ll.lng] as [number, number];
+		});
+
+		// Soft cream understroke so the V stays legible on dark tiles /
+		// busy OSM streets; blue top stroke matches the route.
+		L.polyline(latlngs, {
+			interactive: false,
+			color: ROUTE_HANDLE_FILL,
+			weight: CHEVRON_STROKE_WEIGHT + 2,
+			opacity: 0.85,
+			lineCap: 'round',
+			lineJoin: 'round'
+		}).addTo(routeLayer);
+		L.polyline(latlngs, {
+			interactive: false,
+			color: ROUTE_COLOR,
+			weight: CHEVRON_STROKE_WEIGHT,
+			opacity: 0.95,
+			lineCap: 'round',
+			lineJoin: 'round'
+		}).addTo(routeLayer);
 	}
 }
 

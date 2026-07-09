@@ -1,24 +1,34 @@
 <script lang="ts">
-	import { ArrowDownToLine, ArrowUpFromLine, MoreHorizontal } from '@lucide/svelte';
+	import { ArrowDownToLine, ArrowUpFromLine, FolderOpen } from '@lucide/svelte';
 	import { neutralActionButton } from '$lib/constants/styles';
 	import type { SketchState } from '$lib/sketch/state.svelte';
 
 	type Props = {
 		sketch: SketchState;
+		/** Controlled open state from HistoryDock (mutual exclusion). */
+		open?: boolean;
+		onOpenChange?: (open: boolean) => void;
 		class?: string;
 	};
-	let { sketch, class: extraClass = '' }: Props = $props();
+	let { sketch, open = false, onOpenChange, class: extraClass = '' }: Props = $props();
 
-	// The "⋯" overflow menu is the single entry point for the rarely-used
-	// file actions. It opens a small absolutely-positioned dropdown above the
-	// button (the bar sits at the bottom-left, so the menu grows up).
-	let menuOpen = $state(false);
+	// Folder icon is the entry point for import/export drawing. Opens a small
+	// absolutely-positioned dropdown above the button (the bar sits at the
+	// bottom-left, so the menu grows up).
 	let menuButton: HTMLButtonElement | undefined = $state();
 	let menuElement: HTMLDivElement | undefined = $state();
 	let fileInput: HTMLInputElement | undefined = $state();
 
+	function setOpen(value: boolean) {
+		onOpenChange?.(value);
+	}
+
 	function closeMenu() {
-		menuOpen = false;
+		setOpen(false);
+	}
+
+	function toggle() {
+		setOpen(!open);
 	}
 
 	function onExport() {
@@ -47,7 +57,7 @@
 	// the underlying button, so the menu can't be reopened in the same gesture
 	// that closed it. Skip if the click is inside the menu or the trigger.
 	$effect(() => {
-		if (!menuOpen) return;
+		if (!open) return;
 		function onPointer(event: MouseEvent) {
 			const target = event.target as Node | null;
 			if (!target) return;
@@ -70,7 +80,7 @@
 		};
 	});
 
-	// Global file shortcuts. Always-on (not gated on menuOpen) so they work
+	// Global file shortcuts. Always-on (not gated on open) so they work
 	// whether the menu is visible or not. The Esc handler above prevents these
 	// from firing when the menu intercepts a key, so there's no double-handling.
 	$effect(() => {
@@ -94,17 +104,17 @@
 <div class="relative {extraClass}">
 	<button
 		bind:this={menuButton}
-		aria-label="File actions"
+		aria-label="Import and export drawing"
 		aria-haspopup="menu"
-		aria-expanded={menuOpen}
-		class={neutralActionButton}
-		onclick={() => (menuOpen = !menuOpen)}
-		title="File actions (Import / Export) — Cmd/Ctrl+S, Cmd/Ctrl+O"
+		aria-expanded={open}
+		class="{neutralActionButton} {open ? 'bg-[#e6b84a]' : ''}"
+		onclick={toggle}
+		title="Import / Export drawing — Cmd/Ctrl+S, Cmd/Ctrl+O"
 		type="button"
 	>
-		<MoreHorizontal size={18} />
+		<FolderOpen size={18} />
 	</button>
-	{#if menuOpen}
+	{#if open}
 		<div
 			bind:this={menuElement}
 			role="menu"

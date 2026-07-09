@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app where the user draws shapes on a Leaflet/OSM map, with the intent to convert the sketch into a rideable GPX route and export it. Sketching and rendering are working; routing/GPX export is being re-implemented (see "Pending work" below).
+**GPX Art** — a SvelteKit web app where the user draws shapes on a Leaflet/OSM map, converts the sketch into a rideable GPX route via OSRM, and exports it.
 
 ## Commands
 
@@ -104,9 +104,23 @@ Implemented in `SketchState.handleKeydown/handleKeyup`:
 
 While a drawing tool is active, mousing down on an existing vertex will start dragging that vertex instead of beginning a new shape. Start new shapes in empty space.
 
-## Pending work
+## Routing pipeline (`src/lib/routing/` + `SketchState.createRoute`)
 
-The routing/GPX-export pipeline is a stub. `SketchState.createRoute()`, `backToEditing()`, and `downloadGpx()` are placeholders awaiting re-implementation, and the `phase` transitions to/from `routing` and `routed` are not yet wired up (ActionBar's `Route`, `Edit`, and `GPX` buttons call into these no-ops). Recent commit history (`Remove routing`, `Refactor the codebase`) reflects that the routing layer was ripped out to be rebuilt.
+Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareShapeRoute`), `tsp.ts`, and `batchPlan.ts`.
+
+1. **TSP order** — GTSP with flip (`solveClusterTspWithFlipFromCosts`). Prefer OSRM `/table` road distances when N ≤ `TSP_ROAD_COST_LIMIT`, else haversine. Closed shapes (polygon/rectangle) use **entry = exit** (full loop, leave from start corner). May reverse a shape.
+2. **Preprocess** (`prepareShapeRoute`)
+   - **Pencil** → densify 60 m + RDP 30 m → chunked `/match`.
+   - **Structured** → always `/route`: short edges = corners only; long multi-edge = **adaptive per-edge** (parallel): try A→B first; densify vias only if path strays >`STRUCTURED_EDGE_DEVIATION_METERS` *and* densified fit is better without exploding length (avoids river/park via forced detours).
+3. **OSRM** (shape geometries + inter-shape links in **parallel**)
+   - Pencil: chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`); per chunk detour/NoMatch → sparse `/route`.
+   - Structured: single `/route` with hard vias; bearings retry without bearings on failure.
+4. **Stitch / clean** — decode polylines and stitch (bridge gaps >2 m with `/route`). **Once** on the full path, `cleanRoutedPathOnNetwork` fixes local reverse spurs/hairpins by re-routing kept endpoints (budget `ROUTE_CLEAN_MAX_BRIDGES`; ignores full-tour near-revisits so rectangles do not request-storm).
+5. **Export / trim** — `pointsToGpx`; trim can re-bridge cut endpoints.
+
+Debug: `buildRoutePlan(..., callKinds)` + `RouteDebugPanel` show per-chunk match/fallback outcomes.
+
+Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.).
 
 ## Other notes
 

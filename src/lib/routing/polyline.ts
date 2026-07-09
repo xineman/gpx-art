@@ -10,8 +10,36 @@ import type { Point } from '$lib/types/sketch';
 // OSRM uses precision=5 (1e-5 degree units) by default, which is what GPX
 // consumers expect — that's the resolution Strava, Komoot, etc. emit too.
 //
-// TODO: if we ever need to *encode* polylines (e.g. for a future "share link"
-// feature), drop in the matching encoder here.
+// Precision-5 encoder (inverse of decodePolyline). Used in unit tests and
+// any future share-link feature.
+export function encodePolyline(points: Point[], precision = 5): string {
+	const factor = Math.pow(10, precision);
+	let prevLat = 0;
+	let prevLng = 0;
+	let result = '';
+
+	const encodeSigned = (value: number): string => {
+		let v = value < 0 ? ~(value << 1) : value << 1;
+		let out = '';
+		while (v >= 0x20) {
+			out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+			v >>= 5;
+		}
+		out += String.fromCharCode(v + 63);
+		return out;
+	};
+
+	for (const p of points) {
+		const lat = Math.round(p.lat * factor);
+		const lng = Math.round(p.lng * factor);
+		result += encodeSigned(lat - prevLat);
+		result += encodeSigned(lng - prevLng);
+		prevLat = lat;
+		prevLng = lng;
+	}
+	return result;
+}
+
 export function decodePolyline(encoded: string, precision = 5): Point[] {
 	const factor = Math.pow(10, precision);
 	const points: Point[] = [];

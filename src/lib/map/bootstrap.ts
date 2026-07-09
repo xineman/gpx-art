@@ -26,6 +26,10 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 
 	const drawingLayer = L.layerGroup().addTo(map);
 	const routeLayer = L.layerGroup().addTo(map);
+	// Third layer for the /match batch debug overlay. Cleared on every
+	// render alongside the route layer; markers stay non-interactive so
+	// they never intercept clicks intended for the drawing or route layer.
+	const debugLayer = L.layerGroup().addTo(map);
 
 	map.on('mousedown', (event: Leaflet.LeafletMouseEvent) => state.handleMapMouseDown(event));
 	map.on('mousemove', (event: Leaflet.LeafletMouseEvent) => state.handleMapMouseMove(event));
@@ -43,7 +47,13 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 		undefined,
 		() => false,
 		routeLayer,
-		state.routedPath
+		state.routedPath,
+		false,
+		null,
+		null,
+		undefined,
+		debugLayer,
+		state.routeDebugVisible ? state.routeDebugBatches : []
 	);
 
 	return {
@@ -51,6 +61,7 @@ export async function createMap(el: HTMLDivElement, state: SketchState): Promise
 		map,
 		drawingLayer,
 		routeLayer,
+		debugLayer,
 		teardown: () => {
 			map.off();
 			map.remove();
