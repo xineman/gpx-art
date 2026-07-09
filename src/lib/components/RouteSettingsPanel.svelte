@@ -169,9 +169,13 @@
 				</span>
 			</label>
 
-			{#if sketch.phase === 'routed'}
+			{#if sketch.phase === 'routed' || sketch.phase === 'routing'}
 				<p class="m-0 text-[11px] leading-[1.3] text-[#67604f]">
-					Re-route to apply these settings to the current path.
+					{#if sketch.phase === 'routing'}
+						Updating route with these settings…
+					{:else}
+						Changes re-route automatically so you can preview immediately.
+					{/if}
 				</p>
 			{/if}
 

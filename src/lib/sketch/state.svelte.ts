@@ -29,6 +29,8 @@ import { cloneShape, cloneShapes } from './cloning';
 import { buildSnapshotEnvelope, parseSnapshotEnvelope } from './persistence';
 
 const ROUTE_SETTINGS_STORAGE_KEY = 'gpx-art.routeSettings';
+/** Debounce before auto re-routing when route settings change (slider-friendly). */
+const SETTINGS_REROUTE_DEBOUNCE_MS = 400;
 
 type L = typeof import('leaflet');
 
@@ -90,7 +92,8 @@ export class SketchState implements SketchStateLike {
 	routeDebugBatches = $state<RouteDebugBatch[]>([]);
 
 	// Route fidelity + corner inset — session prefs, not undo history.
-	// Persisted in localStorage; applied on the next createRoute() only.
+	// Persisted in localStorage. When phase is 'routed', changes debounce
+	// into an automatic createRoute() so the map reflects new knobs immediately.
 	routeFidelity = $state<RouteFidelity>('balanced');
 	cornerInsetMeters = $state(CORNER_INSET_DEFAULT_METERS);
 
@@ -105,6 +108,12 @@ export class SketchState implements SketchStateLike {
 	private _drawingLayer: Leaflet.LayerGroup | undefined;
 	private _routeLayer: Leaflet.LayerGroup | undefined;
 	private _debugLayer: Leaflet.LayerGroup | undefined;
+	/** Timer for debounced auto re-route after settings changes. */
+	private _settingsRerouteTimer: ReturnType<typeof setTimeout> | null = null;
+	/** If settings change while a route is in flight, re-run once it finishes. */
+	private _settingsReroutePending = false;
+	/** Bumps on each createRoute start / cancel so late OSRM results are ignored. */
+	private _routeGeneration = 0;
 
 	canRoute = $derived(canRoute(this));
 	hasDrawing = $derived(this.shapes.length > 0 || !!this.draft);
@@ -156,6 +165,7 @@ export class SketchState implements SketchStateLike {
 		if (this.routeFidelity === fidelity) return;
 		this.routeFidelity = fidelity;
 		this.persistRouteSettings();
+		this.scheduleRerouteFromSettings();
 	}
 
 	setCornerInsetMeters(meters: number) {
@@ -163,6 +173,47 @@ export class SketchState implements SketchStateLike {
 		if (this.cornerInsetMeters === next) return;
 		this.cornerInsetMeters = next;
 		this.persistRouteSettings();
+		this.scheduleRerouteFromSettings();
+	}
+
+	/**
+	 * When a route is already on the map (or being rebuilt), changing
+	 * fidelity / corner softness should re-run createRoute after a short
+	 * debounce so the user sees the new knobs without clicking Route.
+	 */
+	private scheduleRerouteFromSettings() {
+		// First-time route from editing has no path to update; leave it alone.
+		// While re-routing, keep accepting further settings tweaks (pending).
+		const hasLiveRoute = this.phase === 'routed' || (this.phase === 'routing' && !!this.routedPath);
+		if (!hasLiveRoute) return;
+
+		if (this._settingsRerouteTimer) clearTimeout(this._settingsRerouteTimer);
+		this._settingsRerouteTimer = setTimeout(() => {
+			this._settingsRerouteTimer = null;
+			this.fireSettingsReroute();
+		}, SETTINGS_REROUTE_DEBOUNCE_MS);
+	}
+
+	private fireSettingsReroute() {
+		// User may have gone back to editing or cleared the canvas mid-debounce.
+		if (this.phase === 'editing' && !this.routedPath) return;
+		if (this.phase !== 'routed' && this.phase !== 'routing') return;
+
+		if (this.routeBusy) {
+			this._settingsReroutePending = true;
+			return;
+		}
+		if (this.phase !== 'routed') return;
+		void this.createRoute();
+	}
+
+	/** Cancel a debounced settings re-route (e.g. when leaving the route). */
+	private cancelScheduledSettingsReroute() {
+		if (this._settingsRerouteTimer) {
+			clearTimeout(this._settingsRerouteTimer);
+			this._settingsRerouteTimer = null;
+		}
+		this._settingsReroutePending = false;
 	}
 
 	/** Load route prefs from localStorage (call once on app start). */
@@ -424,6 +475,7 @@ export class SketchState implements SketchStateLike {
 
 		this.pushCurrentToRedo();
 		this.undoStack = this.undoStack.slice(0, -1);
+		this.cancelScheduledSettingsReroute();
 		this.shapes = cloneShapes(previous.shapes);
 		this.draft = previous.draft ? cloneShape(previous.draft) : null;
 		this.routedPath = previous.routedPath;
@@ -453,6 +505,7 @@ export class SketchState implements SketchStateLike {
 
 		this.pushCurrentToUndo();
 		this.redoStack = this.redoStack.slice(0, -1);
+		this.cancelScheduledSettingsReroute();
 		this.shapes = cloneShapes(next.shapes);
 		this.draft = next.draft ? cloneShape(next.draft) : null;
 		this.routedPath = next.routedPath;
@@ -484,6 +537,8 @@ export class SketchState implements SketchStateLike {
 	clearDrawing(options: { skipHistory?: boolean } = {}) {
 		if (!options.skipHistory && !this.hasDrawing) return;
 		if (!options.skipHistory) this.pushHistory();
+		this.cancelScheduledSettingsReroute();
+		this._routeGeneration++;
 		this.shapes = [];
 		this.draft = null;
 		this.routedPath = null;
@@ -535,6 +590,12 @@ export class SketchState implements SketchStateLike {
 	}
 
 	async createRoute() {
+		// Coalesce concurrent calls (e.g. settings changed again mid-flight).
+		if (this.routeBusy) {
+			this._settingsReroutePending = true;
+			return;
+		}
+
 		// Auto-commit any in-progress draft so Route works in one click.
 		// Finish remains available for commit-without-routing (Esc / button).
 		if (this.draft) {
@@ -551,7 +612,13 @@ export class SketchState implements SketchStateLike {
 		this.routeError = '';
 		this.phase = 'routing';
 		this.routeBusy = true;
+		// Trim indexes refer to the previous path; wipe on any (re)route.
+		this.trimMode = false;
+		this.trimStart = null;
+		this.trimEnd = null;
+		this.trimHint = '';
 		this.status = 'Solving route…';
+		const gen = ++this._routeGeneration;
 		this.render();
 
 		try {
@@ -564,6 +631,7 @@ export class SketchState implements SketchStateLike {
 			// (full loop, leave from start). See $lib/routing/tsp.
 			this.status = 'Optimizing order between shapes…';
 			const roadCosts = await buildFlipTspRoadCosts(first, last, closed);
+			if (gen !== this._routeGeneration) return;
 			const costs = roadCosts ?? buildFlipTspHaversineCosts(first, last, closed);
 			const { order, directions } = solveClusterTspWithFlipFromCosts(shapes.length, costs);
 
@@ -593,6 +661,7 @@ export class SketchState implements SketchStateLike {
 							prepared.slice(0, -1).map((p, i) => getRoute([p.exit, prepared[i + 1].entry]))
 						)
 			]);
+			if (gen !== this._routeGeneration) return;
 
 			const polylines: Point[] = [];
 			const processedPoints: Point[][] = prepared.map((p) => p.points);
@@ -609,14 +678,18 @@ export class SketchState implements SketchStateLike {
 					await appendGeometryToPath(polylines, linkResults[i].geometry);
 				}
 			}
+			if (gen !== this._routeGeneration) return;
 
 			// Single cleanup pass with a hard /route budget. Pass sketch
 			// corners so wasteful approach loops near geometric vertices
 			// (e.g. Powązkowska) can be collapsed.
 			const sketchCorners = shapes.flatMap((s) => s.points);
-			this.routedPath = await cleanRoutedPathOnNetwork(polylines, undefined, {
+			const cleaned = await cleanRoutedPathOnNetwork(polylines, undefined, {
 				corners: sketchCorners
 			});
+			if (gen !== this._routeGeneration) return;
+
+			this.routedPath = cleaned;
 
 			// Debug plan: points actually sent to OSRM for each shape.
 			const orderedShapes = prepared.map((p) => p.shape);
@@ -626,19 +699,33 @@ export class SketchState implements SketchStateLike {
 			this.routeBusy = false;
 			this.status = 'Route ready — export or edit.';
 			this.render();
+			this.consumeSettingsReroutePending();
 		} catch (err) {
+			if (gen !== this._routeGeneration) return;
 			// Revert on any failure. v1 is strict — one bad shape aborts the
 			// whole thing; we can add lenient partial-result handling later.
 			this.routeError = err instanceof Error ? err.message : String(err);
 			this.phase = 'editing';
 			this.routeBusy = false;
+			this._settingsReroutePending = false;
 			this.status = 'Routing failed — try editing and rerouting.';
 			this.render();
 		}
 	}
 
+	/** If settings changed while the last route was in flight, re-run once. */
+	private consumeSettingsReroutePending() {
+		if (!this._settingsReroutePending) return;
+		this._settingsReroutePending = false;
+		if (this.phase !== 'routed') return;
+		void this.createRoute();
+	}
+
 	backToEditing() {
 		this.snapshot();
+		this.cancelScheduledSettingsReroute();
+		// Invalidate any in-flight createRoute so it does not re-enter 'routed'.
+		this._routeGeneration++;
 		this.routedPath = null;
 		this.routeError = '';
 		this.routeBusy = false;
