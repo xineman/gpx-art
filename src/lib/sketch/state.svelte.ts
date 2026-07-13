@@ -20,7 +20,7 @@ import {
 import {
 	isClosedShapeType,
 	prepareShapeRoute,
-	routePreparedStructured
+	routePreparedShape
 } from '$lib/routing/pipeline';
 import {
 	buildFlipTspHaversineCosts,
@@ -658,8 +658,7 @@ export class SketchState implements SketchStateLike {
 				Promise.all(
 					prepared.map(async (p): Promise<ShapeOsrmResult> => {
 						if (p.points.length < 2) return { kind: 'empty' };
-						// Pencil and structured: one or more hard-via /route calls.
-						const routed = await routePreparedStructured(p, routeOpts);
+						const routed = await routePreparedShape(p);
 						return { kind: 'route', geometries: routed.geometries };
 					})
 				),

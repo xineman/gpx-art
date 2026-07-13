@@ -1,7 +1,6 @@
 import { describe, expect, test, vi, afterEach } from 'vitest';
 import {
 	STRUCTURED_EDGE_VIA_MIN_METERS,
-	STRUCTURED_MAX_VIAS_PER_EDGE,
 	STRUCTURED_VIA_SPACING_METERS,
 	ROUTE_ANCHOR_CHUNK_SIZE,
 	ROUTE_ANCHOR_HARD_CAP
@@ -10,17 +9,12 @@ import type { Point, Shape } from '$lib/types/sketch';
 import {
 	anchorBudgetForLength,
 	chunkRouteAnchors,
-	densifyStructuredVias,
-	maxDeviationFromSegment,
+	extractSoftCornerSkeleton,
 	maxEdgeMeters,
-	needsStructuredEdgeVias,
 	prepareShapeRoute,
 	prepareSketchAnchors,
-	routeAdaptiveEdge,
-	routePreparedStructured,
-	routingChain,
+	routePreparedShape,
 	shapeEndpoints,
-	shouldApplySoftCorners,
 	softCornerPolyline,
 	subsampleKeepEnds
 } from './pipeline';
@@ -78,38 +72,6 @@ describe('shapeEndpoints', () => {
 	});
 });
 
-describe('densifyStructuredVias', () => {
-	test('adds intermediate vias on long edges', () => {
-		const d = deg(1000);
-		const chain = [point(52, 21), point(52 + d, 21)];
-		const vias = densifyStructuredVias(chain);
-		expect(vias.length).toBeGreaterThan(2);
-		expect(vias.length).toBeLessThanOrEqual(STRUCTURED_MAX_VIAS_PER_EDGE);
-	});
-
-	test('caps a single long edge', () => {
-		const d = deg(20_000);
-		const vias = densifyStructuredVias([point(52, 21), point(52 + d, 21)]);
-		expect(vias.length).toBeLessThanOrEqual(STRUCTURED_MAX_VIAS_PER_EDGE);
-	});
-});
-
-describe('maxDeviationFromSegment', () => {
-	test('is ~0 for points on the segment', () => {
-		const a = point(52, 21);
-		const b = point(52 + deg(1000), 21);
-		const mid = point(52 + deg(500), 21);
-		expect(maxDeviationFromSegment([a, mid, b], a, b)).toBeLessThan(5);
-	});
-
-	test('reports offset for a far point', () => {
-		const a = point(52, 21);
-		const b = point(52 + deg(1000), 21);
-		const far = point(52 + deg(500), 21 + deg(400) / Math.cos((52 * Math.PI) / 180));
-		expect(maxDeviationFromSegment([a, far, b], a, b)).toBeGreaterThan(350);
-	});
-});
-
 describe('subsampleKeepEnds', () => {
 	test('keeps endpoints and reduces length', () => {
 		const pts = Array.from({ length: 20 }, (_, i) => point(i, 0));
@@ -152,12 +114,37 @@ describe('chunkRouteAnchors', () => {
 		const pts = Array.from({ length: n }, (_, i) => point(i, 0));
 		const chunks = chunkRouteAnchors(pts);
 		expect(chunks.length).toBeGreaterThan(1);
-		// Shared via between chunks
 		expect(chunks[0].at(-1)).toEqual(chunks[1][0]);
 		expect(chunks[0][0]).toEqual(pts[0]);
 		expect(chunks.at(-1)!.at(-1)).toEqual(pts.at(-1));
 	});
 });
+
+/** Dense samples along a rectangle perimeter (pencil-drawn rect). */
+function freehandRectangle(sideMeters: number, stepMeters: number): Point[] {
+	const s = deg(sideMeters);
+	const corners = [
+		point(52, 21),
+		point(52, 21 + s),
+		point(52 + s, 21 + s),
+		point(52 + s, 21)
+	];
+	const out: Point[] = [];
+	for (let e = 0; e < 4; e++) {
+		const a = corners[e];
+		const b = corners[(e + 1) % 4];
+		const n = Math.max(1, Math.ceil(sideMeters / stepMeters));
+		for (let i = 0; i < n; i++) {
+			const t = i / n;
+			out.push({
+				lat: a.lat + (b.lat - a.lat) * t,
+				lng: a.lng + (b.lng - a.lng) * t
+			});
+		}
+	}
+	out.push(corners[0]);
+	return out;
+}
 
 describe('soft corners', () => {
 	test('applies to sparse long-edge closed rings', () => {
@@ -169,14 +156,33 @@ describe('soft corners', () => {
 			point(52 + d, 21),
 			point(52, 21)
 		];
-		expect(shouldApplySoftCorners(chain, 100)).toBe(true);
-		const soft = softCornerPolyline(chain, 100);
+		const skeleton = extractSoftCornerSkeleton(chain, 100);
+		expect(skeleton).not.toBeNull();
+		const soft = softCornerPolyline(skeleton!, 100);
 		expect(soft.length).toBeGreaterThanOrEqual(2);
 	});
 
-	test('skips dense freehand-like chains', () => {
+	test('skips nearly-straight freehand (no sharp corners)', () => {
 		const chain = Array.from({ length: 20 }, (_, i) => point(52 + i * deg(20), 21));
-		expect(shouldApplySoftCorners(chain, 100)).toBe(false);
+		expect(extractSoftCornerSkeleton(chain, 100)).toBeNull();
+	});
+
+	test('detects corners on a dense pencil-style rectangle', () => {
+		const chain = freehandRectangle(800, 25);
+		expect(chain.length).toBeGreaterThan(24);
+		const skeleton = extractSoftCornerSkeleton(chain, 100);
+		expect(skeleton).not.toBeNull();
+		expect(skeleton!.length).toBeGreaterThanOrEqual(4);
+	});
+
+	test('prepareShapeRoute softens a pencil-drawn rectangle (dense freehand)', () => {
+		const inset = 100;
+		const freehand = freehandRectangle(800, 25);
+		const prepared = prepareShapeRoute(shape('p', 'pencil', freehand), false, 0, {
+			...defaultRoutingOptions(inset)
+		});
+		expect(prepared.points.length).toBeGreaterThan(4);
+		expect(extractSoftCornerSkeleton(freehand, inset)).not.toBeNull();
 	});
 });
 
@@ -197,7 +203,7 @@ describe('prepareShapeRoute (unified)', () => {
 		expect(prepared.points[0]).toEqual(point(52, 21));
 	});
 
-	test('long 2-point line densifies mid-edge anchors (not corners-only)', () => {
+	test('long 2-point line densifies mid-edge anchors', () => {
 		const d = deg(STRUCTURED_VIA_SPACING_METERS * 4);
 		const line = shape('l', 'line', [point(52, 21), point(52 + d, 21)]);
 		const prepared = prepareShapeRoute(line, false);
@@ -216,7 +222,7 @@ describe('prepareShapeRoute (unified)', () => {
 		expect(prepared.points.length).toBeGreaterThanOrEqual(2);
 	});
 
-	test('large rectangle densifies perimeter (soft corners when eligible)', () => {
+	test('large rectangle densifies perimeter', () => {
 		const d = deg(STRUCTURED_VIA_SPACING_METERS * 2 + 50);
 		const rect = shape('r', 'rectangle', [
 			point(52, 21),
@@ -226,7 +232,6 @@ describe('prepareShapeRoute (unified)', () => {
 		]);
 		const prepared = prepareShapeRoute(rect, false);
 		expect(prepared.points.length).toBeGreaterThan(4);
-		expect(needsStructuredEdgeVias(routingChain(rect, false))).toBe(true);
 	});
 
 	test('multi-km sparse line gets many more anchors than vertex count', () => {
@@ -243,49 +248,7 @@ describe('prepareShapeRoute (unified)', () => {
 	});
 });
 
-describe('routeAdaptiveEdge', () => {
-	test('keeps simple A→B when path already tracks the edge', async () => {
-		const a = point(52, 21);
-		const b = point(52 + deg(500), 21);
-		const onEdge = [a, point(52 + deg(250), 21), b];
-		const geom = encodePolyline(onEdge);
-
-		const routeFn = vi.fn(async () => ({
-			geometry: geom,
-			distance: 500,
-			duration: 100
-		}));
-
-		const result = await routeAdaptiveEdge(a, b, routeFn as never);
-		expect(routeFn).toHaveBeenCalledTimes(1);
-		expect(result.geometry).toBe(geom);
-	});
-
-	test('tries densify when simple path wanders, keeps simple if densify is worse', async () => {
-		const a = point(52, 21);
-		const b = point(52 + deg(1000), 21);
-		const wandering = [a, point(52 + deg(500), 21 + deg(500)), b];
-		const worseDense = [
-			a,
-			point(52 + deg(300), 21 + deg(800)),
-			point(52 + deg(700), 21 + deg(800)),
-			b
-		];
-
-		const routeFn = vi.fn(async (pts: Point[]) => {
-			if (pts.length === 2) {
-				return { geometry: encodePolyline(wandering), distance: 2000, duration: 200 };
-			}
-			return { geometry: encodePolyline(worseDense), distance: 5000, duration: 500 };
-		});
-
-		const result = await routeAdaptiveEdge(a, b, routeFn as never);
-		expect(routeFn.mock.calls.length).toBeGreaterThanOrEqual(2);
-		expect(result.distance).toBe(2000);
-	});
-});
-
-describe('routePreparedStructured', () => {
+describe('routePreparedShape', () => {
 	test('issues hard-via /route for prepared anchors', async () => {
 		const d = deg(STRUCTURED_VIA_SPACING_METERS * 2 + 50);
 		const rect = shape('r', 'rectangle', [
@@ -317,9 +280,8 @@ describe('routePreparedStructured', () => {
 			);
 		});
 
-		const result = await routePreparedStructured(prepared);
+		const result = await routePreparedShape(prepared);
 		expect(result.geometries.length).toBeGreaterThanOrEqual(1);
-		// Single chunk for typical rect anchor counts
 		expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
 	});
 });

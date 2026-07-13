@@ -88,7 +88,8 @@ export async function getRoute(points: Point[], options: GetRouteOptions = {}): 
 	} catch (err) {
 		// Bearings can be too tight against OSM geometry — fall back once.
 		if (options.bearings && options.bearings.length > 0) {
-			const { bearings: _b, ...rest } = options;
+			const rest = { ...options };
+			delete rest.bearings;
 			return fetchRoute(points, rest);
 		}
 		throw err;

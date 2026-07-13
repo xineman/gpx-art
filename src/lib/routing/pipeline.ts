@@ -1,20 +1,22 @@
 import {
 	ROUTE_ANCHOR_CHUNK_SIZE,
-	ROUTE_ANCHOR_HARD_CAP,
-	STRUCTURED_BEARING_RANGE_DEG
+	ROUTE_ANCHOR_HARD_CAP
 } from '$lib/constants/routing';
-import { distanceBetween, initialBearingDegrees } from '$lib/geometry/distance';
+import { distanceBetween, turnCosine } from '$lib/geometry/distance';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 import { defaultRoutingOptions, type RoutingOptions } from './options';
-import type { GetRouteOptions, RouteBearing, RouteResult } from './osrm';
+import type { GetRouteOptions } from './osrm';
 import { getRoute, pencilRouteAnchors } from './osrm';
-import { decodePolyline } from './polyline';
 import { sampleTrace } from './sample';
 import { simplifyRdp } from './rdp';
-import { measureSketchGeometry } from './sketchGeometry';
 
 export type { RoutingOptions };
-export { measureSketchGeometry } from './sketchGeometry';
+
+/**
+ * Softenable corner: turn sharper than this cosine (cos 60° ≈ 0.5).
+ * 1 = straight, 0 = 90°, -1 = U-turn.
+ */
+export const SOFT_CORNER_MAX_TURN_COSINE = 0.5;
 
 // One shape after TSP direction choice, ready for OSRM.
 export type PreparedShapeRoute = {
@@ -74,7 +76,7 @@ export function maxEdgeMeters(points: Point[]): number {
 	return max;
 }
 
-// Build the open/closed vertex chain used for API choice and routing.
+// Build the open/closed vertex chain used for routing.
 export function routingChain(shape: Shape, reversed: boolean): Point[] {
 	const source = reversed ? [...shape.points].reverse() : shape.points;
 	if (isClosedShapeType(shape.type) && source.length > 0) {
@@ -83,40 +85,7 @@ export function routingChain(shape: Shape, reversed: boolean): Point[] {
 	return source.slice();
 }
 
-// Whether a structured shape needs intermediate vias / per-edge handling.
-// Kept for tests and callers that inspect edge length vs via-min.
-export function needsStructuredEdgeVias(
-	chain: Point[],
-	minEdgeMeters = defaultRoutingOptions().structuredEdgeViaMinMeters
-): boolean {
-	return maxEdgeMeters(chain) >= minEdgeMeters;
-}
-
-// Densify a single edge for hard /route vias.
-export function densifyStructuredVias(
-	chain: Point[],
-	spacingMeters = defaultRoutingOptions().structuredViaSpacingMeters,
-	maxVias = defaultRoutingOptions().structuredMaxViasPerEdge
-): Point[] {
-	if (chain.length < 2) return chain.slice();
-	if (maxVias < 2) {
-		throw new Error('Structured max vias must be at least 2.');
-	}
-
-	let spacing = Math.max(spacingMeters, 1);
-	let pts = sampleTrace(chain, spacing);
-
-	if (pts.length > maxVias) {
-		const perimeter = totalChainLength(chain);
-		spacing = Math.max(spacing, perimeter / Math.max(maxVias - 1, 1));
-		pts = sampleTrace(chain, spacing);
-	}
-
-	if (pts.length <= maxVias) return pts;
-	return subsampleKeepEnds(pts, maxVias);
-}
-
-export function totalChainLength(points: Point[]): number {
+function totalChainLength(points: Point[]): number {
 	let total = 0;
 	for (let i = 1; i < points.length; i++) {
 		total += distanceBetween(points[i - 1], points[i]);
@@ -137,114 +106,8 @@ export function subsampleKeepEnds(points: Point[], maxPoints: number): Point[] {
 	return out;
 }
 
-// Max distance from any path point to the sketch segment [a,b] (meters).
-export function maxDeviationFromSegment(path: Point[], a: Point, b: Point): number {
-	if (path.length === 0) return 0;
-	let max = 0;
-	for (const p of path) {
-		const d = pointToSegmentDistance(p, a, b);
-		if (d > max) max = d;
-	}
-	return max;
-}
-
-// Mean distance from path points to segment [a,b].
-export function meanDeviationFromSegment(path: Point[], a: Point, b: Point): number {
-	if (path.length === 0) return 0;
-	let sum = 0;
-	for (const p of path) sum += pointToSegmentDistance(p, a, b);
-	return sum / path.length;
-}
-
-function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
-	const cosLat = Math.cos(((a.lat + b.lat) / 2) * (Math.PI / 180));
-	const mPerDegLat = 111_320;
-	const mPerDegLng = 111_320 * cosLat;
-	const ax = 0;
-	const ay = 0;
-	const bx = (b.lng - a.lng) * mPerDegLng;
-	const by = (b.lat - a.lat) * mPerDegLat;
-	const px = (p.lng - a.lng) * mPerDegLng;
-	const py = (p.lat - a.lat) * mPerDegLat;
-	const ab2 = bx * bx + by * by;
-	if (ab2 < 1e-6) return Math.hypot(px - ax, py - ay);
-	let t = ((px - ax) * bx + (py - ay) * by) / ab2;
-	t = Math.max(0, Math.min(1, t));
-	return Math.hypot(px - (ax + t * bx), py - (ay + t * by));
-}
-
-export function sketchBearings(
-	points: Point[],
-	rangeDeg = STRUCTURED_BEARING_RANGE_DEG
-): Array<RouteBearing | null> {
-	if (points.length < 2) return points.map(() => null);
-	return points.map((_, i) => {
-		const from = i < points.length - 1 ? points[i] : points[i - 1];
-		const to = i < points.length - 1 ? points[i + 1] : points[i];
-		if (from.lat === to.lat && from.lng === to.lng) return null;
-		return { bearing: initialBearingDegrees(from, to), range: rangeDeg };
-	});
-}
-
-export function routeOptionsForSegment(segment: Point[]): GetRouteOptions {
-	if (segment.length <= 2) {
-		return { continueStraight: true };
-	}
-	return {
-		continueStraight: true,
-		bearings: sketchBearings(segment)
-	};
-}
-
-/**
- * Adaptive single-edge route (still used for focused tests / experiments).
- * Main shape routing no longer branches on this vs pencil.
- */
-export async function routeAdaptiveEdge(
-	a: Point,
-	b: Point,
-	routeFn: typeof getRoute = getRoute,
-	options: RoutingOptions = defaultRoutingOptions()
-): Promise<RouteResult> {
-	const simple = await routeFn([a, b], { continueStraight: true });
-	const simplePath = decodePolyline(simple.geometry);
-	const simpleDev = maxDeviationFromSegment(simplePath, a, b);
-	const simpleMean = meanDeviationFromSegment(simplePath, a, b);
-
-	if (simpleDev <= options.structuredEdgeDeviationMeters) {
-		return simple;
-	}
-
-	const edgeLen = distanceBetween(a, b);
-	if (edgeLen < options.structuredEdgeViaMinMeters) {
-		return simple;
-	}
-
-	const vias = densifyStructuredVias(
-		[a, b],
-		options.structuredViaSpacingMeters,
-		options.structuredMaxViasPerEdge
-	);
-	if (vias.length <= 2) {
-		return simple;
-	}
-
-	try {
-		const dense = await routeFn(vias, routeOptionsForSegment(vias));
-		const densePath = decodePolyline(dense.geometry);
-		const denseDev = maxDeviationFromSegment(densePath, a, b);
-		const denseMean = meanDeviationFromSegment(densePath, a, b);
-
-		const betterFit = denseMean < simpleMean * 0.85 || denseDev < simpleDev * 0.85;
-		const lengthOk = dense.distance <= simple.distance * options.structuredDenseLengthRatio;
-		if (betterFit && lengthOk) {
-			return dense;
-		}
-	} catch {
-		// Fall back to simple on densified failure.
-	}
-
-	return simple;
+function samePoint(a: Point, b: Point): boolean {
+	return a.lat === b.lat && a.lng === b.lng;
 }
 
 /** Point inset `meters` from `from` toward `to` (or midpoint if edge is short). */
@@ -263,14 +126,9 @@ export function insetAlongEdge(from: Point, to: Point, meters: number): Point {
 	};
 }
 
-/**
- * Build soft-corner edge pairs from a corner chain.
- * Each edge runs inset from start corner → inset before end corner so long
- * legs never hard-end on the geometric vertex.
- */
-export function softCornerEdgePairs(
+function softCornerEdgePairs(
 	corners: Point[],
-	insetMeters = defaultRoutingOptions().structuredCornerInsetMeters
+	insetMeters: number
 ): Array<{ a: Point; b: Point }> {
 	const pairs: Array<{ a: Point; b: Point }> = [];
 	for (let i = 1; i < corners.length; i++) {
@@ -284,19 +142,11 @@ export function softCornerEdgePairs(
 	return pairs;
 }
 
-function samePoint(a: Point, b: Point): boolean {
-	return a.lat === b.lat && a.lng === b.lng;
-}
-
 /**
  * Soft-corner polyline: stop short of geometric vertices, start after them.
- * Used as a preprocess before densify so corner softness is not a separate
- * OSRM strategy from freehand.
+ * Preprocess before densify (not a separate OSRM strategy).
  */
-export function softCornerPolyline(
-	corners: Point[],
-	insetMeters: number
-): Point[] {
+export function softCornerPolyline(corners: Point[], insetMeters: number): Point[] {
 	if (insetMeters <= 0 || corners.length < 3) return corners.slice();
 	const pairs = softCornerEdgePairs(corners, insetMeters);
 	if (pairs.length === 0) return corners.slice();
@@ -314,23 +164,68 @@ export function softCornerPolyline(
 }
 
 /**
- * Soft corners only on sparse geometric sketches (few long edges).
- * Dense freehand has many short edges — inset would collapse the stroke.
+ * Find major corners on any sketch polyline (pencil or geometric tools).
+ *
+ * Dense freehand is RDP-simplified first so a pencil-drawn rectangle becomes
+ * a few long legs + sharp corners; gentle freehand wiggles do not count.
  */
-export function shouldApplySoftCorners(
+export function extractSoftCornerSkeleton(
 	chain: Point[],
-	insetMeters: number
-): boolean {
-	if (insetMeters <= 0) return false;
-	const profile = measureSketchGeometry(chain);
-	if (profile.vertexCount < 3) return false;
-	// Freehand-like density: skip.
-	if (profile.edgeCount >= 8 && profile.medianEdgeM < insetMeters) return false;
-	// Need at least one edge long enough for a meaningful inset.
-	if (profile.maxEdgeM < insetMeters * 2) return false;
-	// Many short-ish edges (subdivided freehand): skip.
-	if (profile.edgeCount > 24) return false;
-	return true;
+	insetMeters: number,
+	maxTurnCosine = SOFT_CORNER_MAX_TURN_COSINE
+): Point[] | null {
+	if (insetMeters <= 0 || chain.length < 3) return null;
+
+	const closed = chain.length >= 3 && samePoint(chain[0], chain[chain.length - 1]);
+	const rdpTol = Math.max(20, Math.min(insetMeters * 0.35, 80));
+	let simplified = simplifyRdp(chain, rdpTol);
+	if (simplified.length < 2) return null;
+
+	if (closed && !samePoint(simplified[0], simplified[simplified.length - 1])) {
+		simplified = [...simplified, simplified[0]];
+	}
+
+	const uniqueN = closed
+		? simplified.length - (samePoint(simplified[0], simplified[simplified.length - 1]) ? 1 : 0)
+		: simplified.length;
+	if (uniqueN < 3) return null;
+
+	const minLeg = insetMeters * 2;
+	const skeleton: Point[] = [];
+	let softenableCorners = 0;
+
+	for (let i = 0; i < uniqueN; i++) {
+		const mid = simplified[i];
+		const isOpenEnd = !closed && (i === 0 || i === uniqueN - 1);
+		if (isOpenEnd) {
+			skeleton.push(mid);
+			continue;
+		}
+
+		const prev = simplified[(i - 1 + uniqueN) % uniqueN];
+		const next = simplified[(i + 1) % uniqueN];
+		const cos = turnCosine(prev, mid, next);
+		if (cos >= maxTurnCosine) continue;
+
+		skeleton.push(mid);
+		const legIn = distanceBetween(prev, mid);
+		const legOut = distanceBetween(mid, next);
+		if (legIn >= minLeg && legOut >= minLeg) softenableCorners++;
+	}
+
+	if (closed) {
+		if (skeleton.length < 3) return null;
+		if (!samePoint(skeleton[0], skeleton[skeleton.length - 1])) {
+			skeleton.push(skeleton[0]);
+		}
+	} else if (skeleton.length < 3) {
+		return null;
+	}
+
+	if (softenableCorners < 1) return null;
+	if (maxEdgeMeters(skeleton) < minLeg) return null;
+
+	return skeleton;
 }
 
 /**
@@ -343,16 +238,12 @@ export function anchorBudgetForLength(
 ): number {
 	const spacing = Math.max(options.pencilSampleSpacingMeters, 1);
 	const ideal = Math.ceil(totalLengthM / spacing) + 1;
-	return Math.min(
-		ROUTE_ANCHOR_HARD_CAP,
-		Math.max(options.pencilMaxVias, ideal)
-	);
+	return Math.min(ROUTE_ANCHOR_HARD_CAP, Math.max(options.pencilMaxVias, ideal));
 }
 
 /**
  * After RDP, re-pin long edges. Straight geometric chords lose densified
- * midpoints under RDP (collinear), which would leave only endpoints — the
- * old structured path densified without that collapse.
+ * midpoints under RDP (collinear); put them back so multi-km lines stay pinned.
  */
 export function ensureLongEdgeVias(
 	points: Point[],
@@ -369,7 +260,6 @@ export function ensureLongEdgeVias(
 		const d = distanceBetween(a, b);
 		if (d >= viaMinMeters) {
 			const densified = sampleTrace([a, b], Math.max(spacingMeters, 1));
-			// First point is `a` (already in out).
 			for (let j = 1; j < densified.length; j++) {
 				out.push(densified[j]);
 			}
@@ -384,7 +274,6 @@ export function ensureLongEdgeVias(
 
 /**
  * Densify → mild RDP → freehand via sparsify → re-pin long edges.
- * Long geometric chords stay pinned even though RDP drops collinear samples.
  * Same pipeline for pencil strokes and sparse polylines.
  */
 export function prepareSketchAnchors(
@@ -401,11 +290,8 @@ export function prepareSketchAnchors(
 	const total = totalChainLength(chain);
 	const maxVias = anchorBudgetForLength(total, options);
 
-	// Collapse freehand micro-detail to a short hard-via list.
 	pts = pencilRouteAnchors(pts, options.pencilRouteRdpTolerance, maxVias);
 
-	// RDP removes collinear densify points on straight edges — put them back
-	// so multi-km lines/rects still force the route toward the sketch chord.
 	return ensureLongEdgeVias(
 		pts,
 		Math.max(spacing, options.structuredViaSpacingMeters),
@@ -431,15 +317,14 @@ export function chunkRouteAnchors(
 		const end = Math.min(i + chunkSize - 1, points.length - 1);
 		chunks.push(points.slice(i, end + 1));
 		if (end >= points.length - 1) break;
-		i = end; // overlap on shared via
+		i = end;
 	}
 	return chunks;
 }
 
-// Route prepared anchors: one or more hard-via /route calls (chunked).
-export async function routePreparedStructured(
-	prepared: PreparedShapeRoute,
-	_options: RoutingOptions = defaultRoutingOptions()
+/** Route prepared anchors: one or more hard-via /route calls (chunked). */
+export async function routePreparedShape(
+	prepared: PreparedShapeRoute
 ): Promise<{ geometries: string[]; distance: number; duration: number }> {
 	if (prepared.points.length < 2) {
 		return { geometries: [], distance: 0, duration: 0 };
@@ -479,8 +364,10 @@ export function prepareShapeRoute(
 		};
 	}
 
-	if (shouldApplySoftCorners(chain, options.structuredCornerInsetMeters)) {
-		chain = softCornerPolyline(chain, options.structuredCornerInsetMeters);
+	const inset = options.structuredCornerInsetMeters;
+	const cornerSkeleton = extractSoftCornerSkeleton(chain, inset);
+	if (cornerSkeleton) {
+		chain = softCornerPolyline(cornerSkeleton, inset);
 	}
 
 	const points = prepareSketchAnchors(chain, options);
