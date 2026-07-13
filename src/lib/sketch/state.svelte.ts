@@ -700,7 +700,7 @@ export class SketchState implements SketchStateLike {
 
 			this.routedPath = cleaned;
 
-			// Debug plan: points actually sent to OSRM for each shape.
+			// Debug plan: hard-via anchors actually sent to OSRM for each shape.
 			const orderedShapes = prepared.map((p) => p.shape);
 			this.routeDebugBatches = buildRoutePlan(orderedShapes, processedPoints);
 

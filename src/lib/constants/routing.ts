@@ -17,18 +17,22 @@ const DEFAULT_OSRM_BASE_URL = 'https://routing.openstreetmap.de/routed-bike';
 export const OSRM_BASE_URL = env.PUBLIC_OSRM_BASE_URL || DEFAULT_OSRM_BASE_URL;
 export const OSRM_PROFILE = 'bike';
 
-// Pencil → sparse hard-via /route. Densify freehand, mild RDP for wiggles,
-// then a second RDP + via cap so /route stays cheap and does not weave every
-// sample. Full densified traces are never sent as hard vias.
+// Unified sketch routing (all tools): densify polyline → mild RDP → sparse
+// hard-via /route (chunked when the anchor list is long). Fidelity knobs
+// mainly change sample spacing, RDP tolerance, and via budget.
+// Full densified traces are never sent as hard vias without RDP + cap.
 export const PENCIL_SAMPLE_SPACING_METERS = 60;
 export const PENCIL_ROUTE_RDP_TOLERANCE = 25;
 export const PENCIL_MAX_VIAS = 12;
+/** Hard cap on anchors in one OSRM /route URL (chunk above this). */
+export const ROUTE_ANCHOR_CHUNK_SIZE = 80;
+/** Absolute max anchors prepared for one shape (then chunked for /route). */
+export const ROUTE_ANCHOR_HARD_CAP = 240;
 
-// Structured shapes (line / polygon / rectangle) always use /route.
-//
-// Long multi-edge shapes are routed **per sketch edge** (parallel /route
-// calls), not as one global via ring. A single /route around a large
-// rectangle with a via cap spreads samples too far and OSRM inland-shortcuts.
+// Sparse geometric shapes (few corners, long edges): always /route, usually
+// **per sketch edge** (parallel calls), not one global via ring. A single
+// /route around a large rectangle with a via cap spreads samples too far and
+// OSRM inland-shortcuts.
 //
 //   - STRUCTURED_EDGE_VIA_MIN_METERS — edge this long may get intermediate vias.
 //   - STRUCTURED_VIA_SPACING_METERS — densify spacing when an edge needs vias.
