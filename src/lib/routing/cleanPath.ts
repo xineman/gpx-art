@@ -113,7 +113,6 @@ export function spurSeverity(pathLen: number, chord: number): number {
 export function findLoopSpans(
 	pts: Point[],
 	windowSize = ROUTE_LOOP_WINDOW,
-	_nearMeters = ROUTE_LOOP_NEAR_METERS,
 	minLoopMeters = ROUTE_LOOP_MIN_METERS
 ): LoopSpan[] {
 	if (pts.length < 4) return [];
@@ -168,14 +167,13 @@ export function findLoopSpans(
 export function removeShortLoops(
 	points: Point[],
 	windowSize = ROUTE_LOOP_WINDOW,
-	nearMeters = ROUTE_LOOP_NEAR_METERS,
 	minLoopMeters = ROUTE_LOOP_MIN_METERS
 ): Point[] {
 	if (points.length < 4) return points.slice();
 
 	let pts = points.slice();
 	for (let pass = 0; pass < 3; pass++) {
-		const spans = findLoopSpans(pts, windowSize, nearMeters, minLoopMeters);
+		const spans = findLoopSpans(pts, windowSize, minLoopMeters);
 		if (spans.length === 0) break;
 		pts = applyChordSpans(pts, spans);
 	}

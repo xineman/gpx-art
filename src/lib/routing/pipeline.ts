@@ -1,36 +1,39 @@
-import { STRUCTURED_BEARING_RANGE_DEG } from '$lib/constants/routing';
-import { distanceBetween, initialBearingDegrees } from '$lib/geometry/distance';
+import {
+	ROUTE_ANCHOR_CHUNK_SIZE,
+	ROUTE_ANCHOR_HARD_CAP
+} from '$lib/constants/routing';
+import { distanceBetween, turnCosine } from '$lib/geometry/distance';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 import { defaultRoutingOptions, type RoutingOptions } from './options';
-import type { GetRouteOptions, RouteBearing, RouteResult } from './osrm';
+import type { GetRouteOptions } from './osrm';
 import { getRoute, pencilRouteAnchors } from './osrm';
-import { decodePolyline } from './polyline';
 import { sampleTrace } from './sample';
 import { simplifyRdp } from './rdp';
 
 export type { RoutingOptions };
 
-// One shape after TSP direction choice, ready for an OSRM call.
+/**
+ * Softenable corner: turn sharper than this cosine (cos 60° ≈ 0.5).
+ * 1 = straight, 0 = 90°, -1 = U-turn.
+ */
+export const SOFT_CORNER_MAX_TURN_COSINE = 0.5;
+
+// One shape after TSP direction choice, ready for OSRM.
 export type PreparedShapeRoute = {
 	shape: Shape;
 	/** Visit index in TSP order (0-based). */
 	shapeIndex: number;
 	/**
-	 * Coordinates sent to OSRM (or the corner chain for multi-edge structured).
-	 * Actual OSRM calls may use edgeCorners for adaptive per-edge routing.
+	 * Hard-via anchors for /route (after densify / RDP / cap).
+	 * Same pipeline for pencil, line, polygon, and rectangle.
 	 */
 	points: Point[];
 	/** Where the rider enters this shape (and, for closed shapes, exits). */
 	entry: Point;
 	/** Where the rider leaves this shape after routing. */
 	exit: Point;
-	/** Extra /route options for a single-call shape. */
+	/** Extra /route options for each chunk. */
 	routeOptions?: GetRouteOptions;
-	/**
-	 * Corner chain including close for closed shapes. When set with length≥2,
-	 * routePreparedStructured routes each edge adaptively (parallel).
-	 */
-	edgeCorners?: Point[];
 };
 
 export function isClosedShapeType(type: ShapeType): boolean {
@@ -73,45 +76,13 @@ export function maxEdgeMeters(points: Point[]): number {
 	return max;
 }
 
-// Build the open/closed vertex chain used for API choice and routing.
+// Build the open/closed vertex chain used for routing.
 export function routingChain(shape: Shape, reversed: boolean): Point[] {
 	const source = reversed ? [...shape.points].reverse() : shape.points;
 	if (isClosedShapeType(shape.type) && source.length > 0) {
 		return [...source, source[0]];
 	}
 	return source.slice();
-}
-
-// Whether a structured shape needs intermediate vias / per-edge handling.
-export function needsStructuredEdgeVias(
-	chain: Point[],
-	minEdgeMeters = defaultRoutingOptions().structuredEdgeViaMinMeters
-): boolean {
-	return maxEdgeMeters(chain) >= minEdgeMeters;
-}
-
-// Densify a single edge for hard /route vias.
-export function densifyStructuredVias(
-	chain: Point[],
-	spacingMeters = defaultRoutingOptions().structuredViaSpacingMeters,
-	maxVias = defaultRoutingOptions().structuredMaxViasPerEdge
-): Point[] {
-	if (chain.length < 2) return chain.slice();
-	if (maxVias < 2) {
-		throw new Error('Structured max vias must be at least 2.');
-	}
-
-	let spacing = Math.max(spacingMeters, 1);
-	let pts = sampleTrace(chain, spacing);
-
-	if (pts.length > maxVias) {
-		const perimeter = totalChainLength(chain);
-		spacing = Math.max(spacing, perimeter / Math.max(maxVias - 1, 1));
-		pts = sampleTrace(chain, spacing);
-	}
-
-	if (pts.length <= maxVias) return pts;
-	return subsampleKeepEnds(pts, maxVias);
 }
 
 function totalChainLength(points: Point[]): number {
@@ -135,122 +106,8 @@ export function subsampleKeepEnds(points: Point[], maxPoints: number): Point[] {
 	return out;
 }
 
-// Max distance from any path point to the sketch segment [a,b] (meters).
-export function maxDeviationFromSegment(path: Point[], a: Point, b: Point): number {
-	if (path.length === 0) return 0;
-	let max = 0;
-	for (const p of path) {
-		const d = pointToSegmentDistance(p, a, b);
-		if (d > max) max = d;
-	}
-	return max;
-}
-
-// Mean distance from path points to segment [a,b].
-export function meanDeviationFromSegment(path: Point[], a: Point, b: Point): number {
-	if (path.length === 0) return 0;
-	let sum = 0;
-	for (const p of path) sum += pointToSegmentDistance(p, a, b);
-	return sum / path.length;
-}
-
-function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
-	const cosLat = Math.cos(((a.lat + b.lat) / 2) * (Math.PI / 180));
-	const mPerDegLat = 111_320;
-	const mPerDegLng = 111_320 * cosLat;
-	const ax = 0;
-	const ay = 0;
-	const bx = (b.lng - a.lng) * mPerDegLng;
-	const by = (b.lat - a.lat) * mPerDegLat;
-	const px = (p.lng - a.lng) * mPerDegLng;
-	const py = (p.lat - a.lat) * mPerDegLat;
-	const ab2 = bx * bx + by * by;
-	if (ab2 < 1e-6) return Math.hypot(px - ax, py - ay);
-	let t = ((px - ax) * bx + (py - ay) * by) / ab2;
-	t = Math.max(0, Math.min(1, t));
-	return Math.hypot(px - (ax + t * bx), py - (ay + t * by));
-}
-
-export function sketchBearings(
-	points: Point[],
-	rangeDeg = STRUCTURED_BEARING_RANGE_DEG
-): Array<RouteBearing | null> {
-	if (points.length < 2) return points.map(() => null);
-	return points.map((_, i) => {
-		const from = i < points.length - 1 ? points[i] : points[i - 1];
-		const to = i < points.length - 1 ? points[i + 1] : points[i];
-		if (from.lat === to.lat && from.lng === to.lng) return null;
-		return { bearing: initialBearingDegrees(from, to), range: rangeDeg };
-	});
-}
-
-export function routeOptionsForSegment(segment: Point[]): GetRouteOptions {
-	if (segment.length <= 2) {
-		return { continueStraight: true };
-	}
-	return {
-		continueStraight: true,
-		bearings: sketchBearings(segment)
-	};
-}
-
-/**
- * Adaptive single-edge route:
- *  1. /route corner→corner (fast, no forced mid-edge snaps)
- *  2. If the path wanders far from the sketch edge, try densified vias
- *  3. Keep densified only when it tracks the edge better without exploding length
- *
- * Avoids the failure mode where vias land on river/park and force worse detours
- * than a simple A→B road route.
- */
-export async function routeAdaptiveEdge(
-	a: Point,
-	b: Point,
-	routeFn: typeof getRoute = getRoute,
-	options: RoutingOptions = defaultRoutingOptions()
-): Promise<RouteResult> {
-	const simple = await routeFn([a, b], { continueStraight: true });
-	const simplePath = decodePolyline(simple.geometry);
-	const simpleDev = maxDeviationFromSegment(simplePath, a, b);
-	const simpleMean = meanDeviationFromSegment(simplePath, a, b);
-
-	if (simpleDev <= options.structuredEdgeDeviationMeters) {
-		return simple;
-	}
-
-	// Edge is short enough that densify wouldn't add points.
-	const edgeLen = distanceBetween(a, b);
-	if (edgeLen < options.structuredEdgeViaMinMeters) {
-		return simple;
-	}
-
-	const vias = densifyStructuredVias(
-		[a, b],
-		options.structuredViaSpacingMeters,
-		options.structuredMaxViasPerEdge
-	);
-	if (vias.length <= 2) {
-		return simple;
-	}
-
-	try {
-		const dense = await routeFn(vias, routeOptionsForSegment(vias));
-		const densePath = decodePolyline(dense.geometry);
-		const denseDev = maxDeviationFromSegment(densePath, a, b);
-		const denseMean = meanDeviationFromSegment(densePath, a, b);
-
-		// Accept densified only if it hugs the edge better and length is sane.
-		const betterFit =
-			denseMean < simpleMean * 0.85 || denseDev < simpleDev * 0.85;
-		const lengthOk = dense.distance <= simple.distance * options.structuredDenseLengthRatio;
-		if (betterFit && lengthOk) {
-			return dense;
-		}
-	} catch {
-		// Fall back to simple on densified failure.
-	}
-
-	return simple;
+function samePoint(a: Point, b: Point): boolean {
+	return a.lat === b.lat && a.lng === b.lng;
 }
 
 /** Point inset `meters` from `from` toward `to` (or midpoint if edge is short). */
@@ -269,14 +126,9 @@ export function insetAlongEdge(from: Point, to: Point, meters: number): Point {
 	};
 }
 
-/**
- * Build soft-corner edge pairs from a corner chain.
- * Each edge runs inset from start corner → inset before end corner so long
- * legs never hard-end on the geometric vertex.
- */
-export function softCornerEdgePairs(
+function softCornerEdgePairs(
 	corners: Point[],
-	insetMeters = defaultRoutingOptions().structuredCornerInsetMeters
+	insetMeters: number
 ): Array<{ a: Point; b: Point }> {
 	const pairs: Array<{ a: Point; b: Point }> = [];
 	for (let i = 1; i < corners.length; i++) {
@@ -290,74 +142,209 @@ export function softCornerEdgePairs(
 	return pairs;
 }
 
-// Route a prepared structured shape: adaptive per-edge with soft corners,
-// or single /route for short shapes.
-export async function routePreparedStructured(
-	prepared: PreparedShapeRoute,
-	options: RoutingOptions = defaultRoutingOptions()
-): Promise<{ geometries: string[]; distance: number; duration: number }> {
-	if (prepared.edgeCorners && prepared.edgeCorners.length >= 2) {
-		const corners = prepared.edgeCorners;
-		const pairs = softCornerEdgePairs(corners, options.structuredCornerInsetMeters);
-		// Route each soft edge + corner bridges between consecutive soft ends.
-		const edgeResults = await Promise.all(
-			pairs.map(({ a, b }) => routeAdaptiveEdge(a, b, getRoute, options))
-		);
+/**
+ * Soft-corner polyline: stop short of geometric vertices, start after them.
+ * Preprocess before densify (not a separate OSRM strategy).
+ */
+export function softCornerPolyline(corners: Point[], insetMeters: number): Point[] {
+	if (insetMeters <= 0 || corners.length < 3) return corners.slice();
+	const pairs = softCornerEdgePairs(corners, insetMeters);
+	if (pairs.length === 0) return corners.slice();
 
-		// Bridge soft end of edge i to soft start of edge i+1 (rounded corner).
-		const isClosed =
-			corners.length >= 3 &&
-			corners[0].lat === corners[corners.length - 1].lat &&
-			corners[0].lng === corners[corners.length - 1].lng;
-		const bridgeJobs: Array<Promise<RouteResult>> = [];
-		const bridgeCount = isClosed ? pairs.length : Math.max(0, pairs.length - 1);
-		for (let i = 0; i < bridgeCount; i++) {
-			const from = pairs[i].b;
-			const to = pairs[(i + 1) % pairs.length].a;
-			if (distanceBetween(from, to) <= 2) {
-				// Still push a resolved empty so interleave indices stay aligned.
-				bridgeJobs.push(
-					Promise.resolve({ geometry: '', distance: 0, duration: 0 } satisfies RouteResult)
-				);
-				continue;
-			}
-			bridgeJobs.push(getRoute([from, to], { continueStraight: true }));
+	const out: Point[] = [];
+	for (const { a, b } of pairs) {
+		if (out.length === 0 || !samePoint(out[out.length - 1], a)) {
+			out.push(a);
 		}
-		const bridges = await Promise.all(bridgeJobs);
+		if (!samePoint(out[out.length - 1], b)) {
+			out.push(b);
+		}
+	}
+	return out.length >= 2 ? out : corners.slice();
+}
 
-		// Interleave: edge0, bridge0, edge1, bridge1, ...
-		const geometries: string[] = [];
-		let distance = 0;
-		let duration = 0;
-		for (let i = 0; i < edgeResults.length; i++) {
-			geometries.push(edgeResults[i].geometry);
-			distance += edgeResults[i].distance;
-			duration += edgeResults[i].duration;
-			if (i < bridges.length) {
-				geometries.push(bridges[i].geometry);
-				distance += bridges[i].distance;
-				duration += bridges[i].duration;
-			}
-		}
-		return {
-			geometries: geometries.filter((g) => g.length > 0),
-			distance,
-			duration
-		};
+/**
+ * Find major corners on any sketch polyline (pencil or geometric tools).
+ *
+ * Dense freehand is RDP-simplified first so a pencil-drawn rectangle becomes
+ * a few long legs + sharp corners; gentle freehand wiggles do not count.
+ */
+export function extractSoftCornerSkeleton(
+	chain: Point[],
+	insetMeters: number,
+	maxTurnCosine = SOFT_CORNER_MAX_TURN_COSINE
+): Point[] | null {
+	if (insetMeters <= 0 || chain.length < 3) return null;
+
+	const closed = chain.length >= 3 && samePoint(chain[0], chain[chain.length - 1]);
+	const rdpTol = Math.max(20, Math.min(insetMeters * 0.35, 80));
+	let simplified = simplifyRdp(chain, rdpTol);
+	if (simplified.length < 2) return null;
+
+	if (closed && !samePoint(simplified[0], simplified[simplified.length - 1])) {
+		simplified = [...simplified, simplified[0]];
 	}
 
-	const routed = await getRoute(
-		prepared.points,
-		prepared.routeOptions ?? { continueStraight: true }
+	const uniqueN = closed
+		? simplified.length - (samePoint(simplified[0], simplified[simplified.length - 1]) ? 1 : 0)
+		: simplified.length;
+	if (uniqueN < 3) return null;
+
+	const minLeg = insetMeters * 2;
+	const skeleton: Point[] = [];
+	let softenableCorners = 0;
+
+	for (let i = 0; i < uniqueN; i++) {
+		const mid = simplified[i];
+		const isOpenEnd = !closed && (i === 0 || i === uniqueN - 1);
+		if (isOpenEnd) {
+			skeleton.push(mid);
+			continue;
+		}
+
+		const prev = simplified[(i - 1 + uniqueN) % uniqueN];
+		const next = simplified[(i + 1) % uniqueN];
+		const cos = turnCosine(prev, mid, next);
+		if (cos >= maxTurnCosine) continue;
+
+		skeleton.push(mid);
+		const legIn = distanceBetween(prev, mid);
+		const legOut = distanceBetween(mid, next);
+		if (legIn >= minLeg && legOut >= minLeg) softenableCorners++;
+	}
+
+	if (closed) {
+		if (skeleton.length < 3) return null;
+		if (!samePoint(skeleton[0], skeleton[skeleton.length - 1])) {
+			skeleton.push(skeleton[0]);
+		}
+	} else if (skeleton.length < 3) {
+		return null;
+	}
+
+	if (softenableCorners < 1) return null;
+	if (maxEdgeMeters(skeleton) < minLeg) return null;
+
+	return skeleton;
+}
+
+/**
+ * Via budget scales with path length so multi-km polylines keep pin density.
+ * Floor at pencilMaxVias (short freehand); ceiling at ROUTE_ANCHOR_HARD_CAP.
+ */
+export function anchorBudgetForLength(
+	totalLengthM: number,
+	options: RoutingOptions
+): number {
+	const spacing = Math.max(options.pencilSampleSpacingMeters, 1);
+	const ideal = Math.ceil(totalLengthM / spacing) + 1;
+	return Math.min(ROUTE_ANCHOR_HARD_CAP, Math.max(options.pencilMaxVias, ideal));
+}
+
+/**
+ * After RDP, re-pin long edges. Straight geometric chords lose densified
+ * midpoints under RDP (collinear); put them back so multi-km lines stay pinned.
+ */
+export function ensureLongEdgeVias(
+	points: Point[],
+	spacingMeters: number,
+	viaMinMeters: number,
+	maxVias: number
+): Point[] {
+	if (points.length < 2) return points.slice();
+
+	const out: Point[] = [points[0]];
+	for (let i = 1; i < points.length; i++) {
+		const a = points[i - 1];
+		const b = points[i];
+		const d = distanceBetween(a, b);
+		if (d >= viaMinMeters) {
+			const densified = sampleTrace([a, b], Math.max(spacingMeters, 1));
+			for (let j = 1; j < densified.length; j++) {
+				out.push(densified[j]);
+			}
+		} else {
+			out.push(b);
+		}
+	}
+
+	if (out.length <= maxVias) return out;
+	return subsampleKeepEnds(out, maxVias);
+}
+
+/**
+ * Densify → mild RDP → freehand via sparsify → re-pin long edges.
+ * Same pipeline for pencil strokes and sparse polylines.
+ */
+export function prepareSketchAnchors(
+	chain: Point[],
+	options: RoutingOptions = defaultRoutingOptions()
+): Point[] {
+	if (chain.length < 2) return chain.slice();
+
+	const spacing = options.pencilSampleSpacingMeters;
+	let pts = sampleTrace(chain, spacing);
+	const rdpped = simplifyRdp(pts, options.rdpTolerancePencil);
+	pts = rdpped.length >= 2 ? rdpped : chain;
+
+	const total = totalChainLength(chain);
+	const maxVias = anchorBudgetForLength(total, options);
+
+	pts = pencilRouteAnchors(pts, options.pencilRouteRdpTolerance, maxVias);
+
+	return ensureLongEdgeVias(
+		pts,
+		Math.max(spacing, options.structuredViaSpacingMeters),
+		options.structuredEdgeViaMinMeters,
+		maxVias
 	);
+}
+
+/** Split anchors into overlapping chunks for OSRM URL size limits. */
+export function chunkRouteAnchors(
+	points: Point[],
+	chunkSize = ROUTE_ANCHOR_CHUNK_SIZE
+): Point[][] {
+	if (points.length < 2) return [];
+	if (chunkSize < 2) {
+		throw new Error('Route anchor chunk size must be at least 2.');
+	}
+	if (points.length <= chunkSize) return [points.slice()];
+
+	const chunks: Point[][] = [];
+	let i = 0;
+	while (i < points.length - 1) {
+		const end = Math.min(i + chunkSize - 1, points.length - 1);
+		chunks.push(points.slice(i, end + 1));
+		if (end >= points.length - 1) break;
+		i = end;
+	}
+	return chunks;
+}
+
+/** Route prepared anchors: one or more hard-via /route calls (chunked). */
+export async function routePreparedShape(
+	prepared: PreparedShapeRoute
+): Promise<{ geometries: string[]; distance: number; duration: number }> {
+	if (prepared.points.length < 2) {
+		return { geometries: [], distance: 0, duration: 0 };
+	}
+
+	const routeOpts = prepared.routeOptions ?? { continueStraight: true };
+	const chunks = chunkRouteAnchors(prepared.points);
+	const results = await Promise.all(chunks.map((chunk) => getRoute(chunk, routeOpts)));
+
 	return {
-		geometries: [routed.geometry],
-		distance: routed.distance,
-		duration: routed.duration
+		geometries: results.map((r) => r.geometry).filter((g) => g.length > 0),
+		distance: results.reduce((s, r) => s + r.distance, 0),
+		duration: results.reduce((s, r) => s + r.duration, 0)
 	};
 }
 
-// Preprocess one shape for OSRM.
+/**
+ * Preprocess one shape for OSRM — same flow for every tool:
+ * chain → optional soft corners → densify / RDP / anchors → hard-via /route.
+ */
 export function prepareShapeRoute(
 	shape: Shape,
 	reversed: boolean,
@@ -365,7 +352,7 @@ export function prepareShapeRoute(
 	options: RoutingOptions = defaultRoutingOptions()
 ): PreparedShapeRoute {
 	const { entry, exit } = shapeEndpoints(shape, reversed);
-	const chain = routingChain(shape, reversed);
+	let chain = routingChain(shape, reversed);
 
 	if (chain.length < 2) {
 		return {
@@ -377,41 +364,19 @@ export function prepareShapeRoute(
 		};
 	}
 
-	// Pencil: densify → mild RDP → sparse hard-via anchors → single /route.
-	if (shape.type === 'pencil') {
-		let pts = sampleTrace(chain, options.pencilSampleSpacingMeters);
-		const rdpped = simplifyRdp(pts, options.rdpTolerancePencil);
-		pts = rdpped.length >= 2 ? rdpped : chain;
-		pts = pencilRouteAnchors(pts, options.pencilRouteRdpTolerance, options.pencilMaxVias);
-		return {
-			shape,
-			shapeIndex,
-			points: pts,
-			entry,
-			exit,
-			routeOptions: { continueStraight: true }
-		};
+	const inset = options.structuredCornerInsetMeters;
+	const cornerSkeleton = extractSoftCornerSkeleton(chain, inset);
+	if (cornerSkeleton) {
+		chain = softCornerPolyline(cornerSkeleton, inset);
 	}
 
-	// Structured short: single corner /route.
-	if (!needsStructuredEdgeVias(chain, options.structuredEdgeViaMinMeters)) {
-		return {
-			shape,
-			shapeIndex,
-			points: chain,
-			entry,
-			exit,
-			routeOptions: chain.length > 2 ? { continueStraight: true } : undefined
-		};
-	}
-
-	// Structured long: adaptive per-edge (corners list drives routing).
+	const points = prepareSketchAnchors(chain, options);
 	return {
 		shape,
 		shapeIndex,
-		points: chain,
+		points,
 		entry,
 		exit,
-		edgeCorners: chain
+		routeOptions: { continueStraight: true }
 	};
 }

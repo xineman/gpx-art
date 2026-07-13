@@ -19,10 +19,7 @@ import {
 	PENCIL_ROUTE_RDP_TOLERANCE,
 	PENCIL_SAMPLE_SPACING_METERS,
 	RDP_TOLERANCE_PENCIL,
-	STRUCTURED_DENSE_LENGTH_RATIO,
-	STRUCTURED_EDGE_DEVIATION_METERS,
 	STRUCTURED_EDGE_VIA_MIN_METERS,
-	STRUCTURED_MAX_VIAS_PER_EDGE,
 	STRUCTURED_VIA_SPACING_METERS
 } from '$lib/constants/routing';
 
@@ -34,11 +31,8 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 			pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
 			pencilMaxVias: PENCIL_MAX_VIAS,
 			pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
-			structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
-			structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 			structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
 			structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
-			structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE,
 			structuredCornerInsetMeters: CORNER_INSET_DEFAULT_METERS
 		});
 		expect(resolveRoutingOptions(FIDELITY_LEVEL_DEFAULT)).toEqual(opts);
@@ -55,11 +49,13 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 
 		expect(balanced).toEqual(defaultRoutingOptions());
 
-		// 2× softer point reduction vs balanced defaults.
 		expect(strict.pencilRouteRdpTolerance).toBe(Math.round(PENCIL_ROUTE_RDP_TOLERANCE / 2));
 		expect(strict.pencilMaxVias).toBe(PENCIL_MAX_VIAS * 2);
 		expect(strict.pencilSampleSpacingMeters).toBe(Math.round(PENCIL_SAMPLE_SPACING_METERS / 2));
-		expect(strict.structuredMaxViasPerEdge).toBe(STRUCTURED_MAX_VIAS_PER_EDGE * 2);
+		expect(strict.structuredViaSpacingMeters).toBe(Math.round(STRUCTURED_VIA_SPACING_METERS / 2));
+		expect(strict.structuredEdgeViaMinMeters).toBe(
+			Math.round(STRUCTURED_EDGE_VIA_MIN_METERS / 2)
+		);
 	});
 
 	test('loose is coarser than balanced; strict is tighter', () => {
@@ -70,15 +66,8 @@ describe('defaultRoutingOptions / balanced fidelity', () => {
 		expect(loose.pencilRouteRdpTolerance).toBeGreaterThan(balanced.pencilRouteRdpTolerance);
 		expect(strict.pencilRouteRdpTolerance).toBeLessThan(balanced.pencilRouteRdpTolerance);
 
-		expect(loose.structuredEdgeDeviationMeters).toBeGreaterThan(
-			balanced.structuredEdgeDeviationMeters
-		);
-		expect(strict.structuredEdgeDeviationMeters).toBeLessThan(
-			balanced.structuredEdgeDeviationMeters
-		);
-
-		expect(loose.structuredDenseLengthRatio).toBeGreaterThan(balanced.structuredDenseLengthRatio);
-		expect(strict.structuredDenseLengthRatio).toBeLessThan(balanced.structuredDenseLengthRatio);
+		expect(loose.structuredViaSpacingMeters).toBeGreaterThan(balanced.structuredViaSpacingMeters);
+		expect(strict.structuredViaSpacingMeters).toBeLessThan(balanced.structuredViaSpacingMeters);
 
 		expect(loose.pencilSampleSpacingMeters).toBeGreaterThan(balanced.pencilSampleSpacingMeters);
 		expect(strict.pencilSampleSpacingMeters).toBeLessThan(balanced.pencilSampleSpacingMeters);

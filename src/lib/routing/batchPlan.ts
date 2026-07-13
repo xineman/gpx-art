@@ -2,7 +2,7 @@ import { ROUTE_DEBUG_PALETTE } from '$lib/constants/routing';
 import type { Point, Shape, ShapeType } from '$lib/types/sketch';
 
 // One entry in the OSRM batch debug overlay — the points forwarded to a
-// single /route call for one shape (or one structured edge's via list).
+// single /route call for one shape (anchor list after unified prepare).
 export interface RouteDebugBatch {
 	// 0-based index of the shape in the TSP-solved visit order, NOT the
 	// original shape array. Stable across calls with the same shape order.
@@ -11,13 +11,12 @@ export interface RouteDebugBatch {
 	// Always /route now; kept for overlay label stability.
 	callKind: 'route';
 	// 0-based batch index within the shape. Always 0 today (one batch per
-	// shape in the plan; multi-edge structured still collapses to the corner
-	// list for debug display).
+	// shape in the plan; multi-chunk /route still shows the full anchor list).
 	chunkIndex: number;
 	chunkCount: number;
 	// Color from ROUTE_DEBUG_PALETTE (modulo).
 	color: string;
-	// Coordinates forwarded to this OSRM call.
+	// Coordinates forwarded to this OSRM call (hard-via anchors).
 	points: Point[];
 	// Inclusive start index into the per-shape processed point list.
 	startIndex: number;

@@ -4,10 +4,7 @@ import {
 	PENCIL_SAMPLE_SPACING_METERS,
 	RDP_TOLERANCE_PENCIL,
 	STRUCTURED_CORNER_INSET_METERS,
-	STRUCTURED_DENSE_LENGTH_RATIO,
-	STRUCTURED_EDGE_DEVIATION_METERS,
 	STRUCTURED_EDGE_VIA_MIN_METERS,
-	STRUCTURED_MAX_VIAS_PER_EDGE,
 	STRUCTURED_VIA_SPACING_METERS
 } from '$lib/constants/routing';
 
@@ -25,19 +22,19 @@ export const FIDELITY_LEVEL_DEFAULT = 50;
 export const FIDELITY_LEVEL_STEP = 1;
 
 /**
- * Tunable routing knobs used by prepareShapeRoute / structured edge routing.
- * Infrastructure limits (clean bridge budget, TSP caps) stay in routing.ts.
+ * Tunable routing knobs for the unified densify → hard-via /route pipeline.
+ * Infrastructure limits (clean bridge budget, TSP caps, anchor hard caps)
+ * stay in routing.ts.
  */
 export type RoutingOptions = {
 	rdpTolerancePencil: number;
 	pencilRouteRdpTolerance: number;
 	pencilMaxVias: number;
 	pencilSampleSpacingMeters: number;
-	structuredEdgeDeviationMeters: number;
-	structuredDenseLengthRatio: number;
+	/** Mid-edge re-pin spacing on long geometric chords after RDP. */
 	structuredViaSpacingMeters: number;
+	/** Edges at least this long get intermediate vias after RDP. */
 	structuredEdgeViaMinMeters: number;
-	structuredMaxViasPerEdge: number;
 	structuredCornerInsetMeters: number;
 };
 
@@ -54,11 +51,8 @@ export function defaultRoutingOptions(
 		pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
 		pencilMaxVias: PENCIL_MAX_VIAS,
 		pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
-		structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
-		structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 		structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
 		structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
-		structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE,
 		structuredCornerInsetMeters: clampCornerInset(cornerInsetMeters)
 	};
 }
@@ -67,42 +61,29 @@ export function defaultRoutingOptions(
 type FidelityFields = Omit<RoutingOptions, 'structuredCornerInsetMeters'>;
 
 const FIDELITY_PRESETS: Record<RouteFidelity, FidelityFields> = {
-	// Coarser pencil, looser structured densify.
 	loose: {
 		rdpTolerancePencil: 20,
 		pencilRouteRdpTolerance: 40,
 		pencilMaxVias: 8,
 		pencilSampleSpacingMeters: 90,
-		structuredEdgeDeviationMeters: 400,
-		structuredDenseLengthRatio: 1.6,
 		structuredViaSpacingMeters: 450,
-		structuredEdgeViaMinMeters: 250,
-		structuredMaxViasPerEdge: 10
+		structuredEdgeViaMinMeters: 250
 	},
-	// Exact current constants from routing.ts.
 	balanced: {
 		rdpTolerancePencil: RDP_TOLERANCE_PENCIL,
 		pencilRouteRdpTolerance: PENCIL_ROUTE_RDP_TOLERANCE,
 		pencilMaxVias: PENCIL_MAX_VIAS,
 		pencilSampleSpacingMeters: PENCIL_SAMPLE_SPACING_METERS,
-		structuredEdgeDeviationMeters: STRUCTURED_EDGE_DEVIATION_METERS,
-		structuredDenseLengthRatio: STRUCTURED_DENSE_LENGTH_RATIO,
 		structuredViaSpacingMeters: STRUCTURED_VIA_SPACING_METERS,
-		structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS,
-		structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE
+		structuredEdgeViaMinMeters: STRUCTURED_EDGE_VIA_MIN_METERS
 	},
-	// Tighter freehand, denser structured vias.
-	// Point reduction is ~2× softer than balanced (half RDP/spacing, 2× via caps).
 	strict: {
 		rdpTolerancePencil: Math.max(1, Math.round(RDP_TOLERANCE_PENCIL / 2)),
 		pencilRouteRdpTolerance: Math.max(1, Math.round(PENCIL_ROUTE_RDP_TOLERANCE / 2)),
 		pencilMaxVias: PENCIL_MAX_VIAS * 2,
 		pencilSampleSpacingMeters: Math.max(1, Math.round(PENCIL_SAMPLE_SPACING_METERS / 2)),
-		structuredEdgeDeviationMeters: Math.max(1, Math.round(STRUCTURED_EDGE_DEVIATION_METERS / 2)),
-		structuredDenseLengthRatio: 1.2,
 		structuredViaSpacingMeters: Math.max(1, Math.round(STRUCTURED_VIA_SPACING_METERS / 2)),
-		structuredEdgeViaMinMeters: Math.max(1, Math.round(STRUCTURED_EDGE_VIA_MIN_METERS / 2)),
-		structuredMaxViasPerEdge: STRUCTURED_MAX_VIAS_PER_EDGE * 2
+		structuredEdgeViaMinMeters: Math.max(1, Math.round(STRUCTURED_EDGE_VIA_MIN_METERS / 2))
 	}
 };
 
@@ -117,17 +98,13 @@ function lerpFidelityFields(a: FidelityFields, b: FidelityFields, t: number): Fi
 		pencilRouteRdpTolerance: meters('pencilRouteRdpTolerance'),
 		pencilMaxVias: Math.max(2, meters('pencilMaxVias')),
 		pencilSampleSpacingMeters: Math.max(1, meters('pencilSampleSpacingMeters')),
-		structuredEdgeDeviationMeters: Math.max(1, meters('structuredEdgeDeviationMeters')),
-		// Ratio stays fractional for densify length checks.
-		structuredDenseLengthRatio: Math.round(lerp(a.structuredDenseLengthRatio, b.structuredDenseLengthRatio, t) * 1000) / 1000,
 		structuredViaSpacingMeters: Math.max(1, meters('structuredViaSpacingMeters')),
-		structuredEdgeViaMinMeters: Math.max(1, meters('structuredEdgeViaMinMeters')),
-		structuredMaxViasPerEdge: Math.max(2, meters('structuredMaxViasPerEdge'))
+		structuredEdgeViaMinMeters: Math.max(1, meters('structuredEdgeViaMinMeters'))
 	};
 }
 
 /** Interpolate between loose ↔ balanced ↔ strict for a 0–100 level. */
-export function interpolateFidelityFields(level: number): FidelityFields {
+function interpolateFidelityFields(level: number): FidelityFields {
 	const n = clampFidelityLevel(level);
 	if (n <= FIDELITY_LEVEL_DEFAULT) {
 		const t = n / FIDELITY_LEVEL_DEFAULT;
@@ -180,15 +157,4 @@ export function fidelityLevelLabel(level: number): 'Loose' | 'Balanced' | 'Stric
 	if (n === FIDELITY_LEVEL_DEFAULT) return 'Balanced';
 	if (n === FIDELITY_LEVEL_MAX) return 'Strict';
 	return 'Custom';
-}
-
-export function fidelityLabel(fidelity: RouteFidelity): string {
-	switch (fidelity) {
-		case 'loose':
-			return 'Loose';
-		case 'balanced':
-			return 'Balanced';
-		case 'strict':
-			return 'Strict';
-	}
 }

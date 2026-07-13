@@ -17,38 +17,25 @@ const DEFAULT_OSRM_BASE_URL = 'https://routing.openstreetmap.de/routed-bike';
 export const OSRM_BASE_URL = env.PUBLIC_OSRM_BASE_URL || DEFAULT_OSRM_BASE_URL;
 export const OSRM_PROFILE = 'bike';
 
-// Pencil → sparse hard-via /route. Densify freehand, mild RDP for wiggles,
-// then a second RDP + via cap so /route stays cheap and does not weave every
-// sample. Full densified traces are never sent as hard vias.
+// Unified sketch routing (all tools): densify polyline → mild RDP → sparse
+// hard-via /route (chunked when the anchor list is long). Fidelity knobs
+// mainly change sample spacing, RDP tolerance, and via budget.
+// Full densified traces are never sent as hard vias without RDP + cap.
 export const PENCIL_SAMPLE_SPACING_METERS = 60;
 export const PENCIL_ROUTE_RDP_TOLERANCE = 25;
 export const PENCIL_MAX_VIAS = 12;
+/** Hard cap on anchors in one OSRM /route URL (chunk above this). */
+export const ROUTE_ANCHOR_CHUNK_SIZE = 80;
+/** Absolute max anchors prepared for one shape (then chunked for /route). */
+export const ROUTE_ANCHOR_HARD_CAP = 240;
 
-// Structured shapes (line / polygon / rectangle) always use /route.
-//
-// Long multi-edge shapes are routed **per sketch edge** (parallel /route
-// calls), not as one global via ring. A single /route around a large
-// rectangle with a via cap spreads samples too far and OSRM inland-shortcuts.
-//
-//   - STRUCTURED_EDGE_VIA_MIN_METERS — edge this long may get intermediate vias.
-//   - STRUCTURED_VIA_SPACING_METERS — densify spacing when an edge needs vias.
-//   - STRUCTURED_MAX_VIAS_PER_EDGE — cap densified vias on one edge.
-//   - STRUCTURED_EDGE_DEVIATION_METERS — if A→B stays within this of the edge,
-//     keep it; densify only when densified vias improve fit without exploding
-//     length (avoids river/park edges where forced vias detour more).
-//   - STRUCTURED_DENSE_LENGTH_RATIO — densified edge may be at most this × the
-//     simple A→B length.
-//   - STRUCTURED_BEARING_RANGE_DEG — OSRM bearings when densifying.
+// Long-edge re-pin after RDP (straight chords lose collinear densify points):
+//   - STRUCTURED_EDGE_VIA_MIN_METERS — edges this long get intermediate vias.
+//   - STRUCTURED_VIA_SPACING_METERS — densify spacing when re-pinning.
 export const STRUCTURED_EDGE_VIA_MIN_METERS = 150;
 export const STRUCTURED_VIA_SPACING_METERS = 300;
-export const STRUCTURED_MAX_VIAS_PER_EDGE = 16;
-export const STRUCTURED_EDGE_DEVIATION_METERS = 250;
-export const STRUCTURED_DENSE_LENGTH_RATIO = 1.35;
-export const STRUCTURED_BEARING_RANGE_DEG = 60;
-export const STRUCTURED_MAX_VIAS = STRUCTURED_MAX_VIAS_PER_EDGE;
-// Stop each edge this far before the geometric corner and start the next
-// edge this far after — then bridge the short corner turn. Prevents hard
-// vertex snaps that pull the route off a main street into a local loop.
+// Soft-corner inset on sharp turns (any tool). Stop each leg this far before
+// the corner and start the next after — avoids hard vertex snaps into loops.
 export const STRUCTURED_CORNER_INSET_METERS = 100;
 
 // Post-process on decoded route geometry: detect *local reverse spurs*

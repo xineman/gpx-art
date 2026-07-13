@@ -58,10 +58,10 @@
 						class="inline-block h-[10px] w-[10px] flex-shrink-0 rounded-sm border border-[#2c2924]/30"
 						style="background-color: {batch.color};"
 					></span>
-					<span class="flex-1 truncate">
+					<span class="min-w-0 flex-1 truncate">
 						Shape {batch.shapeIndex + 1}
 						<span class="text-[#2c2924]/55">·</span>
-						<span class="text-[#2c2924]/75">{batch.points.length} points</span>
+						<span class="text-[#2c2924]/75">{batch.points.length} waypoints</span>
 					</span>
 				</li>
 			{/each}

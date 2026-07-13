@@ -108,21 +108,22 @@ While a drawing tool is active, mousing down on an existing vertex will start dr
 
 ## Routing pipeline (`src/lib/routing/` + `SketchState.createRoute`)
 
-Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareShapeRoute`), `tsp.ts`, and `batchPlan.ts`.
+Live end-to-end (not a stub). Core pure helpers live in `pipeline.ts` (`prepareShapeRoute` / `routePreparedShape`), `tsp.ts`, and `batchPlan.ts`.
 
 1. **TSP order** — GTSP with flip (`solveClusterTspWithFlipFromCosts`). Prefer OSRM `/table` road distances when N ≤ `TSP_ROAD_COST_LIMIT`, else haversine. Closed shapes (polygon/rectangle) use **entry = exit** (full loop, leave from start corner). May reverse a shape.
-2. **Preprocess** (`prepareShapeRoute`)
-   - **Pencil** → densify 60 m + RDP 30 m → chunked `/match`.
-   - **Structured** → always `/route`: short edges = corners only; long multi-edge = **adaptive per-edge** (parallel): try A→B first; densify vias only if path strays >`STRUCTURED_EDGE_DEVIATION_METERS` _and_ densified fit is better without exploding length (avoids river/park via forced detours).
-3. **OSRM** (shape geometries + inter-shape links in **parallel**)
-   - Pencil: chunked `/match` (soft interiors, dual radii, `waypoints=0;N-1`); per chunk detour/NoMatch → sparse `/route`.
-   - Structured: single `/route` with hard vias; bearings retry without bearings on failure.
-4. **Stitch / clean** — decode polylines and stitch (bridge gaps >2 m with `/route`). **Once** on the full path, `cleanRoutedPathOnNetwork` fixes local reverse spurs/hairpins by re-routing kept endpoints (budget `ROUTE_CLEAN_MAX_BRIDGES`; ignores full-tour near-revisits so rectangles do not request-storm).
+2. **Preprocess** (`prepareShapeRoute`) — **same for every tool** (pencil, line, polygon, rectangle):
+   - Sketch polyline (`routingChain`); closed types append the start point.
+   - Optional **soft corners** when sharp turns with long legs are detected (RDP + `turnCosine`; works for pencil-drawn rectangles too).
+   - Densify → mild RDP → sparse hard vias (budget scales with path length) → re-pin long edges after RDP drops collinear samples.
+3. **OSRM** — hard-via `/route` per shape (chunked when anchors exceed `ROUTE_ANCHOR_CHUNK_SIZE`), plus inter-shape links, all in **parallel**.
+4. **Stitch / clean** — decode polylines and stitch (bridge gaps >2 m with `/route`). **Once** on the full path, `cleanRoutedPathOnNetwork` fixes local reverse spurs/hairpins by re-routing kept endpoints (budget `ROUTE_CLEAN_MAX_BRIDGES`).
 5. **Export / trim** — `pointsToGpx`; trim can re-bridge cut endpoints.
+
+**Follow sketch** fidelity (0–100) mainly scales sample spacing, RDP tolerances, via floor, and long-edge re-pin spacing. **Corner softness** is independent (inset meters).
 
 Waypoints UI: `buildRoutePlan` + `RouteDebugSection` (inside Route settings) list per-shape routing waypoints and can overlay them on the map.
 
-Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, radii, detour ratio, structured via spacing/caps, etc.). Default public fallback is FOSSGIS `https://routing.openstreetmap.de/routed-bike` (real bicycle extract). Do not use `router.project-osrm.org` — car-only graph; `/bike/` still returns driving.
+Constants live in `src/lib/constants/routing.ts` (`PUBLIC_OSRM_BASE_URL`, bike profile, sample/via spacing, corner inset, anchor caps, clean-path budgets, etc.). Default public fallback is FOSSGIS `https://routing.openstreetmap.de/routed-bike` (real bicycle extract). Do not use `router.project-osrm.org` — car-only graph; `/bike/` still returns driving.
 
 ## Other notes
 
