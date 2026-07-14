@@ -1,4 +1,4 @@
-export type { Point, Shape, ShapeType, Snapshot } from './types/sketch';
-export { PHASES, TOOLS } from './types/sketch';
-export type { Phase, Tool } from './types/sketch';
-export { SketchState } from './sketch/state.svelte';
+// place files you want to import through the `$lib` alias in this folder.
+export { default as Map } from './components/map/Map.svelte';
+export { default as FullscreenMap } from './components/map/FullscreenMap.svelte';
+export * from './config/map';
