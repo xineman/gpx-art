@@ -97,11 +97,11 @@
 </script>
 
 <div class="map-root relative h-full min-h-0 w-full bg-canvas {className}">
+	<!-- class must stay static: reactive class rewrites wipe MapLibre's maplibregl-map -->
 	<div
 		bind:this={container}
-		class="h-full min-h-0 w-full bg-canvas transition-opacity duration-300 ease-out [&_.maplibregl-canvas]:outline-none [&_.maplibregl-map]:h-full [&_.maplibregl-map]:w-full [&_.maplibregl-map]:bg-canvas {mapReady
-			? 'opacity-100'
-			: 'opacity-0'}"
+		class="h-full min-h-0 w-full bg-canvas transition-opacity duration-300 ease-out"
+		style:opacity={mapReady ? 1 : 0}
 		role="application"
 		aria-label="Interactive map"
 		aria-busy={!mapReady}
