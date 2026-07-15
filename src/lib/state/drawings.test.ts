@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Geometry } from 'geojson';
-import { drawings } from './drawings.svelte';
+import { drawings, type DrawingFeature } from './drawings.svelte';
 
 const lineA: Geometry = {
 	type: 'LineString',
@@ -17,6 +17,23 @@ const lineB: Geometry = {
 		[21.03, 52.23]
 	]
 };
+
+const lineC: Geometry = {
+	type: 'LineString',
+	coordinates: [
+		[21.04, 52.24],
+		[21.05, 52.25]
+	]
+};
+
+function feature(geometry: Geometry, tool: string, id: string): DrawingFeature {
+	return {
+		type: 'Feature',
+		id,
+		properties: { tool, id },
+		geometry
+	};
+}
 
 afterEach(() => {
 	drawings.clear();
@@ -42,8 +59,7 @@ describe('drawings history', () => {
 		drawings.add(lineB, 'pencil');
 		expect(drawings.features).toHaveLength(2);
 
-		const undone = drawings.undo();
-		expect(undone?.properties.id).toBeDefined();
+		drawings.undo();
 		expect(drawings.features).toHaveLength(1);
 		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
 		expect(drawings.canUndo).toBe(true);
@@ -52,14 +68,13 @@ describe('drawings history', () => {
 
 	it('redo restores the same feature id and geometry', () => {
 		const a = drawings.add(lineA, 'polyline');
-		const undone = drawings.undo();
-		expect(undone?.properties.id).toBe(a.properties.id);
+		drawings.undo();
 		expect(drawings.features).toHaveLength(0);
 
-		const redone = drawings.redo();
-		expect(redone?.properties.id).toBe(a.properties.id);
-		expect(redone?.geometry).toEqual(lineA);
+		drawings.redo();
 		expect(drawings.features).toHaveLength(1);
+		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+		expect(drawings.features[0]!.geometry).toEqual(lineA);
 		expect(drawings.canRedo).toBe(false);
 		expect(drawings.canUndo).toBe(true);
 	});
@@ -76,9 +91,11 @@ describe('drawings history', () => {
 	});
 
 	it('undo/redo are no-ops on empty stacks', () => {
-		expect(drawings.undo()).toBeNull();
-		expect(drawings.redo()).toBeNull();
+		drawings.undo();
+		drawings.redo();
 		expect(drawings.features).toEqual([]);
+		expect(drawings.canUndo).toBe(false);
+		expect(drawings.canRedo).toBe(false);
 	});
 
 	it('clear resets features and redo', () => {
@@ -101,5 +118,48 @@ describe('drawings history', () => {
 		drawings.remove(a.properties.id);
 		expect(drawings.features).toHaveLength(0);
 		expect(drawings.canRedo).toBe(false);
+	});
+});
+
+describe('drawings.replaceAll', () => {
+	it('replaces features in one undoable step', () => {
+		const a = drawings.add(lineA, 'polyline');
+		drawings.add(lineB, 'pencil');
+		expect(drawings.features).toHaveLength(2);
+
+		const imported = [feature(lineC, 'imported', 'import-1')];
+		drawings.replaceAll(imported);
+
+		expect(drawings.features).toEqual(imported);
+		expect(drawings.canUndo).toBe(true);
+
+		drawings.undo();
+		expect(drawings.features).toHaveLength(2);
+		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+		expect(drawings.canRedo).toBe(true);
+
+		drawings.redo();
+		expect(drawings.features).toEqual(imported);
+	});
+
+	it('can undo empty → imported back to empty', () => {
+		const imported = [feature(lineA, 'imported', 'only')];
+		drawings.replaceAll(imported);
+		expect(drawings.features).toHaveLength(1);
+		expect(drawings.canUndo).toBe(true);
+
+		drawings.undo();
+		expect(drawings.features).toEqual([]);
+		expect(drawings.canRedo).toBe(true);
+	});
+
+	it('replaceAll after undo clears redo', () => {
+		drawings.add(lineA, 'polyline');
+		drawings.undo();
+		expect(drawings.canRedo).toBe(true);
+
+		drawings.replaceAll([feature(lineB, 'imported', 'x')]);
+		expect(drawings.canRedo).toBe(false);
+		expect(drawings.features).toHaveLength(1);
 	});
 });

@@ -4,7 +4,7 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are stored as GeoJSON and are intended to become rideable GPX routes later; routing/export is not implemented yet.
+**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are stored as GeoJSON and are intended to become rideable GPX routes later; routing is not implemented yet.
 
 ## Current state
 
@@ -13,10 +13,10 @@ Working map + drawing shell:
 - Full-bleed MapLibre map (OpenFreeMap Liberty)
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
-- Bottom history panel (undo/redo) with `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z`, `Ctrl+Y`
+- Bottom drawing-actions cartridge: undo/redo (`⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z`, `Ctrl+Y`) plus sketch file import/export (GeoJSON)
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
-- Linear undo/redo of committed features on `drawings` module runes
+- Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
 
 Not present yet: OSRM / routing, GPX export, multi-shape ordering, persistence, settings UI.
 
@@ -55,19 +55,20 @@ src/
     components/
       map/            # Map.svelte, FullscreenMap.svelte, DrawingLayer.svelte
       tools/          # ToolsPanel.svelte, ToolButton.svelte, ToolShortcuts.svelte
-      history/        # HistoryPanel.svelte (undo/redo cartridge)
+      history/        # HistoryPanel shell + HistoryButtons + DrawingIOMenu
       status/         # StatusBar.svelte
     config/map.ts     # style URL, Warsaw center/bounds/zoom
     drawing/          # framework-agnostic MapLibre draw logic
       controller.ts   # pointer/keyboard interaction → draft/commit
       geo.ts          # LineString / Polygon helpers, sampling
       layers.ts       # GeoJSON sources + fill/line/preview layers
+      io.ts           # GeoJSON sketch parse/serialize/download (pure + DOM download)
       tap.ts          # double-tap / re-tap-last helpers (pure)
     geometry/         # haversine distance + sketch stats (pure)
     map/context.ts    # provideMap / useMap (Svelte context)
     state/
       tools.svelte.ts     # active tool + Space-to-pan (module runes)
-      drawings.svelte.ts  # completed FeatureCollection + undo/redo stacks
+      drawings.svelte.ts  # completed FeatureCollection + snapshot undo/redo + replaceAll
       status.svelte.ts    # status copy + distance/point labels (module runes)
     util/
       pointer.svelte.ts   # fine-hover vs touch (matchMedia); DEV: window.__gpxArtPointer

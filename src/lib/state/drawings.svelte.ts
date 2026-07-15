@@ -6,11 +6,20 @@ export type DrawingFeature = Feature<Geometry, { tool: string; id: string }>;
  * Completed drawings as a GeoJSON FeatureCollection.
  * DrawingLayer keeps MapLibre sources in sync with this list.
  *
- * Linear undo/redo for committed features only (draft strokes use Escape).
+ * Snapshot undo/redo: each mutating action stores the previous full feature
+ * list so bulk ops (import replace) undo in one step. Draft strokes still use Escape.
  */
 let features = $state<DrawingFeature[]>([]);
-/** Features removed by undo, most recent at the end. */
-let redoStack = $state<DrawingFeature[]>([]);
+/** Previous feature lists, oldest first. */
+let past = $state<DrawingFeature[][]>([]);
+/** Future feature lists for redo, oldest first. */
+let future = $state<DrawingFeature[][]>([]);
+
+function commit(next: DrawingFeature[]) {
+	past = [...past, features];
+	features = next;
+	future = [];
+}
 
 export const drawings = {
 	get features() {
@@ -23,10 +32,10 @@ export const drawings = {
 		};
 	},
 	get canUndo() {
-		return features.length > 0;
+		return past.length > 0;
 	},
 	get canRedo() {
-		return redoStack.length > 0;
+		return future.length > 0;
 	},
 	add(geometry: Geometry, tool: string) {
 		const id = crypto.randomUUID();
@@ -36,32 +45,39 @@ export const drawings = {
 			properties: { tool, id },
 			geometry
 		};
-		features = [...features, feature];
-		// New branch discards redo history (standard linear undo).
-		redoStack = [];
+		commit([...features, feature]);
 		return feature;
 	},
+	/**
+	 * Replace the entire canvas in one undoable step (e.g. GeoJSON import).
+	 * Always commits, including empty → imported and imported → empty.
+	 */
+	replaceAll(next: DrawingFeature[]) {
+		commit(next);
+	},
 	undo() {
-		if (features.length === 0) return null;
-		const last = features[features.length - 1]!;
-		features = features.slice(0, -1);
-		redoStack = [...redoStack, last];
-		return last;
+		if (past.length === 0) return;
+		const previous = past[past.length - 1]!;
+		future = [...future, features];
+		past = past.slice(0, -1);
+		features = previous;
 	},
 	redo() {
-		if (redoStack.length === 0) return null;
-		const next = redoStack[redoStack.length - 1]!;
-		redoStack = redoStack.slice(0, -1);
-		features = [...features, next];
-		return next;
+		if (future.length === 0) return;
+		const next = future[future.length - 1]!;
+		past = [...past, features];
+		future = future.slice(0, -1);
+		features = next;
 	},
 	clear() {
 		features = [];
-		redoStack = [];
+		past = [];
+		future = [];
 	},
 	remove(id: string) {
-		features = features.filter((f) => f.properties.id !== id);
-		// Non-undoable mutation — drop redo so stacks stay consistent.
-		redoStack = [];
+		const next = features.filter((f) => f.properties.id !== id);
+		if (next.length === features.length) return;
+		// Non-baseline wipe of one id — still one history step so stacks stay coherent.
+		commit(next);
 	}
 };
