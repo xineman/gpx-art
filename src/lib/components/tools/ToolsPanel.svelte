@@ -4,6 +4,7 @@
 	import Pentagon from '@lucide/svelte/icons/pentagon';
 	import Square from '@lucide/svelte/icons/square';
 	import Hand from '@lucide/svelte/icons/hand';
+	import PanelChrome from '$lib/components/ui/PanelChrome.svelte';
 	import { TOOLS, type ToolId } from '$lib/state/tools.svelte';
 	import ToolButton from './ToolButton.svelte';
 
@@ -41,26 +42,16 @@
 
 {#if layout === 'desktop'}
 	<!-- Compact vertical cartridge — even inset matches button radius rhythm. -->
-	<div
-		class="grid items-center gap-1 rounded-xl border border-panel-edge/20 bg-panel/95 p-2 shadow-panel backdrop-blur-sm"
-		aria-label="Drawing tools"
-		role="toolbar"
-		aria-orientation="vertical"
-	>
+	<PanelChrome label="Drawing tools" orientation="vertical">
 		{@render toolButtons('sm', 'right')}
-	</div>
+	</PanelChrome>
 {:else}
 	<!--
 	  Field dock: hug the five tools instead of stretching edge-to-edge.
 	  Equal padding on all sides so the bar reads as one instrument, not a
 	  full-width tray with icons lost in empty cells.
 	-->
-	<div
-		class="inline-grid grid-flow-col auto-cols-max items-center gap-0.5 rounded-2xl border border-panel-edge/20 bg-panel/95 p-2 shadow-panel backdrop-blur-sm"
-		aria-label="Drawing tools"
-		role="toolbar"
-		aria-orientation="horizontal"
-	>
+	<PanelChrome label="Drawing tools">
 		{@render toolButtons('md', 'above')}
-	</div>
+	</PanelChrome>
 {/if}

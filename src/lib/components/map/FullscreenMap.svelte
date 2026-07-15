@@ -51,18 +51,24 @@
 			</div>
 		</div>
 
-		<!-- Mobile: centered content-hugging dock (not edge-to-edge). -->
+		<!--
+		  Mobile: centered bottom stack (history above tools so upward
+		  flyouts clear into the map; tools stay in the thumb zone).
+		-->
 		<div
-			class="pointer-events-none absolute inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-2 hidden justify-center px-3 max-[620px]:flex"
+			class="pointer-events-none absolute inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-2 hidden flex-col items-center gap-2 px-3 max-[620px]:flex"
 		>
+			<div class="pointer-events-auto">
+				<HistoryPanel />
+			</div>
 			<div class="pointer-events-auto">
 				<ToolsPanel layout="mobile" />
 			</div>
 		</div>
 
-		<!-- Bottom-left: undo/redo. Stays clear of the centered mobile tools dock. -->
+		<!-- Desktop: bottom-left drawing actions. -->
 		<div
-			class="pointer-events-none absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(1.125rem,env(safe-area-inset-left))] z-2 max-[620px]:left-[max(0.75rem,env(safe-area-inset-left))]"
+			class="pointer-events-none absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(1.125rem,env(safe-area-inset-left))] z-2 max-[620px]:hidden"
 		>
 			<div class="pointer-events-auto">
 				<HistoryPanel />
