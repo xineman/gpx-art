@@ -33,6 +33,8 @@
 
 	let container: HTMLDivElement | undefined = $state();
 	let mapInstance = $state.raw<MaplibreMap | null>(null);
+	/** True after style + first paint — used to hide the blank/WebGL flash */
+	let mapReady = $state(false);
 
 	provideMap({
 		get current() {
@@ -70,24 +72,55 @@
 				instance.addControl(new maplibregl.NavigationControl(), 'top-right');
 			}
 
+			const reveal = () => {
+				if (cancelled) return;
+				mapReady = true;
+			};
+
+			// `load` = style ready + first idle; covers the long style/tile gap
+			if (instance.loaded()) {
+				reveal();
+			} else {
+				instance.once('load', reveal);
+			}
+
 			mapInstance = instance;
 		})();
 
 		return () => {
 			cancelled = true;
+			mapReady = false;
 			mapInstance = null;
 			instance?.remove();
 		};
 	});
 </script>
 
-<div class="map-root relative h-full min-h-0 w-full {className}">
+<div class="map-root relative h-full min-h-0 w-full bg-canvas {className}">
 	<div
 		bind:this={container}
-		class="h-full min-h-0 w-full [&_.maplibregl-map]:h-full [&_.maplibregl-map]:w-full"
+		class="h-full min-h-0 w-full bg-canvas transition-opacity duration-300 ease-out [&_.maplibregl-canvas]:outline-none [&_.maplibregl-map]:h-full [&_.maplibregl-map]:w-full [&_.maplibregl-map]:bg-canvas {mapReady
+			? 'opacity-100'
+			: 'opacity-0'}"
 		role="application"
 		aria-label="Interactive map"
+		aria-busy={!mapReady}
 	></div>
+
+	{#if !mapReady}
+		<div
+			class="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 bg-canvas"
+			aria-hidden="true"
+		>
+			<div
+				class="h-8 w-8 animate-spin rounded-full border-2 border-ink-muted/25 border-t-blaze"
+			></div>
+			<p class="font-mono text-[10px] font-medium tracking-[0.18em] text-ink-muted uppercase">
+				Loading map
+			</p>
+		</div>
+	{/if}
+
 	{#if children}
 		{@render children()}
 	{/if}
