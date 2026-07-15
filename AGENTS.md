@@ -27,8 +27,8 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 | `pnpm dev`       | Vite dev server                                                   |
 | `pnpm build`     | Production build                                                  |
 | `pnpm preview`   | Preview production build                                          |
-| `pnpm check`     | `svelte-kit sync` + `svelte-check` (run after type/runes changes) |
-| `pnpm lint`      | Prettier check, then ESLint                                       |
+| `pnpm check`     | `svelte-kit sync` + `svelte-check` (run with `lint` after edits)  |
+| `pnpm lint`      | Prettier check, then ESLint (run with `check` after edits)        |
 | `pnpm format`    | Prettier write                                                    |
 | `pnpm test`      | Unit tests once (`vitest --run`)                                  |
 | `pnpm test:unit` | Vitest (watch by default)                                         |
@@ -103,7 +103,7 @@ src/
 ## Agent workflow
 
 - Prefer small, focused changes; extend the existing modules rather than forking parallel patterns.
-- After non-trivial TS/Svelte edits, run `pnpm check` (and `pnpm test` when touching logic with tests).
+- After non-trivial TS/Svelte edits, run `pnpm check` and `pnpm lint` (and `pnpm test` when touching logic with tests).
 - **Verify UI / map / drawing changes with the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
 - Do not commit secrets; env files follow `.gitignore` (`.env` ignored, `.env.example` ok).
 - Keep this file short and actionable; update it when architecture or commands change on this branch.
