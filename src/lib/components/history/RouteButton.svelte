@@ -4,6 +4,7 @@
 	import { drawings } from '$lib/state/drawings.svelte';
 	import { route } from '$lib/state/route.svelte';
 	import { status } from '$lib/state/status.svelte';
+	import { tools } from '$lib/state/tools.svelte';
 
 	/**
 	 * Primary cartridge action: convert the sketch into a rideable bike route
@@ -23,6 +24,8 @@
 			status.flash(result.error);
 			return;
 		}
+		// Inspect the route without accidentally drawing on it.
+		tools.select('pan');
 		status.flash(`Route ready · ${route.distanceLabel}.`);
 	}
 </script>
