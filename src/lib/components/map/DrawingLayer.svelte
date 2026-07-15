@@ -4,6 +4,7 @@
 	import { useMap } from '$lib/map/context';
 	import { tools } from '$lib/state/tools.svelte';
 	import { drawings } from '$lib/state/drawings.svelte';
+	import { status } from '$lib/state/status.svelte';
 	import { DrawingController } from '$lib/drawing/controller';
 	import { DRAWINGS_SOURCE, ensureDrawingLayers, setSourceData } from '$lib/drawing/layers';
 
@@ -35,9 +36,21 @@
 			ensureDrawingLayers(map);
 			setSourceData(map, DRAWINGS_SOURCE, drawings.collection);
 
-			const c = new DrawingController(map, (geometry, tool) => {
-				drawings.add(geometry, tool);
-			});
+			const c = new DrawingController(
+				map,
+				(geometry, tool) => {
+					drawings.add(geometry, tool);
+					status.announceCommit(tool);
+				},
+				(draft) => {
+					if (!draft) status.setDraft(null);
+					else
+						status.setDraft(draft.tool, draft.geometry, {
+							vertexCount: draft.vertexCount,
+							canFinish: draft.canFinish
+						});
+				}
+			);
 			c.attach();
 			c.setTool(tools.active);
 			c.setPanning(tools.isPanning);

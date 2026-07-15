@@ -4,8 +4,15 @@
 	import Pentagon from '@lucide/svelte/icons/pentagon';
 	import Square from '@lucide/svelte/icons/square';
 	import Hand from '@lucide/svelte/icons/hand';
-	import { TOOLS, tools, type ToolId } from '$lib/state/tools.svelte';
+	import { TOOLS, type ToolId } from '$lib/state/tools.svelte';
 	import ToolButton from './ToolButton.svelte';
+
+	interface Props {
+		/** Parent shell owns placement; panel only paints the toolbar chrome. */
+		layout?: 'desktop' | 'mobile';
+	}
+
+	let { layout = 'desktop' }: Props = $props();
 
 	const icons: Record<ToolId, typeof Pencil> = {
 		pencil: Pencil,
@@ -14,78 +21,46 @@
 		rectangle: Square,
 		pan: Hand
 	};
-
-	const shortcutMap: Partial<Record<string, ToolId>> = {
-		p: 'pencil',
-		l: 'polyline',
-		g: 'polygon',
-		r: 'rectangle',
-		h: 'pan'
-	};
-
-	function isTypingTarget(target: EventTarget | null) {
-		if (!(target instanceof HTMLElement)) return false;
-		const tag = target.tagName;
-		return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
-	}
-
-	function onKeyDown(e: KeyboardEvent) {
-		if (isTypingTarget(e.target)) return;
-
-		if (e.code === 'Space' && !e.repeat) {
-			e.preventDefault();
-			tools.pressSpace();
-			return;
-		}
-
-		if (e.metaKey || e.ctrlKey || e.altKey) return;
-		const tool = shortcutMap[e.key.toLowerCase()];
-		if (tool) {
-			e.preventDefault();
-			tools.select(tool);
-		}
-	}
-
-	function onKeyUp(e: KeyboardEvent) {
-		if (e.code === 'Space') {
-			e.preventDefault();
-			tools.releaseSpace();
-		}
-	}
-
-	function onBlur() {
-		// Don't leave the map stuck in space-pan if the window loses focus
-		tools.releaseSpace();
-	}
 </script>
 
-<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={onBlur} />
-
-{#snippet toolButtons()}
+{#snippet toolButtons(size: 'sm' | 'md', tip: 'right' | 'above')}
 	{#each TOOLS as tool (tool.id)}
 		{@const Icon = icons[tool.id]}
-		<ToolButton id={tool.id} label={tool.label} hint={tool.hint} shortcut={tool.shortcut}>
-			<Icon size={18} />
+		<ToolButton
+			id={tool.id}
+			label={tool.label}
+			hint={tool.hint}
+			shortcut={tool.shortcut}
+			{size}
+			{tip}
+		>
+			<Icon size={size === 'md' ? 19 : 18} strokeWidth={size === 'md' ? 2.15 : 2} />
 		</ToolButton>
 	{/each}
 {/snippet}
 
-<!-- Desktop: vertical icon rail, top-left -->
-<div
-	class="absolute top-4.5 left-4.5 z-2 grid items-center gap-1.25 rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:hidden"
-	aria-label="Drawing tools"
-	role="toolbar"
-	aria-orientation="vertical"
->
-	{@render toolButtons()}
-</div>
-
-<!-- Mobile: horizontal strip, bottom full-width -->
-<div
-	class="absolute right-3 bottom-3 left-3 z-2 hidden grid-cols-5 items-center gap-1.25 rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:grid"
-	aria-label="Drawing tools"
-	role="toolbar"
-	aria-orientation="horizontal"
->
-	{@render toolButtons()}
-</div>
+{#if layout === 'desktop'}
+	<!-- Compact vertical cartridge — even inset matches button radius rhythm. -->
+	<div
+		class="grid items-center gap-1 rounded-xl border border-panel-edge/20 bg-panel/95 p-2 shadow-panel backdrop-blur-sm"
+		aria-label="Drawing tools"
+		role="toolbar"
+		aria-orientation="vertical"
+	>
+		{@render toolButtons('sm', 'right')}
+	</div>
+{:else}
+	<!--
+	  Field dock: hug the five tools instead of stretching edge-to-edge.
+	  Equal padding on all sides so the bar reads as one instrument, not a
+	  full-width tray with icons lost in empty cells.
+	-->
+	<div
+		class="inline-grid grid-flow-col auto-cols-max items-center gap-0.5 rounded-2xl border border-panel-edge/20 bg-panel/95 p-2 shadow-panel backdrop-blur-sm"
+		aria-label="Drawing tools"
+		role="toolbar"
+		aria-orientation="horizontal"
+	>
+		{@render toolButtons('md', 'above')}
+	</div>
+{/if}
