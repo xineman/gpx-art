@@ -1,18 +1,29 @@
 <script lang="ts">
 	import Navigation2 from '@lucide/svelte/icons/navigation-2';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import { drawings } from '$lib/state/drawings.svelte';
+	import { route } from '$lib/state/route.svelte';
 	import { status } from '$lib/state/status.svelte';
 
 	/**
-	 * Primary cartridge action: convert the sketch into a rideable route.
-	 * Routing is not wired yet — the button is real chrome with honest feedback.
+	 * Primary cartridge action: convert the sketch into a rideable bike route
+	 * via OSRM Route (server-proxied).
 	 */
-	const canRoute = $derived(drawings.features.length > 0);
+	const canRoute = $derived(drawings.features.length > 0 && !route.isLoading);
 
-	function onRoute() {
+	async function onRoute() {
 		if (!canRoute) return;
-		// Placeholder until OSRM / route generation lands.
-		status.flash('Routing isn’t ready yet.');
+		status.flash('Routing…', 60_000);
+		const result = await route.generate(drawings.features);
+		if (!result.ok) {
+			if (result.error === 'Superseded.') {
+				status.clearFlash();
+				return;
+			}
+			status.flash(result.error);
+			return;
+		}
+		status.flash(`Route ready · ${route.distanceLabel}.`);
 	}
 </script>
 
@@ -33,24 +44,23 @@
 				]
 			: 'cursor-not-allowed bg-panel-edge/8 text-ink-soft opacity-55'
 	]}
-	aria-label={canRoute ? 'Route' : 'Route — sketch a shape first'}
+	aria-label={route.isLoading ? 'Routing…' : canRoute ? 'Route' : 'Route — sketch a shape first'}
+	aria-busy={route.isLoading}
 	disabled={!canRoute}
 	onclick={onRoute}
 >
-	<!--
-	  Compass arrow + word mark. Trail fill ties the CTA to map path paint;
-	  the inset edge reads like a physical field instrument, not a flat chip.
-	-->
 	<span
 		class={[
-			// Inherit button color so hover transitions with the label
-			// (own text-* + group-hover snaps instantly — no transition here).
 			'inline-flex size-4.5 items-center justify-center rounded-sm',
-			canRoute ? 'bg-ink-dark/12' : ''
+			canRoute || route.isLoading ? 'bg-ink-dark/12' : ''
 		]}
 		aria-hidden="true"
 	>
-		<Navigation2 size={14} strokeWidth={2.4} class={canRoute ? '-rotate-12' : ''} />
+		{#if route.isLoading}
+			<LoaderCircle size={14} strokeWidth={2.4} class="animate-spin" />
+		{:else}
+			<Navigation2 size={14} strokeWidth={2.4} class={canRoute ? '-rotate-12' : ''} />
+		{/if}
 	</span>
-	<span>Route</span>
+	<span>{route.isLoading ? 'Routing' : 'Route'}</span>
 </button>

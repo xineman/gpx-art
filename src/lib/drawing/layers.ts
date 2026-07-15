@@ -3,12 +3,15 @@ import type { GeoJSONSource, Map as MaplibreMap } from 'maplibre-gl';
 
 export const DRAWINGS_SOURCE = 'gpx-drawings';
 export const PREVIEW_SOURCE = 'gpx-draw-preview';
+export const ROUTE_SOURCE = 'gpx-route';
 
 const LINE_LAYER = 'gpx-drawings-line';
 const FILL_LAYER = 'gpx-drawings-fill';
 const PREVIEW_LINE = 'gpx-preview-line';
 const PREVIEW_FILL = 'gpx-preview-fill';
 const PREVIEW_POINTS = 'gpx-preview-points';
+const ROUTE_LINE = 'gpx-route-line';
+const ROUTE_LINE_CASING = 'gpx-route-line-casing';
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -108,6 +111,52 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 				'circle-color': vertex,
 				'circle-stroke-color': stroke,
 				'circle-stroke-width': 2
+			}
+		});
+	}
+
+	ensureRouteLayers(map);
+}
+
+/** Road-snapped route overlay (above sketch lines, below draft vertices). */
+export function ensureRouteLayers(map: MaplibreMap) {
+	const route = themeColor('blaze');
+	const routeDeep = themeColor('ink-dark');
+
+	if (!map.getSource(ROUTE_SOURCE)) {
+		map.addSource(ROUTE_SOURCE, { type: 'geojson', data: empty });
+	}
+
+	if (!map.getLayer(ROUTE_LINE_CASING)) {
+		map.addLayer({
+			id: ROUTE_LINE_CASING,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			layout: {
+				'line-cap': 'round',
+				'line-join': 'round'
+			},
+			paint: {
+				'line-color': routeDeep,
+				'line-width': 6,
+				'line-opacity': 0.45
+			}
+		});
+	}
+
+	if (!map.getLayer(ROUTE_LINE)) {
+		map.addLayer({
+			id: ROUTE_LINE,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			layout: {
+				'line-cap': 'round',
+				'line-join': 'round'
+			},
+			paint: {
+				'line-color': route,
+				'line-width': 3.25,
+				'line-opacity': 0.95
 			}
 		});
 	}
