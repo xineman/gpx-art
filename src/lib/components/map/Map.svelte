@@ -109,7 +109,7 @@
 
 	{#if !mapReady}
 		<div
-			class="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 bg-canvas"
+			class="pointer-events-none absolute inset-0 z-1 flex flex-col items-center justify-center gap-3 bg-canvas"
 			aria-hidden="true"
 		>
 			<div

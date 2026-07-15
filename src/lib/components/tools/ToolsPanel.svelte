@@ -72,7 +72,7 @@
 
 <!-- Desktop: vertical icon rail, top-left -->
 <div
-	class="absolute top-[18px] left-[18px] z-[2] grid items-center gap-[5px] rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:hidden"
+	class="absolute top-4.5 left-4.5 z-2 grid items-center gap-1.25 rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:hidden"
 	aria-label="Drawing tools"
 	role="toolbar"
 	aria-orientation="vertical"
@@ -82,7 +82,7 @@
 
 <!-- Mobile: horizontal strip, bottom full-width -->
 <div
-	class="absolute right-3 bottom-3 left-3 z-[2] hidden grid-cols-5 items-center gap-[5px] rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:grid"
+	class="absolute right-3 bottom-3 left-3 z-2 hidden grid-cols-5 items-center gap-1.25 rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:grid"
 	aria-label="Drawing tools"
 	role="toolbar"
 	aria-orientation="horizontal"

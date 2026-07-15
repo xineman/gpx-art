@@ -38,6 +38,7 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 - **TypeScript** strict (`tsconfig.json` extends `.svelte-kit/tsconfig.json`).
 - **MapLibre GL JS** — client-only. Dynamic-import in `Map.svelte` (`await import('maplibre-gl')` + CSS) so SSR never loads it.
 - **Tailwind CSS 4** via `@tailwindcss/vite`. Colors are centralized in `src/routes/layout.css` `@theme static` (`--color-*`, `--shadow-*`). Use `static` so tokens MapLibre reads via `getComputedStyle` are not tree-shaken. Prefer Tailwind utilities in components.
+- **Canonical Tailwind classes only** — always write the form IntelliSense `suggestCanonicalClasses` prefers. Prefer theme/spacing-scale utilities over arbitrary values when they produce the same CSS (assume root `1rem = 16px`): e.g. `z-1` not `z-[1]`, `top-4.5` / `left-4.5` not `top-[18px]` / `left-[18px]`, `gap-1.25` not `gap-[5px]`, `w-9.5` not `w-[38px]`, `translate-x-0.75` not `-translate-x-[-3px]` / `translate-y-[-3px]`. Reserve arbitrary `[…]` values for cases with no scale equivalent (e.g. `text-[10px]`, `max-[620px]:…`, `scale-[0.96]`).
 - **@lucide/svelte** for tool icons.
 - **Vitest** for unit + component tests (`src/**/*.{test,spec}.{js,ts}`; `*.svelte.spec.ts` runs in browser via Playwright provider).
 - **Prettier**: tabs, single quotes, no trailing commas, 100-col width (`prettier.config.js`). Tailwind class sorting via `prettier-plugin-tailwindcss`.
@@ -88,6 +89,7 @@ src/
 - Shared map constants stay in `src/lib/config/map.ts`; avoid scattering magic numbers.
 - Prefer thin Svelte components over putting event/geometry logic in `.svelte` files.
 - Do not hardcode colors in components or MapLibre paint. Add tokens in `layout.css` `@theme` and use Tailwind utilities (or CSS variables for MapLibre).
+- New/edited Tailwind classes must be canonical (see Stack & conventions); do not introduce avoidable arbitrary values that map to the spacing/z-index scale.
 
 ## Agent workflow
 
