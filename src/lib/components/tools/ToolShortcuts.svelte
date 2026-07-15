@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { drawings } from '$lib/state/drawings.svelte';
 	import { tools, type ToolId } from '$lib/state/tools.svelte';
 
 	/**
-	 * Global tool letter shortcuts + Space-to-pan.
+	 * Global tool letter shortcuts, Space-to-pan, and undo/redo.
 	 * Mounted once from FullscreenMap so dual ToolsPanel instances stay visual-only.
 	 */
 	const shortcutMap: Partial<Record<string, ToolId>> = {
@@ -26,6 +27,22 @@
 			e.preventDefault();
 			tools.pressSpace();
 			return;
+		}
+
+		const mod = e.metaKey || e.ctrlKey;
+		if (mod && !e.altKey) {
+			const key = e.key.toLowerCase();
+			// Undo: ⌘/Ctrl+Z  ·  Redo: ⌘/Ctrl+Shift+Z or Ctrl+Y
+			if (key === 'z' && !e.shiftKey) {
+				e.preventDefault();
+				drawings.undo();
+				return;
+			}
+			if ((key === 'z' && e.shiftKey) || key === 'y') {
+				e.preventDefault();
+				drawings.redo();
+				return;
+			}
 		}
 
 		if (e.metaKey || e.ctrlKey || e.altKey) return;

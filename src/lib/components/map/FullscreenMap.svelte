@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import Map from './Map.svelte';
 	import DrawingLayer from './DrawingLayer.svelte';
+	import HistoryPanel from '$lib/components/history/HistoryPanel.svelte';
 	import StatusBar from '$lib/components/status/StatusBar.svelte';
 	import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
 	import ToolShortcuts from '$lib/components/tools/ToolShortcuts.svelte';
@@ -56,6 +57,15 @@
 		>
 			<div class="pointer-events-auto">
 				<ToolsPanel layout="mobile" />
+			</div>
+		</div>
+
+		<!-- Bottom-left: undo/redo. Stays clear of the centered mobile tools dock. -->
+		<div
+			class="pointer-events-none absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(1.125rem,env(safe-area-inset-left))] z-2 max-[620px]:left-[max(0.75rem,env(safe-area-inset-left))]"
+		>
+			<div class="pointer-events-auto">
+				<HistoryPanel />
 			</div>
 		</div>
 	{:else}
