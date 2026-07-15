@@ -3,6 +3,7 @@
 	import ClearSketchButton from './ClearSketchButton.svelte';
 	import DrawingIOMenu from './DrawingIOMenu.svelte';
 	import HistoryButtons from './HistoryButtons.svelte';
+	import RouteButton from './RouteButton.svelte';
 </script>
 
 <PanelChrome label="Drawing actions">
@@ -15,4 +16,9 @@
 	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
 	<ClearSketchButton />
+
+	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+
+	<!-- Primary next step: sketch utilities → route. -->
+	<RouteButton />
 </PanelChrome>

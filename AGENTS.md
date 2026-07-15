@@ -13,7 +13,7 @@ Working map + drawing shell:
 - Full-bleed MapLibre map (OpenFreeMap Liberty)
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
-- Bottom drawing-actions cartridge: undo/redo (`⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z`, `Ctrl+Y`) plus sketch file import/export (GeoJSON)
+- Bottom drawing-actions cartridge: undo/redo (`⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z`, `Ctrl+Y`), sketch file import/export (GeoJSON), clear, and primary **Route** button (UI only for now — no routing yet)
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
