@@ -12,6 +12,9 @@ const PREVIEW_FILL = 'gpx-preview-fill';
 const PREVIEW_POINTS = 'gpx-preview-points';
 const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
+const ROUTE_CHEVRONS = 'gpx-route-chevrons';
+/** Sprite id registered via `map.addImage` for line-following direction marks. */
+const ROUTE_CHEVRON_IMAGE = 'gpx-route-chevron';
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -24,6 +27,66 @@ function themeColor(token: string): string {
 		throw new Error(`Missing theme color --color-${token} (is it in layout.css @theme static?)`);
 	}
 	return value;
+}
+
+/**
+ * Canvas-drawn chevron pointing right (travel direction along LineString order).
+ * With `symbol-placement: line`, MapLibre rotates it to match the path.
+ */
+function ensureRouteChevronImage(map: MaplibreMap) {
+	if (map.hasImage(ROUTE_CHEVRON_IMAGE)) return;
+
+	// High-res sprite; pixelRatio 2 → ~16 CSS px on map.
+	const size = 32;
+	const canvas = document.createElement('canvas');
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext('2d');
+	if (!ctx) return;
+
+	const fill = themeColor('ink-dark');
+	const edge = themeColor('trail-vertex');
+
+	// Soft halo so chevrons stay readable on both blaze stroke and map basemap.
+	ctx.lineJoin = 'round';
+	ctx.lineCap = 'round';
+	ctx.strokeStyle = edge;
+	ctx.lineWidth = 5;
+	ctx.beginPath();
+	ctx.moveTo(8, 6);
+	ctx.lineTo(22, 16);
+	ctx.lineTo(8, 26);
+	ctx.stroke();
+
+	// Solid arrowhead (filled chevron) — clearer than a hairline at map scale.
+	ctx.fillStyle = fill;
+	ctx.beginPath();
+	ctx.moveTo(7, 6);
+	ctx.lineTo(23, 16);
+	ctx.lineTo(7, 26);
+	ctx.closePath();
+	ctx.fill();
+
+	// Inner notch so it reads as › not a solid triangle.
+	ctx.globalCompositeOperation = 'destination-out';
+	ctx.beginPath();
+	ctx.moveTo(7, 10);
+	ctx.lineTo(15, 16);
+	ctx.lineTo(7, 22);
+	ctx.closePath();
+	ctx.fill();
+	ctx.globalCompositeOperation = 'source-over';
+
+	const imageData = ctx.getImageData(0, 0, size, size);
+	map.addImage(
+		ROUTE_CHEVRON_IMAGE,
+		{
+			width: size,
+			height: size,
+			data: new Uint8Array(imageData.data)
+		},
+		{ pixelRatio: 2 }
+	);
 }
 
 export function ensureDrawingLayers(map: MaplibreMap) {
@@ -127,6 +190,8 @@ export function ensureRouteLayers(map: MaplibreMap) {
 		map.addSource(ROUTE_SOURCE, { type: 'geojson', data: empty });
 	}
 
+	ensureRouteChevronImage(map);
+
 	if (!map.getLayer(ROUTE_LINE_CASING)) {
 		map.addLayer({
 			id: ROUTE_LINE_CASING,
@@ -157,6 +222,32 @@ export function ensureRouteLayers(map: MaplibreMap) {
 				'line-color': route,
 				'line-width': 3.25,
 				'line-opacity': 0.95
+			}
+		});
+	}
+
+	// Direction ticks: spaced along the geometry in draw order (start → end).
+	if (!map.getLayer(ROUTE_CHEVRONS)) {
+		map.addLayer({
+			id: ROUTE_CHEVRONS,
+			type: 'symbol',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['geometry-type'], 'LineString'],
+			layout: {
+				'symbol-placement': 'line',
+				// Screen-pixel spacing along the path.
+				'symbol-spacing': 44,
+				'icon-image': ROUTE_CHEVRON_IMAGE,
+				'icon-size': 1,
+				'icon-rotation-alignment': 'map',
+				'icon-pitch-alignment': 'map',
+				'icon-keep-upright': false,
+				'icon-allow-overlap': true,
+				'icon-ignore-placement': true,
+				'symbol-z-order': 'viewport-y'
+			},
+			paint: {
+				'icon-opacity': 0.92
 			}
 		});
 	}
