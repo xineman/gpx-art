@@ -15,14 +15,6 @@
 		pan: Hand
 	};
 
-	const tooltips: Record<ToolId, string> = {
-		pencil: 'Pencil',
-		polyline: 'Line',
-		polygon: 'Polygon',
-		rectangle: 'Rectangle',
-		pan: 'Pan (hold Space)'
-	};
-
 	const shortcutMap: Partial<Record<string, ToolId>> = {
 		p: 'pencil',
 		l: 'polyline',
@@ -72,13 +64,7 @@
 {#snippet toolButtons()}
 	{#each TOOLS as tool (tool.id)}
 		{@const Icon = icons[tool.id]}
-		<ToolButton
-			id={tool.id}
-			label={tool.label}
-			hint={tool.hint}
-			shortcut={tool.shortcut}
-			tooltip={tooltips[tool.id]}
-		>
+		<ToolButton id={tool.id} label={tool.label} hint={tool.hint} shortcut={tool.shortcut}>
 			<Icon size={18} />
 		</ToolButton>
 	{/each}
