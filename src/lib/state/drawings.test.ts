@@ -109,6 +109,27 @@ describe('drawings history', () => {
 		expect(drawings.canRedo).toBe(false);
 	});
 
+	it('clearSketch empties features in one undoable step', () => {
+		const a = drawings.add(lineA, 'polyline');
+		drawings.add(lineB, 'pencil');
+		expect(drawings.features).toHaveLength(2);
+
+		drawings.clearSketch();
+		expect(drawings.features).toEqual([]);
+		expect(drawings.canUndo).toBe(true);
+		expect(drawings.canRedo).toBe(false);
+
+		drawings.undo();
+		expect(drawings.features).toHaveLength(2);
+		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+	});
+
+	it('clearSketch is a no-op when empty', () => {
+		drawings.clearSketch();
+		expect(drawings.features).toEqual([]);
+		expect(drawings.canUndo).toBe(false);
+	});
+
 	it('remove drops redo history', () => {
 		const a = drawings.add(lineA, 'polyline');
 		drawings.add(lineB, 'pencil');

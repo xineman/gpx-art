@@ -69,6 +69,15 @@ export const drawings = {
 		future = future.slice(0, -1);
 		features = next;
 	},
+	/**
+	 * Remove all shapes in one undoable step (toolbar Clear).
+	 * No-op when already empty so history stays clean.
+	 */
+	clearSketch() {
+		if (features.length === 0) return;
+		commit([]);
+	},
+	/** Hard reset — features and undo stacks. Prefer clearSketch() for UI. */
 	clear() {
 		features = [];
 		past = [];

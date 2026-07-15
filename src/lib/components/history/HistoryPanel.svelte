@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ClearSketchButton from './ClearSketchButton.svelte';
 	import DrawingIOMenu from './DrawingIOMenu.svelte';
 	import HistoryButtons from './HistoryButtons.svelte';
 </script>
@@ -14,4 +15,8 @@
 	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
 	<DrawingIOMenu />
+
+	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+
+	<ClearSketchButton />
 </div>
