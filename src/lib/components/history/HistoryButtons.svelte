@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import Redo2 from '@lucide/svelte/icons/redo-2';
+	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
 	import { drawings } from '$lib/state/drawings.svelte';
 	import { pointer } from '$lib/util/pointer.svelte';
 
@@ -49,7 +50,7 @@
 		{#if showHoverTip && !disabled}
 			<span
 				role="tooltip"
-				class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex w-max -translate-x-1/2 -translate-y-0.75 scale-[0.96] flex-col items-center gap-0.5 rounded-md border border-panel-edge/15 bg-panel-lift px-2.5 pt-1.5 pb-2 text-center opacity-0 shadow-tooltip transition-all duration-150 ease-out group-hover/tooltip:translate-y-0 group-hover/tooltip:scale-100 group-hover/tooltip:opacity-100"
+				class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-4 flex w-max -translate-x-1/2 -translate-y-0.75 scale-[0.96] flex-col items-center gap-0.5 rounded-md border border-panel-edge/15 bg-panel-lift px-2.5 pt-1.5 pb-2 text-center opacity-0 shadow-tooltip transition-all duration-150 ease-out group-hover/tooltip:translate-y-0 group-hover/tooltip:scale-100 group-hover/tooltip:opacity-100"
 			>
 				<span
 					class="flex items-baseline justify-center gap-1.5 text-[10px] font-bold tracking-[0.14em] text-ink-bright uppercase"
@@ -61,10 +62,7 @@
 						{shortcut}
 					</span>
 				</span>
-				<span
-					aria-hidden="true"
-					class="absolute top-full left-1/2 -translate-x-1/2 border-x-4 border-t-4 border-x-transparent border-t-blaze"
-				></span>
+				<TooltipArrow points="down" />
 			</span>
 		{/if}
 	</div>

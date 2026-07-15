@@ -9,6 +9,7 @@
 		parseDrawingCollection,
 		serializeDrawings
 	} from '$lib/drawing/io';
+	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
 	import { drawings } from '$lib/state/drawings.svelte';
 	import { status } from '$lib/state/status.svelte';
 	import { pointer } from '$lib/util/pointer.svelte';
@@ -132,15 +133,12 @@
 		{#if showHoverTip}
 			<span
 				role="tooltip"
-				class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex w-max -translate-x-1/2 -translate-y-0.75 scale-[0.96] flex-col items-center gap-0.5 rounded-md border border-panel-edge/15 bg-panel-lift px-2.5 pt-1.5 pb-2 text-center opacity-0 shadow-tooltip transition-all duration-150 ease-out group-hover/tooltip:translate-y-0 group-hover/tooltip:scale-100 group-hover/tooltip:opacity-100"
+				class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-4 flex w-max -translate-x-1/2 -translate-y-0.75 scale-[0.96] flex-col items-center gap-0.5 rounded-md border border-panel-edge/15 bg-panel-lift px-2.5 pt-1.5 pb-2 text-center opacity-0 shadow-tooltip transition-all duration-150 ease-out group-hover/tooltip:translate-y-0 group-hover/tooltip:scale-100 group-hover/tooltip:opacity-100"
 			>
 				<span class="text-[10px] font-bold tracking-[0.14em] text-ink-bright uppercase">
 					Sketch file
 				</span>
-				<span
-					aria-hidden="true"
-					class="absolute top-full left-1/2 -translate-x-1/2 border-x-4 border-t-4 border-x-transparent border-t-blaze"
-				></span>
+				<TooltipArrow points="down" />
 			</span>
 		{/if}
 	</div>
@@ -149,7 +147,7 @@
 		<div
 			role="menu"
 			aria-label="Sketch file"
-			class="absolute bottom-full left-1/2 z-20 mb-2 w-max min-w-36 -translate-x-1/2 rounded-md border border-panel-edge/15 bg-panel-lift p-1 shadow-tooltip"
+			class="absolute bottom-full left-1/2 z-20 mb-4 w-max min-w-36 -translate-x-1/2 rounded-md border border-panel-edge/15 bg-panel-lift p-1 shadow-tooltip"
 		>
 			<p class="px-2.5 pt-1.5 pb-1 text-[10px] font-medium text-ink-soft">Sketch file</p>
 
