@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Pencil from '@lucide/svelte/icons/pencil';
-	import Waypoints from '@lucide/svelte/icons/waypoints';
-	import Hexagon from '@lucide/svelte/icons/hexagon';
+	import Route from '@lucide/svelte/icons/route';
+	import Pentagon from '@lucide/svelte/icons/pentagon';
 	import Square from '@lucide/svelte/icons/square';
 	import Hand from '@lucide/svelte/icons/hand';
 	import { TOOLS, tools, type ToolId } from '$lib/state/tools.svelte';
@@ -9,10 +9,18 @@
 
 	const icons: Record<ToolId, typeof Pencil> = {
 		pencil: Pencil,
-		polyline: Waypoints,
-		polygon: Hexagon,
+		polyline: Route,
+		polygon: Pentagon,
 		rectangle: Square,
 		pan: Hand
+	};
+
+	const tooltips: Record<ToolId, string> = {
+		pencil: 'Pencil',
+		polyline: 'Line',
+		polygon: 'Polygon',
+		rectangle: 'Rectangle',
+		pan: 'Pan (hold Space)'
 	};
 
 	const shortcutMap: Partial<Record<string, ToolId>> = {
@@ -61,46 +69,37 @@
 
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={onBlur} />
 
-<aside
-	class="absolute top-1/2 left-4 z-[2] flex w-[4.75rem] -translate-y-1/2 flex-col rounded-2xl border border-panel-edge/80 bg-linear-to-br from-panel-lift/90 to-panel/95 px-1.5 pt-2 pb-2 text-ink-bright shadow-[0_12px_40px_rgb(10_12_15_/_0.45),inset_0_1px_0_rgb(255_255_255_/_0.08)] backdrop-blur-md backdrop-saturate-125 select-none max-sm:top-auto max-sm:bottom-4 max-sm:left-1/2 max-sm:w-auto max-sm:max-w-[calc(100vw-2rem)] max-sm:translate-x-[-50%] max-sm:translate-y-0 max-sm:flex-row max-sm:items-center max-sm:gap-1.5 max-sm:px-2.5 max-sm:py-1.5"
+{#snippet toolButtons()}
+	{#each TOOLS as tool (tool.id)}
+		{@const Icon = icons[tool.id]}
+		<ToolButton
+			id={tool.id}
+			label={tool.label}
+			hint={tool.hint}
+			shortcut={tool.shortcut}
+			tooltip={tooltips[tool.id]}
+		>
+			<Icon size={18} />
+		</ToolButton>
+	{/each}
+{/snippet}
+
+<!-- Desktop: vertical icon rail, top-left -->
+<div
+	class="absolute top-[18px] left-[18px] z-[2] grid items-center gap-[5px] rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:hidden"
 	aria-label="Drawing tools"
+	role="toolbar"
+	aria-orientation="vertical"
 >
-	<header
-		class="mb-1.5 flex flex-col items-center gap-1.5 border-b border-panel-edge/70 px-0 pt-0.5 pb-2 max-sm:mb-0 max-sm:flex-row max-sm:gap-1.5 max-sm:border-r max-sm:border-b-0 max-sm:py-0 max-sm:pr-2 max-sm:pl-0.5"
-	>
-		<span
-			class="h-0.5 w-5 rounded-full bg-linear-to-r from-blaze to-trail max-sm:h-4 max-sm:w-0.5 max-sm:bg-linear-to-b"
-			aria-hidden="true"
-		></span>
-		<span
-			class="font-mono text-[0.58rem] font-semibold tracking-[0.18em] text-ink-muted uppercase max-sm:rotate-180 max-sm:tracking-[0.14em] max-sm:[writing-mode:vertical-rl]"
-		>
-			Tools
-		</span>
-	</header>
+	{@render toolButtons()}
+</div>
 
-	<div
-		class="flex flex-col gap-0.5 max-sm:flex-row max-sm:gap-0.5"
-		role="toolbar"
-		aria-orientation="vertical"
-		aria-label="Draw"
-	>
-		{#each TOOLS as tool (tool.id)}
-			{@const Icon = icons[tool.id]}
-			<ToolButton id={tool.id} label={tool.label} hint={tool.hint} shortcut={tool.shortcut}>
-				<Icon />
-			</ToolButton>
-		{/each}
-	</div>
-
-	<footer
-		class="mt-1.5 flex flex-col items-center gap-0.5 border-t border-panel-edge/70 pt-2 text-center font-mono text-[0.55rem] leading-tight tracking-wide text-ink-muted max-sm:hidden"
-	>
-		<kbd
-			class="inline-block rounded-[0.3rem] border border-panel-edge/90 bg-panel-lift/70 px-1.5 py-0.5 font-mono text-[0.52rem] tracking-wider text-ink-bright uppercase"
-		>
-			Space
-		</kbd>
-		<span>to pan</span>
-	</footer>
-</aside>
+<!-- Mobile: horizontal strip, bottom full-width -->
+<div
+	class="absolute right-3 bottom-3 left-3 z-[2] hidden grid-cols-5 items-center gap-[5px] rounded-lg border border-panel-edge/25 bg-panel p-1.5 shadow-panel max-[620px]:grid"
+	aria-label="Drawing tools"
+	role="toolbar"
+	aria-orientation="horizontal"
+>
+	{@render toolButtons()}
+</div>

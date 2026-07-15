@@ -12,11 +12,22 @@ const PREVIEW_POINTS = 'gpx-preview-points';
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-/** Trail-marker teal on the map — reads as inked GPS art. */
-const STROKE = '#0d9488';
-const FILL = '#14b8a6';
+/** Resolve a `--color-*` token from `layout.css` @theme (MapLibre needs concrete values). */
+function themeColor(token: string): string {
+	const value = getComputedStyle(document.documentElement)
+		.getPropertyValue(`--color-${token}`)
+		.trim();
+	if (!value) {
+		throw new Error(`Missing theme color --color-${token} (is it in layout.css @theme static?)`);
+	}
+	return value;
+}
 
 export function ensureDrawingLayers(map: MaplibreMap) {
+	const stroke = themeColor('trail-deep');
+	const fill = themeColor('trail');
+	const vertex = themeColor('trail-vertex');
+
 	if (!map.getSource(DRAWINGS_SOURCE)) {
 		map.addSource(DRAWINGS_SOURCE, { type: 'geojson', data: empty });
 	}
@@ -31,7 +42,7 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 			source: DRAWINGS_SOURCE,
 			filter: ['==', ['geometry-type'], 'Polygon'],
 			paint: {
-				'fill-color': FILL,
+				'fill-color': fill,
 				'fill-opacity': 0.22
 			}
 		});
@@ -47,7 +58,7 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 				'line-join': 'round'
 			},
 			paint: {
-				'line-color': STROKE,
+				'line-color': stroke,
 				'line-width': 2.75,
 				'line-opacity': 0.95
 			}
@@ -61,7 +72,7 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 			source: PREVIEW_SOURCE,
 			filter: ['==', ['geometry-type'], 'Polygon'],
 			paint: {
-				'fill-color': FILL,
+				'fill-color': fill,
 				'fill-opacity': 0.14
 			}
 		});
@@ -78,7 +89,7 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 				'line-join': 'round'
 			},
 			paint: {
-				'line-color': STROKE,
+				'line-color': stroke,
 				'line-width': 2.25,
 				'line-opacity': 0.85,
 				'line-dasharray': [1.5, 1.5]
@@ -94,8 +105,8 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 			filter: ['==', ['geometry-type'], 'Point'],
 			paint: {
 				'circle-radius': 4.5,
-				'circle-color': '#f4f0e8',
-				'circle-stroke-color': STROKE,
+				'circle-color': vertex,
+				'circle-stroke-color': stroke,
 				'circle-stroke-width': 2
 			}
 		});

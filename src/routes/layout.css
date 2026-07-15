@@ -2,23 +2,32 @@
 @import 'tailwindcss';
 
 /*
-  GPX Art — field cartography tokens
-  Deep slate instrument panel, blaze-orange markers, teal GPS ink.
+  GPX Art design tokens — single source for app colors.
+  `static` keeps every token in the CSS output (MapLibre reads them via
+  getComputedStyle; default @theme only emits variables used by utilities).
 */
-@theme {
-	--color-panel: #151a1f;
-	--color-panel-lift: #1e262e;
-	--color-panel-edge: #3a4652;
-	--color-ink-bright: #f2efe6;
-	--color-ink-muted: #9aa7b5;
-	--color-blaze: #e85d04;
+@theme static {
+	--color-canvas: #1d201d;
+	--color-panel: #2c2924;
+	--color-panel-lift: #1f1d19;
+	--color-panel-edge: #fff7df;
+	--color-ink-bright: #fff7df;
+	--color-ink-muted: #c9bfa0;
+	--color-ink-dark: #1f1d19;
+	--color-blaze: #e6b84a;
 	--color-trail: #14b8a6;
+	--color-trail-deep: #0d9488;
+	--color-trail-vertex: #f4f0e8;
+
+	--shadow-panel: 0 18px 50px color-mix(in srgb, var(--color-panel-lift) 28%, transparent);
+	--shadow-tooltip: 0 18px 40px -8px color-mix(in srgb, var(--color-panel-lift) 55%, transparent);
+
 	--font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @layer base {
 	html,
 	body {
-		@apply m-0 h-full w-full overflow-hidden bg-panel p-0 font-sans text-ink-bright antialiased;
+		@apply m-0 h-full w-full overflow-hidden bg-canvas p-0 font-sans text-ink-bright antialiased;
 	}
 }

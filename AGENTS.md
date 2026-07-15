@@ -37,7 +37,7 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 - **SvelteKit 2 + Svelte 5 runes mode** — forced in `vite.config.ts` for non-`node_modules` files. Use `$state`, `$derived`, `$props()`, `$effect`; not legacy stores / `export let`.
 - **TypeScript** strict (`tsconfig.json` extends `.svelte-kit/tsconfig.json`).
 - **MapLibre GL JS** — client-only. Dynamic-import in `Map.svelte` (`await import('maplibre-gl')` + CSS) so SSR never loads it.
-- **Tailwind CSS 4** via `@tailwindcss/vite`; design tokens and globals live in `src/routes/layout.css` (panel slate, blaze orange, trail teal, IBM Plex Mono).
+- **Tailwind CSS 4** via `@tailwindcss/vite`. Colors are centralized in `src/routes/layout.css` `@theme static` (`--color-*`, `--shadow-*`). Use `static` so tokens MapLibre reads via `getComputedStyle` are not tree-shaken. Prefer Tailwind utilities in components.
 - **@lucide/svelte** for tool icons.
 - **Vitest** for unit + component tests (`src/**/*.{test,spec}.{js,ts}`; `*.svelte.spec.ts` runs in browser via Playwright provider).
 - **Prettier**: tabs, single quotes, no trailing commas, 100-col width (`prettier.config.js`). Tailwind class sorting via `prettier-plugin-tailwindcss`.
@@ -64,7 +64,7 @@ src/
   routes/
     +layout.svelte
     +page.svelte      # FullscreenMap only
-    layout.css        # Tailwind + theme tokens + viewport reset
+    layout.css        # Tailwind + theme tokens (sole color palette) + viewport reset
 ```
 
 ## Architecture notes
@@ -75,7 +75,7 @@ src/
 
 1. `tools` / `drawings` are **module-level runes** (shared singletons). Every importer sees the same signals — use this pattern for cross-tree UI state, not classes with per-import instances.
 2. `DrawingController` is framework-agnostic MapLibre event code. `DrawingLayer.svelte` wires it to runes via `$effect` and commits geometries with `drawings.add(...)`.
-3. `layers.ts` owns source/layer IDs and paint. Keep visual constants there; keep pure geometry in `geo.ts`.
+3. `layers.ts` owns source/layer IDs and paint; colors come from `layout.css` theme tokens, not hardcoded hex. Keep pure geometry in `geo.ts`.
 
 **Coordinates.** MapLibre / GeoJSON positions are `[lng, lat]`. Prefer that form at map boundaries; if app-domain points use `{ lat, lng }`, convert at the edge.
 
@@ -87,6 +87,7 @@ src/
 - Keep MapLibre behind client lifecycle (`onMount` / dynamic import / style `load`).
 - Shared map constants stay in `src/lib/config/map.ts`; avoid scattering magic numbers.
 - Prefer thin Svelte components over putting event/geometry logic in `.svelte` files.
+- Do not hardcode colors in components or MapLibre paint. Add tokens in `layout.css` `@theme` and use Tailwind utilities (or CSS variables for MapLibre).
 
 ## Agent workflow
 
