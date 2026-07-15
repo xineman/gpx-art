@@ -4,19 +4,18 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app where the user draws shapes on a MapLibre map, converts the sketch into a rideable GPX route (via OSRM), and exports it.
-
-This workspace is a **git worktree** of `xineman/gpx-art` on branch `routing-reimpl`. The previous app (sketch tools, routing pipeline, UI panels) was cleared so routing and related features can be reimplemented cleanly. The sibling checkout at `../gpx-art` (branch `main`) is the prior implementation and may be read as reference — **do not edit it from this worktree**.
+**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are stored as GeoJSON and are intended to become rideable GPX routes later; routing/export is not implemented yet.
 
 ## Current state
 
-Minimal shell only:
+Working map + drawing shell:
 
-- Full-bleed MapLibre map centered on Warsaw (`src/lib/components/map/`, `src/lib/config/map.ts`)
-- OpenFreeMap Liberty vector style
-- No sketch tools, routing, GPX export, or floating UI yet
+- Full-bleed MapLibre map (OpenFreeMap Liberty)
+- Sketch tools: pencil, polyline, polygon, rectangle, pan
+- Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
+- Completed drawings in a shared GeoJSON feature list; live preview while drafting
 
-Treat this as a greenfield rebuild that should eventually restore the product behavior of `main`, not a mechanical copy of the old file layout.
+Not present yet: OSRM / routing, GPX export, multi-shape ordering, persistence, settings UI.
 
 ## Commands
 
@@ -33,59 +32,66 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 | `pnpm test`      | Unit tests once (`vitest --run`)                                  |
 | `pnpm test:unit` | Vitest (watch by default)                                         |
 
-There is no Playwright e2e setup on this branch currently (unlike `main`).
-
 ## Stack & conventions
 
 - **SvelteKit 2 + Svelte 5 runes mode** — forced in `vite.config.ts` for non-`node_modules` files. Use `$state`, `$derived`, `$props()`, `$effect`; not legacy stores / `export let`.
 - **TypeScript** strict (`tsconfig.json` extends `.svelte-kit/tsconfig.json`).
-- **MapLibre GL JS** — client-only. Dynamic-import in components (`await import('maplibre-gl')` + CSS) so SSR never loads it.
-- **Tailwind CSS 4** via `@tailwindcss/vite`; global stylesheet is `src/routes/layout.css`.
+- **MapLibre GL JS** — client-only. Dynamic-import in `Map.svelte` (`await import('maplibre-gl')` + CSS) so SSR never loads it.
+- **Tailwind CSS 4** via `@tailwindcss/vite`; design tokens and globals live in `src/routes/layout.css` (panel slate, blaze orange, trail teal, IBM Plex Mono).
+- **@lucide/svelte** for tool icons.
 - **Vitest** for unit + component tests (`src/**/*.{test,spec}.{js,ts}`; `*.svelte.spec.ts` runs in browser via Playwright provider).
 - **Prettier**: tabs, single quotes, no trailing commas, 100-col width (`prettier.config.js`). Tailwind class sorting via `prettier-plugin-tailwindcss`.
 - **Path alias**: `$lib` → `src/lib`.
 
-## Layout (current)
+## Layout
 
 ```
 src/
   lib/
-    assets/           # static assets (favicon)
-    components/map/   # Map.svelte, FullscreenMap.svelte
+    components/
+      map/            # Map.svelte, FullscreenMap.svelte, DrawingLayer.svelte
+      tools/          # ToolsPanel.svelte, ToolButton.svelte
     config/map.ts     # style URL, Warsaw center/bounds/zoom
+    drawing/          # framework-agnostic MapLibre draw logic
+      controller.ts   # pointer/keyboard interaction → draft/commit
+      geo.ts          # LineString / Polygon helpers, sampling
+      layers.ts       # GeoJSON sources + fill/line/preview layers
+    map/context.ts    # provideMap / useMap (Svelte context)
+    state/
+      tools.svelte.ts     # active tool + Space-to-pan (module runes)
+      drawings.svelte.ts  # completed FeatureCollection
     index.ts          # public $lib barrel
   routes/
-    +layout.svelte    # favicon + layout.css
+    +layout.svelte
     +page.svelte      # FullscreenMap only
-    layout.css        # Tailwind import + full-viewport reset
+    layout.css        # Tailwind + theme tokens + viewport reset
 ```
 
-Conventions for new code as the app grows:
+## Architecture notes
 
-- Pure domain logic under `src/lib/` (e.g. `routing/`, `geometry/`) with unit tests colocated (`*.test.ts`).
-- Map integration under `src/lib/components/map/` or `src/lib/map/` — keep browser-only MapLibre behind client lifecycle (`onMount` / dynamic import).
-- Prefer `{ lat, lng }` for app domain points; GeoJSON / MapLibre positions are `[lng, lat]`. Convert at boundaries.
-- Shared map constants stay in `src/lib/config/map.ts` (or a future `constants/` module); avoid scattering magic numbers.
-- Prefer props over global stores for component state unless cross-tree sharing clearly needs a shared module.
+**Map access.** `Map.svelte` creates the MapLibre instance and `provideMap()`s a reactive handle. Children under the map (e.g. `DrawingLayer`) call `useMap()` — do not pass the map instance through a long prop chain.
 
-## Routing reimplementation notes
+**Drawing pipeline.**
 
-Product goal: sketch → ordered rideable bike route on the road network → GPX.
+1. `tools` / `drawings` are **module-level runes** (shared singletons). Every importer sees the same signals — use this pattern for cross-tree UI state, not classes with per-import instances.
+2. `DrawingController` is framework-agnostic MapLibre event code. `DrawingLayer.svelte` wires it to runes via `$effect` and commits geometries with `drawings.add(...)`.
+3. `layers.ts` owns source/layer IDs and paint. Keep visual constants there; keep pure geometry in `geo.ts`.
 
-When reintroducing OSRM:
+**Coordinates.** MapLibre / GeoJSON positions are `[lng, lat]`. Prefer that form at map boundaries; if app-domain points use `{ lat, lng }`, convert at the edge.
 
-- Prefer **bike** profile. Public fallback historically used FOSSGIS `https://routing.openstreetmap.de/routed-bike` (fair-use ~1 req/s, identify with a User-Agent). Prefer self-hosted for real load.
-- **Do not** use `router.project-osrm.org` as a bike backend — car-only graph; `/bike/` still returns driving.
-- Expose the base URL via `PUBLIC_OSRM_BASE_URL` when wiring env.
-- Keep OSRM HTTP + geometry helpers pure and testable without Svelte.
-- Pipeline stages that existed on `main` (reference only): shape order (TSP), preprocess (pencil densify/RDP vs structured edges), OSRM `/route` (and `/table` for costs), stitch/clean hairpins, GPX export / trim. Reimplement only what is needed, with clear module boundaries and tests.
+**UI composition.** `FullscreenMap` owns the full-viewport shell: map + drawing layer + floating tools panel. Keep overlays as siblings of `Map` (or children snippets) rather than burying them inside MapLibre controls unless they must be map chrome.
 
-Read prior art on `main` under `src/lib/routing/` and `src/lib/constants/routing.ts` when design decisions are unclear — then implement the simpler version that fits this branch’s structure.
+**Conventions for new code:**
+
+- Pure domain logic under `src/lib/` (e.g. future `routing/`) with colocated unit tests (`*.test.ts`).
+- Keep MapLibre behind client lifecycle (`onMount` / dynamic import / style `load`).
+- Shared map constants stay in `src/lib/config/map.ts`; avoid scattering magic numbers.
+- Prefer thin Svelte components over putting event/geometry logic in `.svelte` files.
 
 ## Agent workflow
 
-- Prefer small, focused changes; do not restore the entire old tree in one pass.
+- Prefer small, focused changes; extend the existing modules rather than forking parallel patterns.
 - After non-trivial TS/Svelte edits, run `pnpm check` (and `pnpm test` when touching logic with tests).
+- **Verify UI / map / drawing changes with the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
 - Do not commit secrets; env files follow `.gitignore` (`.env` ignored, `.env.example` ok).
-- Do not edit the sibling `../gpx-art` worktree or force-push shared branches unless the user explicitly asks.
-- Keep this file short and actionable; update it when architecture or commands change.
+- Keep this file short and actionable; update it when architecture or commands change on this branch.

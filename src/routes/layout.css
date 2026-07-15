@@ -1,8 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
+
+/*
+  GPX Art — field cartography tokens
+  Deep slate instrument panel, blaze-orange markers, teal GPS ink.
+*/
+@theme {
+	--color-panel: #151a1f;
+	--color-panel-lift: #1e262e;
+	--color-panel-edge: #3a4652;
+	--color-ink-bright: #f2efe6;
+	--color-ink-muted: #9aa7b5;
+	--color-blaze: #e85d04;
+	--color-trail: #14b8a6;
+	--font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
 @layer base {
 	html,
 	body {
-		@apply m-0 h-full w-full overflow-hidden p-0;
+		@apply m-0 h-full w-full overflow-hidden bg-panel p-0 font-sans text-ink-bright antialiased;
 	}
 }

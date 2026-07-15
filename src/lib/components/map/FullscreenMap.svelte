@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Map from './Map.svelte';
+	import DrawingLayer from './DrawingLayer.svelte';
+	import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
 	import { MAP_STYLE_URL, WARSAW_BOUNDS, WARSAW_CENTER, WARSAW_ZOOM } from '$lib/config/map';
 
 	interface Props {
@@ -18,5 +20,8 @@
 </script>
 
 <div class="fixed inset-0 m-0 h-dvh w-screen overflow-hidden p-0">
-	<Map {center} {zoom} {bounds} {style} />
+	<Map {center} {zoom} {bounds} {style}>
+		<DrawingLayer />
+	</Map>
+	<ToolsPanel />
 </div>
