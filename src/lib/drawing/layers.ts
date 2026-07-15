@@ -13,6 +13,7 @@ const PREVIEW_POINTS = 'gpx-preview-points';
 const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
+const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
 /** Sprite id registered via `map.addImage` for line-following direction marks. */
 const ROUTE_CHEVRON_IMAGE = 'gpx-route-chevron';
 
@@ -248,6 +249,32 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			},
 			paint: {
 				'icon-opacity': 0.92
+			}
+		});
+	}
+
+	// Client-prepared OSRM vias — above line/chevrons so direction anchors stay readable.
+	if (!map.getLayer(ROUTE_WAYPOINTS)) {
+		const vertex = themeColor('trail-vertex');
+		map.addLayer({
+			id: ROUTE_WAYPOINTS,
+			type: 'circle',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['geometry-type'], 'Point'],
+			paint: {
+				'circle-radius': ['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 4.25],
+				'circle-color': ['match', ['get', 'role'], 'start', vertex, 'end', route, /* via */ route],
+				'circle-stroke-color': routeDeep,
+				'circle-stroke-width': [
+					'match',
+					['get', 'role'],
+					'start',
+					2.25,
+					'end',
+					2.25,
+					/* via */ 1.75
+				],
+				'circle-opacity': 0.95
 			}
 		});
 	}

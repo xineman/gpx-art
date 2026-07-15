@@ -1,13 +1,17 @@
-import type { Feature, FeatureCollection, LineString } from 'geojson';
+import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
+import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { downloadTextFile } from '$lib/drawing/io';
+import { prepareRouteLegs } from '$lib/routing/prepare';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+export type WaypointRole = 'start' | 'via' | 'end';
+
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
+let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let errorMessage = $state<string | null>(null);
 /** Fingerprint of features used for the current/last successful or in-flight route. */
@@ -28,11 +32,31 @@ function fingerprint(features: Feature[]): string {
 		.join('\0');
 }
 
+function waypointRole(index: number, total: number): WaypointRole {
+	if (index === 0) return 'start';
+	if (index === total - 1) return 'end';
+	return 'via';
+}
+
 function resetResult() {
 	geometry = null;
+	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
 	sourceFingerprint = null;
+}
+
+function waypointFeatures(points: Position[]): Feature[] {
+	const n = points.length;
+	return points.map((coordinates, index) => ({
+		type: 'Feature' as const,
+		properties: {
+			kind: 'waypoint',
+			index,
+			role: waypointRole(index, n)
+		},
+		geometry: { type: 'Point' as const, coordinates }
+	}));
 }
 
 export const route = {
@@ -41,6 +65,9 @@ export const route = {
 	},
 	get geometry() {
 		return geometry;
+	},
+	get waypoints() {
+		return waypoints;
 	},
 	get distanceM() {
 		return distanceM;
@@ -54,20 +81,22 @@ export const route = {
 	get isReady() {
 		return status === 'ready' && geometry != null;
 	},
+	/**
+	 * Map source data: route LineString (when ready) + via Points (loading or ready).
+	 */
 	get collection(): FeatureCollection {
-		if (!geometry) {
-			return { type: 'FeatureCollection', features: [] };
+		const features: Feature[] = [];
+		if (geometry) {
+			features.push({
+				type: 'Feature',
+				properties: { kind: 'route' },
+				geometry
+			});
 		}
-		return {
-			type: 'FeatureCollection',
-			features: [
-				{
-					type: 'Feature',
-					properties: { kind: 'route' },
-					geometry
-				}
-			]
-		};
+		if (waypoints.length > 0) {
+			features.push(...waypointFeatures(waypoints));
+		}
+		return { type: 'FeatureCollection', features };
 	},
 	get distanceLabel() {
 		return formatDistance(distanceM);
@@ -92,8 +121,19 @@ export const route = {
 			status = 'error';
 			errorMessage = 'Sketch a shape first.';
 			geometry = null;
+			waypoints = [];
 			distanceM = 0;
 			return { ok: false as const, error: errorMessage };
+		}
+
+		const prepared = prepareRouteLegs(features);
+		if (!prepared.ok) {
+			status = 'error';
+			errorMessage = prepared.error;
+			geometry = null;
+			waypoints = [];
+			distanceM = 0;
+			return prepared;
 		}
 
 		const id = ++requestId;
@@ -101,8 +141,12 @@ export const route = {
 		status = 'loading';
 		errorMessage = null;
 		sourceFingerprint = fp;
+		// Show vias immediately while OSRM runs.
+		waypoints = prepared.waypoints;
+		geometry = null;
+		distanceM = 0;
 
-		const result = await requestRoute(features);
+		const result = await requestRoute(prepared.legs);
 
 		// Stale response (sketch changed or a newer request started).
 		if (id !== requestId) {
@@ -113,8 +157,7 @@ export const route = {
 			status = 'error';
 			errorMessage = result.error;
 			geometry = null;
-			distanceM = 0;
-			// Keep fingerprint so a sketch change still clears the error state cleanly.
+			// Keep waypoints so the user still sees what was attempted.
 			return result;
 		}
 

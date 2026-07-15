@@ -1,6 +1,5 @@
-import type { Feature, Position } from 'geojson';
-import { MAX_VIAS } from '$lib/config/routing';
-import { extractGuidePaths } from './extract';
+import type { Position } from 'geojson';
+import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
 import { fetchOsrmRoute, type OsrmConfig } from './osrm';
 import {
 	ensureClosedLoop,
@@ -8,62 +7,89 @@ import {
 	stitchCoordinates,
 	toLineString
 } from './postprocess';
-import type { RouteResponse } from './types';
-import { guideToVias } from './vias';
+import type { RouteLegInput, RouteResponse } from './types';
 
 export type GenerateRouteOptions = {
 	osrm: OsrmConfig;
-	maxVias?: number;
 };
 
+function isFinitePosition(p: unknown): p is Position {
+	return (
+		Array.isArray(p) &&
+		p.length >= 2 &&
+		typeof p[0] === 'number' &&
+		typeof p[1] === 'number' &&
+		Number.isFinite(p[0]) &&
+		Number.isFinite(p[1])
+	);
+}
+
 /**
- * Full pipeline: features → vias → OSRM Route (per guide) → stitch → LineString.
+ * Validate client-prepared legs before calling OSRM.
+ * Returns a friendly error string or null when OK.
  */
-export async function generateRouteFromFeatures(
-	features: Feature[],
+export function validateRouteLegs(legs: unknown): string | null {
+	if (!Array.isArray(legs) || legs.length === 0) {
+		return 'Request must include at least one route leg.';
+	}
+
+	for (let i = 0; i < legs.length; i++) {
+		const leg = legs[i];
+		if (!leg || typeof leg !== 'object') {
+			return `Leg ${i} is invalid.`;
+		}
+		const vias = (leg as RouteLegInput).vias;
+		if (!Array.isArray(vias) || vias.length < MIN_VIAS) {
+			return `Leg ${i} needs at least ${MIN_VIAS} waypoints.`;
+		}
+		if (vias.length > MAX_VIAS) {
+			return `Leg ${i} has too many waypoints (max ${MAX_VIAS}).`;
+		}
+		for (let j = 0; j < vias.length; j++) {
+			if (!isFinitePosition(vias[j])) {
+				return `Leg ${i} waypoint ${j} is not a valid [lng, lat].`;
+			}
+			const [lng, lat] = vias[j] as Position;
+			if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+				return `Leg ${i} waypoint ${j} is out of range.`;
+			}
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Server pipeline: prepared via legs → OSRM Route per leg → stitched LineString.
+ */
+export async function generateRouteFromLegs(
+	legs: RouteLegInput[],
 	options: GenerateRouteOptions
 ): Promise<RouteResponse> {
-	if (features.length === 0) {
-		return { ok: false, error: 'Sketch a shape first.' };
+	const validationError = validateRouteLegs(legs);
+	if (validationError) {
+		return { ok: false, error: validationError };
 	}
-
-	const guides = extractGuidePaths(features);
-	if (guides.length === 0) {
-		return { ok: false, error: 'No routable shapes in the sketch.' };
-	}
-
-	const maxVias = options.maxVias ?? MAX_VIAS;
-	// Full via budget for a single shape; split budget when multi-feature (sequential OSRM calls).
-	const viaBudget =
-		guides.length === 1
-			? maxVias
-			: Math.min(maxVias, Math.max(12, Math.floor(maxVias / guides.length)));
 
 	const parts: Position[][] = [];
 	let totalDistance = 0;
 	let viaCount = 0;
 	let anyClosed = false;
 
-	for (const guide of guides) {
-		const viasResult = guideToVias(guide, { maxVias: viaBudget });
-		if (!viasResult.ok) {
-			// Skip tiny fragments when multi-feature; fail hard for single.
-			if (guides.length === 1) return viasResult;
-			continue;
-		}
+	for (const leg of legs) {
+		const vias = leg.vias;
+		const closed = Boolean(leg.closed);
+		viaCount += vias.length;
+		anyClosed = anyClosed || closed;
 
-		viaCount += viasResult.vias.length;
-		anyClosed = anyClosed || viasResult.closed;
-
-		const osrm = await fetchOsrmRoute(viasResult.vias, options.osrm);
+		const osrm = await fetchOsrmRoute(vias, options.osrm);
 		if (!osrm.ok) {
-			if (guides.length === 1) return osrm;
-			// Multi: skip failed segment
+			if (legs.length === 1) return osrm;
 			continue;
 		}
 
 		let coords = osrm.geometry.coordinates;
-		coords = ensureClosedLoop(coords, viasResult.closed);
+		coords = ensureClosedLoop(coords, closed);
 		parts.push(coords);
 		totalDistance += measureRouteDistanceM(coords, osrm.distanceM);
 	}
@@ -72,8 +98,7 @@ export async function generateRouteFromFeatures(
 		return { ok: false, error: 'Couldn’t build a route from that sketch.' };
 	}
 
-	// Multi-feature: don't force a global close unless every guide was a single closed shape.
-	const closed = guides.length === 1 && anyClosed;
+	const closed = legs.length === 1 && anyClosed;
 	const stitched = ensureClosedLoop(stitchCoordinates(parts), closed);
 	const geometry = toLineString(stitched);
 
