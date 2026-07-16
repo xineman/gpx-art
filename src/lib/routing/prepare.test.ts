@@ -83,7 +83,7 @@ describe('prepareRouteVias', () => {
 				}
 			}
 		];
-		const result = prepareRouteVias(features);
+		const result = prepareRouteVias(features, { maxVias: 4 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.vias).toEqual([

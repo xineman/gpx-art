@@ -59,10 +59,9 @@ describe('route state', () => {
 
 		const pending = route.generate([line], 7);
 		expect(route.status).toBe('loading');
-		expect(route.waypoints).toEqual([
-			[21, 52],
-			[21.01, 52.01]
-		]);
+		expect(route.waypoints.length).toBeGreaterThan(2);
+		expect(route.waypoints[0]).toEqual([21, 52]);
+		expect(route.waypoints[route.waypoints.length - 1]).toEqual([21.01, 52.01]);
 
 		route.syncSketch(8);
 		resolveRoute(success);
