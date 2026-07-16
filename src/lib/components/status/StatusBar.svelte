@@ -2,6 +2,7 @@
 	import MapPinned from '@lucide/svelte/icons/map-pinned';
 	import { status } from '$lib/state/status.svelte';
 	import { pointer } from '$lib/util/pointer.svelte';
+	import SketchDistancePill from './SketchDistancePill.svelte';
 
 	interface Props {
 		class?: string;
@@ -38,11 +39,7 @@
 		</div>
 	</div>
 	<div class="flex shrink-0 items-center gap-1.5" aria-label="Sketch statistics">
-		<span
-			class="rounded-full bg-panel px-2.25 py-1.75 text-xs leading-none font-bold text-ink-bright"
-		>
-			{status.distanceLabel}
-		</span>
+		<SketchDistancePill distanceLabel={status.distanceLabel} />
 		<span
 			class="rounded-full bg-panel px-2.25 py-1.75 text-xs leading-none font-bold text-ink-bright"
 		>

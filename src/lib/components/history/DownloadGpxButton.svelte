@@ -41,7 +41,7 @@
 				Download GPX
 			</span>
 			<span class="font-mono text-[9px] font-medium tracking-normal text-ink-muted normal-case">
-				{route.distanceLabel}
+				Route · {route.distanceLabel}
 			</span>
 			<TooltipArrow points="down" />
 		</span>
