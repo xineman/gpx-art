@@ -4,21 +4,23 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are stored as GeoJSON and are intended to become rideable GPX routes later; routing is not implemented yet.
+**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are GeoJSON; **Route** snaps them to a bike road network (OSRM) and can export GPX.
 
 ## Current state
 
-Working map + drawing shell:
+Working map + drawing + routing shell:
 
 - Full-bleed MapLibre map (OpenFreeMap Liberty)
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
-- Bottom drawing-actions cartridge: undo/redo (`⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z`, `Ctrl+Y`), sketch file import/export (GeoJSON), clear, and primary **Route** button (UI only for now — no routing yet)
+- Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
+- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with one ordered via array → FOSSGIS OSRM **Route** (bike) → road line + chevrons + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
+- Route is derived state (`route` module runes); sketch changes invalidate it
 
-Not present yet: OSRM / routing, GPX export, multi-shape ordering, persistence, settings UI.
+Not present yet: multi-shape ordering UI, persistence, settings UI (profile/base URL via env).
 
 ## Commands
 
@@ -57,27 +59,35 @@ src/
       tools/          # ToolsPanel.svelte, ToolButton.svelte, ToolShortcuts.svelte
       history/        # HistoryPanel shell + HistoryButtons + DrawingIOMenu
       status/         # StatusBar.svelte
-    config/map.ts     # style URL, Warsaw center/bounds/zoom
-    drawing/          # framework-agnostic MapLibre draw logic
-      controller.ts   # pointer/keyboard interaction → draft/commit
-      geo.ts          # LineString / Polygon helpers, sampling
-      layers.ts       # GeoJSON sources + fill/line/preview layers
-      io.ts           # GeoJSON sketch parse/serialize/download (pure + DOM download)
-      tap.ts          # double-tap / re-tap-last helpers (pure)
-    geometry/         # haversine distance + sketch stats (pure)
-    map/context.ts    # provideMap / useMap (Svelte context)
+    config/map.ts         # style URL, Warsaw center/bounds/zoom
+    config/routing.ts     # via caps / simplify tolerances (client-safe)
+    drawing/              # framework-agnostic MapLibre draw logic
+      controller.ts       # pointer/keyboard interaction → draft/commit
+      geo.ts              # LineString / Polygon helpers, sampling
+      layers.ts           # sketch + preview + route GeoJSON layers
+      io.ts               # GeoJSON sketch parse/serialize/download
+      tap.ts              # double-tap / re-tap-last helpers (pure)
+    routing/              # pure route pipeline + GPX serialize
+      extract.ts          # features → guide paths
+      vias.ts             # RDP / sample → OSRM via points
+      osrm.ts / generate.ts / client.ts / gpx.ts / postprocess.ts
+    geometry/             # haversine distance + sketch stats (pure)
+    map/context.ts        # provideMap / useMap (Svelte context)
     state/
       tools.svelte.ts     # active tool + Space-to-pan (module runes)
-      drawings.svelte.ts  # completed FeatureCollection + snapshot undo/redo + replaceAll
-      status.svelte.ts    # status copy + distance/point labels (module runes)
+      drawings.svelte.ts  # completed FeatureCollection + snapshot undo/redo
+      route.svelte.ts     # derived route (loading/ready) + GPX download
+      status.svelte.ts    # status copy + distance/point labels
     util/
-      pointer.svelte.ts   # fine-hover vs touch (matchMedia); DEV: window.__gpxArtPointer
-    index.ts          # public $lib barrel
+      pointer.svelte.ts   # fine-hover vs touch (matchMedia)
   routes/
     +layout.svelte
-    +page.svelte      # FullscreenMap only
-    layout.css        # Tailwind + theme tokens (sole color palette) + viewport reset
+    +page.svelte          # FullscreenMap only
+    api/route/+server.ts  # OSRM proxy (FOSSGIS bike by default)
+    layout.css            # Tailwind + theme tokens + viewport reset
 ```
+
+**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host). Fair use on the public demo: ≤1 req/s, valid User-Agent.
 
 ## Architecture notes
 
@@ -97,7 +107,7 @@ src/
 
 **Conventions for new code:**
 
-- Pure domain logic under `src/lib/` (e.g. future `routing/`) with colocated unit tests (`*.test.ts`).
+- Pure domain logic under `src/lib/` (e.g. `routing/`) with colocated unit tests (`*.test.ts`).
 - Keep MapLibre behind client lifecycle (`onMount` / dynamic import / style `load`).
 - Shared map constants stay in `src/lib/config/map.ts`; avoid scattering magic numbers.
 - Prefer thin Svelte components over putting event/geometry logic in `.svelte` files.

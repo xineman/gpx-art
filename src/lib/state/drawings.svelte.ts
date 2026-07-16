@@ -14,16 +14,22 @@ let features = $state<DrawingFeature[]>([]);
 let past = $state<DrawingFeature[][]>([]);
 /** Future feature lists for redo, oldest first. */
 let future = $state<DrawingFeature[][]>([]);
+/** Increments for every committed sketch mutation. */
+let revision = $state(0);
 
 function commit(next: DrawingFeature[]) {
 	past = [...past, features];
 	features = next;
 	future = [];
+	revision += 1;
 }
 
 export const drawings = {
 	get features() {
 		return features;
+	},
+	get revision() {
+		return revision;
 	},
 	get collection(): FeatureCollection {
 		return {
@@ -61,6 +67,7 @@ export const drawings = {
 		future = [...future, features];
 		past = past.slice(0, -1);
 		features = previous;
+		revision += 1;
 	},
 	redo() {
 		if (future.length === 0) return;
@@ -68,6 +75,7 @@ export const drawings = {
 		past = [...past, features];
 		future = future.slice(0, -1);
 		features = next;
+		revision += 1;
 	},
 	/**
 	 * Remove all shapes in one undoable step (toolbar Clear).
@@ -82,6 +90,7 @@ export const drawings = {
 		features = [];
 		past = [];
 		future = [];
+		revision += 1;
 	},
 	remove(id: string) {
 		const next = features.filter((f) => f.properties.id !== id);

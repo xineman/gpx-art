@@ -130,6 +130,21 @@ describe('drawings history', () => {
 		expect(drawings.canUndo).toBe(false);
 	});
 
+	it('increments revision for every committed sketch change', () => {
+		const initialRevision = drawings.revision;
+		drawings.add(lineA, 'polyline');
+		expect(drawings.revision).toBe(initialRevision + 1);
+
+		drawings.undo();
+		expect(drawings.revision).toBe(initialRevision + 2);
+
+		drawings.redo();
+		expect(drawings.revision).toBe(initialRevision + 3);
+
+		drawings.clearSketch();
+		expect(drawings.revision).toBe(initialRevision + 4);
+	});
+
 	it('remove drops redo history', () => {
 		const a = drawings.add(lineA, 'polyline');
 		drawings.add(lineB, 'pencil');

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import Map from './Map.svelte';
 	import DrawingLayer from './DrawingLayer.svelte';
+	import RouteLayer from './RouteLayer.svelte';
 	import HistoryPanel from '$lib/components/history/HistoryPanel.svelte';
 	import StatusBar from '$lib/components/status/StatusBar.svelte';
 	import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
@@ -36,6 +37,7 @@
 <div class="fixed inset-0 m-0 h-dvh w-screen overflow-hidden p-0">
 	<Map {center} {zoom} {bounds} {style} bind:ready={mapReady}>
 		<DrawingLayer />
+		<RouteLayer />
 	</Map>
 
 	{#if mapReady}
