@@ -8,8 +8,7 @@ import {
 import { distanceBetween, pathLength } from '$lib/geometry/distance';
 import type { GuidePath } from './types';
 
-export type ViasResult =
-	{ ok: true; vias: Position[]; closed: boolean } | { ok: false; error: string };
+export type ViasResult = { ok: true; vias: Position[] } | { ok: false; error: string };
 
 /**
  * Perpendicular distance from point P to segment AB, in meters.
@@ -197,5 +196,5 @@ export function guideToVias(
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	return { ok: true, vias: points, closed: guide.closed };
+	return { ok: true, vias: points };
 }

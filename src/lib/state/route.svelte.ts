@@ -3,7 +3,7 @@ import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { prepareRouteLegs, routeWaypoints, type RouteLeg } from '$lib/routing/prepare';
+import { prepareRouteVias } from '$lib/routing/prepare';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -12,8 +12,7 @@ export type WaypointRole = 'start' | 'via' | 'end';
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
 /** Prepared OSRM input for the current/last route attempt. */
-let legs = $state<RouteLeg[]>([]);
-const waypoints = $derived(routeWaypoints(legs));
+let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let errorMessage = $state<string | null>(null);
 /** Drawing revision used for the current/last route attempt. */
@@ -28,7 +27,7 @@ function waypointRole(index: number, total: number): WaypointRole {
 
 function resetResult() {
 	geometry = null;
-	legs = [];
+	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
 	sourceRevision = null;
@@ -37,7 +36,7 @@ function resetResult() {
 function showError(revision: number, message: string) {
 	status = 'error';
 	geometry = null;
-	legs = [];
+	waypoints = [];
 	distanceM = 0;
 	errorMessage = message;
 	sourceRevision = revision;
@@ -119,7 +118,7 @@ export const route = {
 			return { ok: false as const, error };
 		}
 
-		const prepared = prepareRouteLegs(features);
+		const prepared = prepareRouteVias(features);
 		if (!prepared.ok) {
 			showError(revision, prepared.error);
 			return prepared;
@@ -130,11 +129,11 @@ export const route = {
 		errorMessage = null;
 		sourceRevision = revision;
 		// Show vias immediately while OSRM runs.
-		legs = prepared.legs;
+		waypoints = prepared.vias;
 		geometry = null;
 		distanceM = 0;
 
-		const result = await requestRoute(legs);
+		const result = await requestRoute(waypoints);
 
 		// Stale response (sketch changed or a newer request started).
 		if (id !== requestId) {

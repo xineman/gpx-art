@@ -5,34 +5,20 @@ import { extractGuidePaths } from './extract';
 import type { GuidePath } from './types';
 import { guideToVias } from './vias';
 
-export type RouteLeg = {
-	/** OSRM via points for one guide path. */
-	vias: Position[];
-	closed: boolean;
-};
-
-export type PrepareRouteLegsResult =
+export type PrepareRouteViasResult =
 	| {
 			ok: true;
-			legs: RouteLeg[];
+			vias: Position[];
 	  }
 	| { ok: false; error: string };
 
-/**
- * Flatten route legs into the ordered OSRM via sequence used for map markers.
- * Consecutive duplicates are ignored, matching server-side route normalization.
- */
-export function routeWaypoints(legs: RouteLeg[]): Position[] {
-	const waypoints: Position[] = [];
-	for (const { vias } of legs) {
-		for (const point of vias) {
-			const previous = waypoints.at(-1);
-			if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
-				waypoints.push(point);
-			}
+function appendUnique(target: Position[], points: Position[]) {
+	for (const point of points) {
+		const previous = target.at(-1);
+		if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
+			target.push(point);
 		}
 	}
-	return waypoints;
 }
 
 function minimumVias(guide: GuidePath): number {
@@ -76,12 +62,12 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
 }
 
 /**
- * Client-side: sketch features → OSRM via legs.
+ * Client-side: sketch features → one ordered OSRM via sequence.
  */
-export function prepareRouteLegs(
+export function prepareRouteVias(
 	features: Feature[],
 	options: { maxVias?: number } = {}
-): PrepareRouteLegsResult {
+): PrepareRouteViasResult {
 	if (features.length === 0) {
 		return { ok: false, error: 'Sketch a shape first.' };
 	}
@@ -97,19 +83,19 @@ export function prepareRouteLegs(
 		return { ok: false, error: `Too many shapes to route at once (max ${maxVias} waypoints).` };
 	}
 
-	const legs: RouteLeg[] = [];
+	const vias: Position[] = [];
 
 	for (const [index, guide] of guides.entries()) {
 		const viasResult = guideToVias(guide, { maxVias: viaBudgets[index]! });
 		if (!viasResult.ok) {
 			return viasResult;
 		}
-		legs.push({ vias: viasResult.vias, closed: viasResult.closed });
+		appendUnique(vias, viasResult.vias);
 	}
 
-	if (legs.length === 0) {
+	if (vias.length === 0) {
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	return { ok: true, legs };
+	return { ok: true, vias };
 }

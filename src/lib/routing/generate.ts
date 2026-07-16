@@ -1,7 +1,7 @@
 import type { Position } from 'geojson';
 import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
 import { fetchOsrmRoute, type OsrmConfig } from './osrm';
-import type { RouteLegInput, RouteResponse } from './types';
+import type { RouteResponse } from './types';
 
 export type GenerateRouteOptions = {
 	osrm: OsrmConfig;
@@ -30,69 +30,54 @@ function dedupeConsecutivePositions(points: Position[]): Position[] {
 }
 
 /**
- * Validate client-prepared legs before calling OSRM.
+ * Validate client-prepared vias before calling OSRM.
  * Returns a friendly error string or null when OK.
  */
-export function validateRouteLegs(legs: unknown): string | null {
-	if (!Array.isArray(legs) || legs.length === 0) {
-		return 'Request must include at least one route leg.';
-	}
-
-	for (let i = 0; i < legs.length; i++) {
-		const leg = legs[i];
-		if (!leg || typeof leg !== 'object') {
-			return `Leg ${i} is invalid.`;
-		}
-		const vias = (leg as RouteLegInput).vias;
-		if (!Array.isArray(vias) || vias.length < MIN_VIAS) {
-			return `Leg ${i} needs at least ${MIN_VIAS} waypoints.`;
-		}
-		if (vias.length > MAX_VIAS) {
-			return `Leg ${i} has too many waypoints (max ${MAX_VIAS}).`;
-		}
-		for (let j = 0; j < vias.length; j++) {
-			if (!isFinitePosition(vias[j])) {
-				return `Leg ${i} waypoint ${j} is not a valid [lng, lat].`;
-			}
-			const [lng, lat] = vias[j] as Position;
-			if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
-				return `Leg ${i} waypoint ${j} is out of range.`;
-			}
-		}
-	}
-
-	const vias = dedupeConsecutivePositions((legs as RouteLegInput[]).flatMap((leg) => leg.vias));
-	if (vias.length < MIN_VIAS) {
-		return 'Need at least two distinct waypoints.';
+export function validateRouteVias(vias: unknown): string | null {
+	if (!Array.isArray(vias) || vias.length < MIN_VIAS) {
+		return `Request needs at least ${MIN_VIAS} waypoints.`;
 	}
 	if (vias.length > MAX_VIAS) {
 		return `Route has too many waypoints (max ${MAX_VIAS}).`;
+	}
+
+	for (let index = 0; index < vias.length; index++) {
+		if (!isFinitePosition(vias[index])) {
+			return `Waypoint ${index} is not a valid [lng, lat].`;
+		}
+		const [lng, lat] = vias[index] as Position;
+		if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+			return `Waypoint ${index} is out of range.`;
+		}
+	}
+
+	const distinctVias = dedupeConsecutivePositions(vias as Position[]);
+	if (distinctVias.length < MIN_VIAS) {
+		return 'Need at least two distinct waypoints.';
 	}
 
 	return null;
 }
 
 /**
- * Server pipeline: ordered prepared via legs → one continuous OSRM route.
+ * Server pipeline: ordered prepared vias → one continuous OSRM route.
  */
-export async function generateRouteFromLegs(
-	legs: RouteLegInput[],
+export async function generateRoute(
+	vias: Position[],
 	options: GenerateRouteOptions
 ): Promise<RouteResponse> {
-	const validationError = validateRouteLegs(legs);
+	const validationError = validateRouteVias(vias);
 	if (validationError) {
 		return { ok: false, error: validationError };
 	}
 
-	const vias = dedupeConsecutivePositions(legs.flatMap((leg) => leg.vias));
-	const osrm = await fetchOsrmRoute(vias, options.osrm);
+	const distinctVias = dedupeConsecutivePositions(vias);
+	const osrm = await fetchOsrmRoute(distinctVias, options.osrm);
 	if (!osrm.ok) return osrm;
 
 	return {
 		ok: true,
 		geometry: osrm.geometry,
-		distanceM: osrm.distanceM,
-		provider: 'osrm-route',
-		viaCount: vias.length
+		distanceM: osrm.distanceM
 	};
 }

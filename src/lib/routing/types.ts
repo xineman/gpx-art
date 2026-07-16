@@ -6,22 +6,12 @@ export type GuidePath = {
 	points: Position[];
 	/** True when the sketch should form a closed loop. */
 	closed: boolean;
-	/** Source feature id when available. */
-	featureId?: string;
-};
-
-/** Ordered via coordinates prepared from one guide shape. */
-export type RouteLegInput = {
-	vias: Position[];
-	closed?: boolean;
 };
 
 export type RouteSuccess = {
 	ok: true;
 	geometry: LineString;
 	distanceM: number;
-	provider: 'osrm-route';
-	viaCount: number;
 };
 
 export type RouteFailure = {

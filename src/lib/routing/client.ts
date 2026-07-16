@@ -1,20 +1,11 @@
 import type { Position } from 'geojson';
-import type { RouteLeg } from './prepare';
 import type { RouteResponse } from './types';
-
-export type RouteRequestBody = {
-	legs: Array<{ vias: Position[]; closed?: boolean }>;
-};
 
 /**
  * Browser client for the app's route API (proxies OSRM server-side).
- * Legs must already be prepared on the client (`prepareRouteLegs`).
+ * Vias must already be prepared on the client (`prepareRouteVias`).
  */
-export async function requestRoute(legs: RouteLeg[]): Promise<RouteResponse> {
-	const body: RouteRequestBody = {
-		legs: legs.map((leg) => ({ vias: leg.vias, closed: leg.closed }))
-	};
-
+export async function requestRoute(vias: Position[]): Promise<RouteResponse> {
 	let response: Response;
 	try {
 		response = await fetch('/api/route', {
@@ -23,7 +14,7 @@ export async function requestRoute(legs: RouteLeg[]): Promise<RouteResponse> {
 				'Content-Type': 'application/json',
 				Accept: 'application/json'
 			},
-			body: JSON.stringify(body)
+			body: JSON.stringify({ vias })
 		});
 	} catch {
 		return { ok: false, error: 'Network error — couldn’t start routing.' };

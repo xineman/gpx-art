@@ -28,9 +28,7 @@ const success = {
 			[21.01, 52.01]
 		]
 	},
-	distanceM: 1_300,
-	provider: 'osrm-route' as const,
-	viaCount: 2
+	distanceM: 1_300
 };
 
 afterEach(() => {

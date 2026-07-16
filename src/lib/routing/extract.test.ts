@@ -32,7 +32,7 @@ describe('extractGuidePaths', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { tool: 'polyline', id: 'a' },
+				properties: { tool: 'polyline' },
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -47,14 +47,13 @@ describe('extractGuidePaths', () => {
 		expect(paths).toHaveLength(1);
 		expect(paths[0]!.closed).toBe(false);
 		expect(paths[0]!.points).toHaveLength(3);
-		expect(paths[0]!.featureId).toBe('a');
 	});
 
 	it('extracts polygon exterior as closed open-ring', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { tool: 'polygon', id: 'poly' },
+				properties: { tool: 'polygon' },
 				geometry: {
 					type: 'Polygon',
 					coordinates: [
@@ -80,7 +79,7 @@ describe('extractGuidePaths', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { id: '1' },
+				properties: {},
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -91,7 +90,7 @@ describe('extractGuidePaths', () => {
 			},
 			{
 				type: 'Feature',
-				properties: { id: '2' },
+				properties: {},
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -102,7 +101,10 @@ describe('extractGuidePaths', () => {
 			}
 		];
 		const paths = extractGuidePaths(features);
-		expect(paths.map((p) => p.featureId)).toEqual(['1', '2']);
+		expect(paths.map((path) => path.points[0])).toEqual([
+			[0, 0],
+			[2, 2]
+		]);
 	});
 
 	it('skips unsupported Point geometry', () => {

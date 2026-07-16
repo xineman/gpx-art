@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Feature } from 'geojson';
-import { prepareRouteLegs, routeWaypoints } from './prepare';
+import { prepareRouteVias } from './prepare';
 
-describe('prepareRouteLegs', () => {
-	it('builds a single open leg from a polyline', () => {
+describe('prepareRouteVias', () => {
+	it('builds vias from a polyline', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
@@ -18,40 +18,13 @@ describe('prepareRouteLegs', () => {
 				}
 			}
 		];
-		const result = prepareRouteLegs(features);
+		const result = prepareRouteVias(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.legs).toHaveLength(1);
-		expect(result.legs[0]!.closed).toBe(false);
-		expect(result.legs[0]!.vias.length).toBeGreaterThanOrEqual(2);
+		expect(result.vias.length).toBeGreaterThanOrEqual(2);
 	});
 
-	it('derives map waypoints from legs while removing consecutive duplicates', () => {
-		expect(
-			routeWaypoints([
-				{
-					vias: [
-						[21, 52],
-						[21.01, 52]
-					],
-					closed: false
-				},
-				{
-					vias: [
-						[21.01, 52],
-						[21.02, 52]
-					],
-					closed: false
-				}
-			])
-		).toEqual([
-			[21, 52],
-			[21.01, 52],
-			[21.02, 52]
-		]);
-	});
-
-	it('marks polygon legs closed and re-appends start in vias', () => {
+	it('re-appends the start for polygon vias', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
@@ -70,11 +43,10 @@ describe('prepareRouteLegs', () => {
 				}
 			}
 		];
-		const result = prepareRouteLegs(features);
+		const result = prepareRouteVias(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.legs[0]!.closed).toBe(true);
-		const vias = result.legs[0]!.vias;
+		const vias = result.vias;
 		const first = vias[0]!;
 		const last = vias[vias.length - 1]!;
 		expect(first[0]).toBe(last[0]);
@@ -82,11 +54,11 @@ describe('prepareRouteLegs', () => {
 	});
 
 	it('rejects empty sketch', () => {
-		const result = prepareRouteLegs([]);
+		const result = prepareRouteVias([]);
 		expect(result.ok).toBe(false);
 	});
 
-	it('preserves multi-feature leg order', () => {
+	it('combines multi-feature vias in order and removes boundary duplicates', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
@@ -105,18 +77,20 @@ describe('prepareRouteLegs', () => {
 				geometry: {
 					type: 'LineString',
 					coordinates: [
-						[2, 2],
-						[3, 3]
+						[1, 1],
+						[2, 2]
 					]
 				}
 			}
 		];
-		const result = prepareRouteLegs(features);
+		const result = prepareRouteVias(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.legs).toHaveLength(2);
-		expect(result.legs[0]!.vias[0]).toEqual([0, 0]);
-		expect(result.legs[1]!.vias[0]).toEqual([2, 2]);
+		expect(result.vias).toEqual([
+			[0, 0],
+			[1, 1],
+			[2, 2]
+		]);
 	});
 
 	it('shares one via budget across shapes while preserving a closed loop', () => {
@@ -151,12 +125,11 @@ describe('prepareRouteLegs', () => {
 			}
 		];
 
-		const result = prepareRouteLegs(features, { maxVias: 5 });
+		const result = prepareRouteVias(features, { maxVias: 5 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(routeWaypoints(result.legs)).toHaveLength(5);
-		expect(result.legs[0]!.vias).toHaveLength(2);
-		const closed = result.legs[1]!.vias;
+		expect(result.vias).toHaveLength(5);
+		const closed = result.vias.slice(2);
 		expect(closed).toHaveLength(3);
 		expect(closed[0]).toEqual(closed[closed.length - 1]);
 	});
@@ -178,7 +151,7 @@ describe('prepareRouteLegs', () => {
 			}
 		}));
 
-		const result = prepareRouteLegs(features);
+		const result = prepareRouteVias(features);
 		expect(result).toEqual({
 			ok: false,
 			error: 'Too many shapes to route at once (max 60 waypoints).'

@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with legs → FOSSGIS OSRM **Route** (bike) → road line + chevrons + optional GPX
+- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with one ordered via array → FOSSGIS OSRM **Route** (bike) → road line + chevrons + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)

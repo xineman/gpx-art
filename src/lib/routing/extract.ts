@@ -67,15 +67,7 @@ export function extractGuidePaths(features: Feature[]): GuidePath[] {
 	for (const feature of features) {
 		const path = pathFromGeometry(feature.geometry);
 		if (!path) continue;
-		const id =
-			typeof feature.properties === 'object' &&
-			feature.properties &&
-			typeof (feature.properties as { id?: unknown }).id === 'string'
-				? (feature.properties as { id: string }).id
-				: feature.id != null
-					? String(feature.id)
-					: undefined;
-		paths.push({ ...path, featureId: id });
+		paths.push(path);
 	}
 	return paths;
 }
