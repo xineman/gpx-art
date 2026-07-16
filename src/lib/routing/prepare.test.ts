@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Feature } from 'geojson';
-import { prepareRouteLegs } from './prepare';
+import { prepareRouteLegs, routeWaypoints } from './prepare';
 
 describe('prepareRouteLegs', () => {
 	it('builds a single open leg from a polyline', () => {
@@ -24,8 +24,31 @@ describe('prepareRouteLegs', () => {
 		expect(result.legs).toHaveLength(1);
 		expect(result.legs[0]!.closed).toBe(false);
 		expect(result.legs[0]!.vias.length).toBeGreaterThanOrEqual(2);
-		expect(result.waypoints.length).toBe(result.legs[0]!.vias.length);
-		expect(result.waypoints[0]).toEqual(result.legs[0]!.vias[0]);
+	});
+
+	it('derives map waypoints from legs while removing consecutive duplicates', () => {
+		expect(
+			routeWaypoints([
+				{
+					vias: [
+						[21, 52],
+						[21.01, 52]
+					],
+					closed: false
+				},
+				{
+					vias: [
+						[21.01, 52],
+						[21.02, 52]
+					],
+					closed: false
+				}
+			])
+		).toEqual([
+			[21, 52],
+			[21.01, 52],
+			[21.02, 52]
+		]);
 	});
 
 	it('marks polygon legs closed and re-appends start in vias', () => {
@@ -131,7 +154,7 @@ describe('prepareRouteLegs', () => {
 		const result = prepareRouteLegs(features, { maxVias: 5 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.waypoints).toHaveLength(5);
+		expect(routeWaypoints(result.legs)).toHaveLength(5);
 		expect(result.legs[0]!.vias).toHaveLength(2);
 		const closed = result.legs[1]!.vias;
 		expect(closed).toHaveLength(3);

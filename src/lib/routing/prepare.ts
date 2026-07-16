@@ -15,10 +15,25 @@ export type PrepareRouteLegsResult =
 	| {
 			ok: true;
 			legs: RouteLeg[];
-			/** Flat ordered vias for map markers (all legs concatenated). */
-			waypoints: Position[];
 	  }
 	| { ok: false; error: string };
+
+/**
+ * Flatten route legs into the ordered OSRM via sequence used for map markers.
+ * Consecutive duplicates are ignored, matching server-side route normalization.
+ */
+export function routeWaypoints(legs: RouteLeg[]): Position[] {
+	const waypoints: Position[] = [];
+	for (const { vias } of legs) {
+		for (const point of vias) {
+			const previous = waypoints.at(-1);
+			if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
+				waypoints.push(point);
+			}
+		}
+	}
+	return waypoints;
+}
 
 function minimumVias(guide: GuidePath): number {
 	return guide.closed ? MIN_VIAS + 1 : MIN_VIAS;
@@ -61,7 +76,7 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
 }
 
 /**
- * Client-side: sketch features → OSRM via legs + flat waypoint list for the map.
+ * Client-side: sketch features → OSRM via legs.
  */
 export function prepareRouteLegs(
 	features: Feature[],
@@ -83,7 +98,6 @@ export function prepareRouteLegs(
 	}
 
 	const legs: RouteLeg[] = [];
-	const waypoints: Position[] = [];
 
 	for (const [index, guide] of guides.entries()) {
 		const viasResult = guideToVias(guide, { maxVias: viaBudgets[index]! });
@@ -91,17 +105,11 @@ export function prepareRouteLegs(
 			return viasResult;
 		}
 		legs.push({ vias: viasResult.vias, closed: viasResult.closed });
-		for (const p of viasResult.vias) {
-			const prev = waypoints[waypoints.length - 1];
-			if (!prev || prev[0] !== p[0] || prev[1] !== p[1]) {
-				waypoints.push(p);
-			}
-		}
 	}
 
 	if (legs.length === 0) {
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	return { ok: true, legs, waypoints };
+	return { ok: true, legs };
 }

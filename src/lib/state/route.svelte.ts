@@ -3,7 +3,7 @@ import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { prepareRouteLegs } from '$lib/routing/prepare';
+import { prepareRouteLegs, routeWaypoints, type RouteLeg } from '$lib/routing/prepare';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -11,7 +11,9 @@ export type WaypointRole = 'start' | 'via' | 'end';
 
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
-let waypoints = $state<Position[]>([]);
+/** Prepared OSRM input for the current/last route attempt. */
+let legs = $state<RouteLeg[]>([]);
+const waypoints = $derived(routeWaypoints(legs));
 let distanceM = $state(0);
 let errorMessage = $state<string | null>(null);
 /** Drawing revision used for the current/last route attempt. */
@@ -26,7 +28,7 @@ function waypointRole(index: number, total: number): WaypointRole {
 
 function resetResult() {
 	geometry = null;
-	waypoints = [];
+	legs = [];
 	distanceM = 0;
 	errorMessage = null;
 	sourceRevision = null;
@@ -35,7 +37,7 @@ function resetResult() {
 function showError(revision: number, message: string) {
 	status = 'error';
 	geometry = null;
-	waypoints = [];
+	legs = [];
 	distanceM = 0;
 	errorMessage = message;
 	sourceRevision = revision;
@@ -128,11 +130,11 @@ export const route = {
 		errorMessage = null;
 		sourceRevision = revision;
 		// Show vias immediately while OSRM runs.
-		waypoints = prepared.waypoints;
+		legs = prepared.legs;
 		geometry = null;
 		distanceM = 0;
 
-		const result = await requestRoute(prepared.legs);
+		const result = await requestRoute(legs);
 
 		// Stale response (sketch changed or a newer request started).
 		if (id !== requestId) {
