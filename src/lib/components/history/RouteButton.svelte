@@ -15,7 +15,7 @@
 	async function onRoute() {
 		if (!canRoute) return;
 		status.flash('Routing…', 60_000);
-		const result = await route.generate(drawings.features);
+		const result = await route.generate(drawings.features, drawings.revision);
 		if (!result.ok) {
 			if (result.error === 'Superseded.') {
 				status.clearFlash();

@@ -10,7 +10,7 @@ export type GuidePath = {
 	featureId?: string;
 };
 
-/** One OSRM leg: ordered via coordinates. */
+/** Ordered via coordinates prepared from one guide shape. */
 export type RouteLegInput = {
 	vias: Position[];
 	closed?: boolean;

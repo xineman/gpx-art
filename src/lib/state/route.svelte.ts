@@ -14,23 +14,9 @@ let geometry = $state<LineString | null>(null);
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let errorMessage = $state<string | null>(null);
-/** Fingerprint of features used for the current/last successful or in-flight route. */
-let sourceFingerprint = $state<string | null>(null);
+/** Drawing revision used for the current/last route attempt. */
+let sourceRevision = $state<number | null>(null);
 let requestId = 0;
-
-function fingerprint(features: Feature[]): string {
-	return features
-		.map((f) => {
-			const id =
-				typeof f.properties === 'object' &&
-				f.properties &&
-				typeof (f.properties as { id?: unknown }).id === 'string'
-					? (f.properties as { id: string }).id
-					: String(f.id ?? '');
-			return id;
-		})
-		.join('\0');
-}
 
 function waypointRole(index: number, total: number): WaypointRole {
 	if (index === 0) return 'start';
@@ -43,7 +29,16 @@ function resetResult() {
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
-	sourceFingerprint = null;
+	sourceRevision = null;
+}
+
+function showError(revision: number, message: string) {
+	status = 'error';
+	geometry = null;
+	waypoints = [];
+	distanceM = 0;
+	errorMessage = message;
+	sourceRevision = revision;
 }
 
 function waypointFeatures(points: Position[]): Feature[] {
@@ -101,11 +96,10 @@ export const route = {
 	get distanceLabel() {
 		return formatDistance(distanceM);
 	},
-	/** Drop route when the sketch no longer matches what produced it. */
-	syncSketch(features: Feature[]) {
-		const fp = fingerprint(features);
-		if (sourceFingerprint == null) return;
-		if (fp !== sourceFingerprint) {
+	/** Drop route when the drawing revision no longer matches what produced it. */
+	syncSketch(revision: number) {
+		if (sourceRevision == null) return;
+		if (revision !== sourceRevision) {
 			requestId += 1; // cancel in-flight apply
 			status = 'idle';
 			resetResult();
@@ -116,31 +110,23 @@ export const route = {
 		status = 'idle';
 		resetResult();
 	},
-	async generate(features: Feature[]) {
+	async generate(features: Feature[], revision: number) {
 		if (features.length === 0) {
-			status = 'error';
-			errorMessage = 'Sketch a shape first.';
-			geometry = null;
-			waypoints = [];
-			distanceM = 0;
-			return { ok: false as const, error: errorMessage };
+			const error = 'Sketch a shape first.';
+			showError(revision, error);
+			return { ok: false as const, error };
 		}
 
 		const prepared = prepareRouteLegs(features);
 		if (!prepared.ok) {
-			status = 'error';
-			errorMessage = prepared.error;
-			geometry = null;
-			waypoints = [];
-			distanceM = 0;
+			showError(revision, prepared.error);
 			return prepared;
 		}
 
 		const id = ++requestId;
-		const fp = fingerprint(features);
 		status = 'loading';
 		errorMessage = null;
-		sourceFingerprint = fp;
+		sourceRevision = revision;
 		// Show vias immediately while OSRM runs.
 		waypoints = prepared.waypoints;
 		geometry = null;
@@ -165,7 +151,7 @@ export const route = {
 		geometry = result.geometry;
 		distanceM = result.distanceM;
 		errorMessage = null;
-		sourceFingerprint = fp;
+		sourceRevision = revision;
 		return result;
 	},
 	/** Download GPX for the current route (no-op when not ready). */

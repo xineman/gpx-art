@@ -24,12 +24,7 @@ function pathFromGeometry(geometry: Geometry): GuidePath | null {
 		case 'LineString': {
 			const points = geometry.coordinates;
 			if (points.length < 2) return null;
-			const closed =
-				points.length >= 3 &&
-				!!points[0] &&
-				!!points[lastIndex(points)] &&
-				points[0][0] === points[lastIndex(points)]![0] &&
-				points[0][1] === points[lastIndex(points)]![1];
+			const closed = points.length >= 3 && isClosedRing(points);
 			return {
 				points: closed ? openRing(points) : [...points],
 				closed

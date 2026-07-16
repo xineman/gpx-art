@@ -17,6 +17,3 @@ export const VIA_SAMPLE_SPACING_M = 120;
 
 /** Minimum distinct vias needed to call OSRM. */
 export const MIN_VIAS = 2;
-
-/** Close a loop if ends are within this distance (meters). */
-export const LOOP_CLOSE_TOLERANCE_M = 25;

@@ -1,12 +1,6 @@
 import type { Position } from 'geojson';
 import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
 import { fetchOsrmRoute, type OsrmConfig } from './osrm';
-import {
-	ensureClosedLoop,
-	measureRouteDistanceM,
-	stitchCoordinates,
-	toLineString
-} from './postprocess';
 import type { RouteLegInput, RouteResponse } from './types';
 
 export type GenerateRouteOptions = {
@@ -22,6 +16,17 @@ function isFinitePosition(p: unknown): p is Position {
 		Number.isFinite(p[0]) &&
 		Number.isFinite(p[1])
 	);
+}
+
+function dedupeConsecutivePositions(points: Position[]): Position[] {
+	if (points.length === 0) return [];
+	const out: Position[] = [points[0]!];
+	for (let index = 1; index < points.length; index++) {
+		const point = points[index]!;
+		const previous = out[out.length - 1]!;
+		if (point[0] !== previous[0] || point[1] !== previous[1]) out.push(point);
+	}
+	return out;
 }
 
 /**
@@ -56,11 +61,19 @@ export function validateRouteLegs(legs: unknown): string | null {
 		}
 	}
 
+	const vias = dedupeConsecutivePositions((legs as RouteLegInput[]).flatMap((leg) => leg.vias));
+	if (vias.length < MIN_VIAS) {
+		return 'Need at least two distinct waypoints.';
+	}
+	if (vias.length > MAX_VIAS) {
+		return `Route has too many waypoints (max ${MAX_VIAS}).`;
+	}
+
 	return null;
 }
 
 /**
- * Server pipeline: prepared via legs → OSRM Route per leg → stitched LineString.
+ * Server pipeline: ordered prepared via legs → one continuous OSRM route.
  */
 export async function generateRouteFromLegs(
 	legs: RouteLegInput[],
@@ -71,46 +84,15 @@ export async function generateRouteFromLegs(
 		return { ok: false, error: validationError };
 	}
 
-	const parts: Position[][] = [];
-	let totalDistance = 0;
-	let viaCount = 0;
-	let anyClosed = false;
-
-	for (const leg of legs) {
-		const vias = leg.vias;
-		const closed = Boolean(leg.closed);
-		viaCount += vias.length;
-		anyClosed = anyClosed || closed;
-
-		const osrm = await fetchOsrmRoute(vias, options.osrm);
-		if (!osrm.ok) {
-			if (legs.length === 1) return osrm;
-			continue;
-		}
-
-		let coords = osrm.geometry.coordinates;
-		coords = ensureClosedLoop(coords, closed);
-		parts.push(coords);
-		totalDistance += measureRouteDistanceM(coords, osrm.distanceM);
-	}
-
-	if (parts.length === 0) {
-		return { ok: false, error: 'Couldn’t build a route from that sketch.' };
-	}
-
-	const closed = legs.length === 1 && anyClosed;
-	const stitched = ensureClosedLoop(stitchCoordinates(parts), closed);
-	const geometry = toLineString(stitched);
-
-	if (geometry.coordinates.length < 2) {
-		return { ok: false, error: 'Couldn’t build a route from that sketch.' };
-	}
+	const vias = dedupeConsecutivePositions(legs.flatMap((leg) => leg.vias));
+	const osrm = await fetchOsrmRoute(vias, options.osrm);
+	if (!osrm.ok) return osrm;
 
 	return {
 		ok: true,
-		geometry,
-		distanceM: measureRouteDistanceM(geometry.coordinates, totalDistance),
+		geometry: osrm.geometry,
+		distanceM: osrm.distanceM,
 		provider: 'osrm-route',
-		viaCount
+		viaCount: vias.length
 	};
 }

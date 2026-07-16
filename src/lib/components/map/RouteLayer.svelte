@@ -56,7 +56,7 @@
 
 	// Invalidate derived route when the sketch changes.
 	$effect(() => {
-		route.syncSketch(drawings.features);
+		route.syncSketch(drawings.revision);
 	});
 
 	onDestroy(teardown);
