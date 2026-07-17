@@ -403,19 +403,3 @@ export function mergeRouteDetourCandidates(
 		withGeometry(points, interval)
 	);
 }
-
-/**
- * Find waypoint-driven route excursions that return close to their entry.
- * Results only mark geometry; the original route remains untouched.
- */
-export function detectRouteDetours(
-	route: LineString,
-	waypoints: Position[],
-	optionOverrides: Partial<DetourDetectionOptions> = {}
-): RouteDetour[] {
-	if (route.coordinates.length < 3 || waypoints.length < 3) return [];
-	const automaticCandidates = analyzeRouteDetours(route, waypoints, optionOverrides).flatMap(
-		(result) => (result.automatic ? [result.automatic] : [])
-	);
-	return mergeRouteDetourCandidates(route, automaticCandidates);
-}
