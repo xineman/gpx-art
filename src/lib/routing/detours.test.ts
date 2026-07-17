@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { LineString, Position } from 'geojson';
-import { analyzeRouteDetours, detectRouteDetours, mergeRouteDetourCandidates } from './detours';
+import {
+	analyzeRouteDetours,
+	detectRouteDetours,
+	isMeaningfulDetourCandidate,
+	mergeRouteDetourCandidates
+} from './detours';
 
 function line(coordinates: Position[]): LineString {
 	return { type: 'LineString', coordinates };
@@ -155,6 +160,24 @@ describe('detectRouteDetours', () => {
 			endIndex: 3,
 			waypointIndexes: [1]
 		});
+		expect(isMeaningfulDetourCandidate(analysis[1]!.manual!)).toBe(true);
+	});
+
+	it('classifies a straight waypoint span as a redundant routing constraint', () => {
+		const route = line([
+			[21, 52],
+			[21.001, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]);
+		const analysis = analyzeRouteDetours(route, [
+			[21, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]);
+
+		expect(analysis[1]!.manual).not.toBeNull();
+		expect(isMeaningfulDetourCandidate(analysis[1]!.manual!)).toBe(false);
 	});
 
 	it('uses the nearest return on each adjacent leg for manual endpoint candidates', () => {

@@ -75,6 +75,25 @@ const ordinarySuccess = {
 	]
 };
 
+const straightSuccess = {
+	ok: true as const,
+	geometry: {
+		type: 'LineString' as const,
+		coordinates: [
+			[21, 52],
+			[21.001, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]
+	},
+	distanceM: 205,
+	waypoints: [
+		[21, 52],
+		[21.002, 52],
+		[21.003, 52]
+	]
+};
+
 const combinedDetourSuccess = {
 	ok: true as const,
 	geometry: {
@@ -170,6 +189,22 @@ describe('route state', () => {
 
 		expect(route.toggleDetourWaypoint(1)).toBe('removed');
 		expect(route.detourCount).toBe(0);
+	});
+
+	it('removes a marked waypoint on a straight span without drawing a detour overlay', async () => {
+		requestRouteMock.mockResolvedValueOnce(straightSuccess).mockResolvedValueOnce(success);
+		await route.generate([line], 21);
+
+		expect(route.toggleDetourWaypoint(1)).toBe('added');
+		expect(route.markedWaypointCount).toBe(1);
+		expect(route.detourCount).toBe(0);
+		expect(route.remainingWaypointCount).toBe(2);
+
+		await route.refineRoute();
+		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
+			straightSuccess.waypoints[0],
+			straightSuccess.waypoints[2]
+		]);
 	});
 
 	it('allows both endpoint waypoints to become manual detours', async () => {

@@ -5,6 +5,7 @@ import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
 import {
 	analyzeRouteDetours,
+	isMeaningfulDetourCandidate,
 	mergeRouteDetourCandidates,
 	type RouteDetour,
 	type WaypointDetourAnalysis
@@ -72,7 +73,7 @@ function isEffectiveDetourWaypoint(index: number): boolean {
 	return detourOverrides[index] ?? analysis.automatic != null;
 }
 
-function effectiveDetourCandidate(index: number): RouteDetour | null {
+function selectedDetourCandidate(index: number): RouteDetour | null {
 	const analysis = detourAnalysis[index];
 	if (!analysis || !isEffectiveDetourWaypoint(index)) return null;
 	return analysis.automatic ?? analysis.manual;
@@ -85,8 +86,8 @@ function rebuildDetours() {
 	}
 
 	const candidates = detourAnalysis.flatMap((analysis) => {
-		const candidate = effectiveDetourCandidate(analysis.waypointIndex);
-		return candidate ? [candidate] : [];
+		const candidate = selectedDetourCandidate(analysis.waypointIndex);
+		return candidate && isMeaningfulDetourCandidate(candidate) ? [candidate] : [];
 	});
 	detours = mergeRouteDetourCandidates(geometry, candidates);
 }
@@ -113,14 +114,18 @@ function refinementWaypoints(): Position[] {
 
 	const routePoints = geometry.coordinates;
 	return dedupeConsecutivePositions(
-		waypoints.map((waypoint, index) => {
-			const candidate = effectiveDetourCandidate(index);
-			if (!candidate) return waypoint;
+		waypoints.flatMap((waypoint, index) => {
+			const candidate = selectedDetourCandidate(index);
+			if (!candidate) return [waypoint];
+
+			// A selected point on an effectively straight route is a redundant via.
+			// Drop it from the next OSRM request instead of highlighting a token span.
+			if (!isMeaningfulDetourCandidate(candidate)) return [];
 
 			// A start detour has no coordinate before its entry, so begin at its
 			// return instead. Every other marked via moves to the detour entry.
 			const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
-			return routePoints[routeIndex] ?? waypoint;
+			return [routePoints[routeIndex] ?? waypoint];
 		})
 	);
 }

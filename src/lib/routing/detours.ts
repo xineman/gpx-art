@@ -42,12 +42,29 @@ const DEFAULT_OPTIONS: DetourDetectionOptions = {
 	minStretch: 3
 };
 
+// Lower than the automatic-detection thresholds: this only decides whether a
+// selected waypoint has enough of an excursion to show and relocate. Smaller
+// spans are better treated as redundant routing constraints.
+const MIN_MEANINGFUL_EXCESS_DISTANCE_M = 10;
+const MIN_MEANINGFUL_STRETCH = 1.05;
+
 type DetourInterval = Omit<RouteDetour, 'geometry'>;
 
 function candidateScore(candidate: DetourInterval): number {
 	// Returning tightly to the same road is the strongest hairpin signal.
 	// The excess-distance term then prefers the widest of equivalent overlaps.
 	return candidate.excessDistanceM - candidate.returnDistanceM * 4;
+}
+
+/**
+ * Decide whether a selected waypoint's local route span is an actual excursion
+ * rather than a short, straight section around an otherwise redundant via.
+ */
+export function isMeaningfulDetourCandidate(candidate: RouteDetour): boolean {
+	return (
+		candidate.excessDistanceM >= MIN_MEANINGFUL_EXCESS_DISTANCE_M &&
+		candidate.routeDistanceM / Math.max(candidate.returnDistanceM, 1) >= MIN_MEANINGFUL_STRETCH
+	);
 }
 
 function isBetterCandidate(candidate: DetourInterval, best: DetourInterval | null): boolean {
