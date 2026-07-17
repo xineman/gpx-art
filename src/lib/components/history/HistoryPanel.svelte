@@ -24,6 +24,6 @@
 
 	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
-	<!-- Primary next step: sketch utilities → route. -->
+	<!-- Adaptive next step: sketch → route → iterative refinement. -->
 	<RouteButton />
 </PanelChrome>

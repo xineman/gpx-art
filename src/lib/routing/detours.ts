@@ -26,6 +26,13 @@ export type RouteDetour = {
 	excessDistanceM: number;
 };
 
+/** Automatic and relaxed manual candidates for one ordered OSRM waypoint. */
+export type WaypointDetourAnalysis = {
+	waypointIndex: number;
+	automatic: RouteDetour | null;
+	manual: RouteDetour | null;
+};
+
 const DEFAULT_OPTIONS: DetourDetectionOptions = {
 	minRouteDistanceM: 50,
 	minExcessDistanceM: 40,
@@ -41,6 +48,15 @@ function candidateScore(candidate: DetourInterval): number {
 	// Returning tightly to the same road is the strongest hairpin signal.
 	// The excess-distance term then prefers the widest of equivalent overlaps.
 	return candidate.excessDistanceM - candidate.returnDistanceM * 4;
+}
+
+function isBetterCandidate(candidate: DetourInterval, best: DetourInterval | null): boolean {
+	return (
+		!best ||
+		candidateScore(candidate) > candidateScore(best) ||
+		(candidateScore(candidate) === candidateScore(best) &&
+			candidate.returnDistanceM < best.returnDistanceM)
+	);
 }
 
 function cumulativeDistances(points: Position[]): number[] {
@@ -92,17 +108,102 @@ function locateWaypoints(points: Position[], waypoints: Position[]): number[] {
 	return indexes;
 }
 
-function candidateAroundWaypoint(
+function intervalForRange(
+	points: Position[],
+	cumulative: number[],
+	startIndex: number,
+	endIndex: number,
+	waypointIndex: number
+): DetourInterval | null {
+	if (startIndex < 0 || endIndex >= points.length || startIndex >= endIndex) return null;
+	const routeDistanceM = cumulative[endIndex]! - cumulative[startIndex]!;
+	const returnDistanceM = distanceBetween(points[startIndex]!, points[endIndex]!);
+	return {
+		startIndex,
+		endIndex,
+		waypointIndexes: [waypointIndex],
+		routeDistanceM,
+		returnDistanceM,
+		excessDistanceM: routeDistanceM - returnDistanceM
+	};
+}
+
+function withGeometry(points: Position[], interval: DetourInterval): RouteDetour {
+	return {
+		...interval,
+		geometry: {
+			type: 'LineString',
+			coordinates: points.slice(interval.startIndex, interval.endIndex + 1)
+		}
+	};
+}
+
+function positionsDiffer(a: Position, b: Position): boolean {
+	return a[0] !== b[0] || a[1] !== b[1];
+}
+
+function findDistinctBefore(
+	points: Position[],
+	routeIndex: number,
+	lowerBound: number
+): number | null {
+	for (let index = routeIndex - 1; index >= lowerBound; index--) {
+		if (positionsDiffer(points[index]!, points[routeIndex]!)) return index;
+	}
+	return null;
+}
+
+function findDistinctAfter(
+	points: Position[],
+	routeIndex: number,
+	upperBound: number
+): number | null {
+	for (let index = routeIndex + 1; index <= upperBound; index++) {
+		if (positionsDiffer(points[index]!, points[routeIndex]!)) return index;
+	}
+	return null;
+}
+
+/** Always provide the smallest ordered route span available around a collapsed via. */
+function fallbackAroundWaypoint(
+	points: Position[],
+	cumulative: number[],
+	waypointRouteIndexes: number[],
+	waypointIndex: number
+): DetourInterval | null {
+	const routeIndex = waypointRouteIndexes[waypointIndex]!;
+	const localLower = waypointRouteIndexes[waypointIndex - 1] ?? 0;
+	const localUpper = waypointRouteIndexes[waypointIndex + 1] ?? points.length - 1;
+	const before =
+		findDistinctBefore(points, routeIndex, localLower) ?? findDistinctBefore(points, routeIndex, 0);
+	const after =
+		findDistinctAfter(points, routeIndex, localUpper) ??
+		findDistinctAfter(points, routeIndex, points.length - 1);
+
+	if (before != null && after != null) {
+		return intervalForRange(points, cumulative, before, after, waypointIndex);
+	}
+	if (after != null) return intervalForRange(points, cumulative, routeIndex, after, waypointIndex);
+	if (before != null)
+		return intervalForRange(points, cumulative, before, routeIndex, waypointIndex);
+	if (points.length >= 2) {
+		return intervalForRange(points, cumulative, 0, points.length - 1, waypointIndex);
+	}
+	return null;
+}
+
+function analyzeIntermediateWaypoint(
 	points: Position[],
 	cumulative: number[],
 	waypointRouteIndexes: number[],
 	waypointIndex: number,
 	options: DetourDetectionOptions
-): DetourInterval | null {
+): Pick<WaypointDetourAnalysis, 'automatic' | 'manual'> {
 	const routeIndex = waypointRouteIndexes[waypointIndex]!;
 	const lowerBound = waypointRouteIndexes[waypointIndex - 1] ?? 0;
 	const upperBound = waypointRouteIndexes[waypointIndex + 1] ?? points.length - 1;
-	let best: DetourInterval | null = null;
+	let bestAutomatic: DetourInterval | null = null;
+	let bestManual: DetourInterval | null = null;
 
 	for (let startIndex = routeIndex - 1; startIndex >= lowerBound; startIndex--) {
 		const beforeWaypointM = cumulative[routeIndex]! - cumulative[startIndex]!;
@@ -114,41 +215,131 @@ function candidateAroundWaypoint(
 			if (afterWaypointM > options.maxWaypointLegM) break;
 			if (afterWaypointM < options.minWaypointLegM) continue;
 
-			const routeDistanceM = cumulative[endIndex]! - cumulative[startIndex]!;
-			const returnDistanceM = distanceBetween(points[startIndex]!, points[endIndex]!);
-			if (returnDistanceM > options.maxReturnDistanceM) continue;
+			const candidate = intervalForRange(points, cumulative, startIndex, endIndex, waypointIndex);
+			if (!candidate) continue;
 
-			const excessDistanceM = routeDistanceM - returnDistanceM;
-			const candidate: DetourInterval = {
-				startIndex,
-				endIndex,
-				waypointIndexes: [waypointIndex],
-				routeDistanceM,
-				returnDistanceM,
-				excessDistanceM
-			};
-
+			if (isBetterCandidate(candidate, bestManual)) bestManual = candidate;
 			if (
-				!best ||
-				candidateScore(candidate) > candidateScore(best) ||
-				(candidateScore(candidate) === candidateScore(best) &&
-					candidate.returnDistanceM < best.returnDistanceM)
+				candidate.returnDistanceM <= options.maxReturnDistanceM &&
+				isBetterCandidate(candidate, bestAutomatic)
 			) {
-				best = candidate;
+				bestAutomatic = candidate;
 			}
 		}
 	}
 
 	if (
-		!best ||
-		best.routeDistanceM < options.minRouteDistanceM ||
-		best.excessDistanceM < options.minExcessDistanceM ||
-		best.routeDistanceM / Math.max(best.returnDistanceM, 1) < options.minStretch
+		bestAutomatic &&
+		(bestAutomatic.routeDistanceM < options.minRouteDistanceM ||
+			bestAutomatic.excessDistanceM < options.minExcessDistanceM ||
+			bestAutomatic.routeDistanceM / Math.max(bestAutomatic.returnDistanceM, 1) <
+				options.minStretch)
 	) {
-		return null;
+		bestAutomatic = null;
 	}
 
-	return best;
+	bestManual ??= fallbackAroundWaypoint(points, cumulative, waypointRouteIndexes, waypointIndex);
+
+	return {
+		automatic: bestAutomatic ? withGeometry(points, bestAutomatic) : null,
+		manual: bestManual ? withGeometry(points, bestManual) : null
+	};
+}
+
+function analyzeEndpointWaypoint(
+	points: Position[],
+	cumulative: number[],
+	waypointRouteIndexes: number[],
+	waypointIndex: number,
+	options: DetourDetectionOptions
+): RouteDetour | null {
+	const isStart = waypointIndex === 0;
+	const routeIndex = waypointRouteIndexes[waypointIndex]!;
+	const adjacentIndex = isStart
+		? (waypointRouteIndexes[1] ?? points.length - 1)
+		: (waypointRouteIndexes[waypointIndex - 1] ?? 0);
+	let bestIndex: number | null = null;
+	let bestReturnDistance = Number.POSITIVE_INFINITY;
+	let bestRouteDistance = -1;
+
+	const from = isStart ? routeIndex + 1 : adjacentIndex;
+	const to = isStart ? adjacentIndex : routeIndex - 1;
+	for (let index = from; index <= to; index++) {
+		const routeDistanceM = isStart
+			? cumulative[index]! - cumulative[routeIndex]!
+			: cumulative[routeIndex]! - cumulative[index]!;
+		if (routeDistanceM < options.minWaypointLegM) continue;
+		if (routeDistanceM > options.maxWaypointLegM) {
+			if (isStart) break;
+			continue;
+		}
+		const returnDistanceM = distanceBetween(points[routeIndex]!, points[index]!);
+		if (
+			returnDistanceM < bestReturnDistance ||
+			(returnDistanceM === bestReturnDistance && routeDistanceM > bestRouteDistance)
+		) {
+			bestIndex = index;
+			bestReturnDistance = returnDistanceM;
+			bestRouteDistance = routeDistanceM;
+		}
+	}
+
+	let interval =
+		bestIndex == null
+			? null
+			: intervalForRange(
+					points,
+					cumulative,
+					isStart ? routeIndex : bestIndex,
+					isStart ? bestIndex : routeIndex,
+					waypointIndex
+				);
+	interval ??= fallbackAroundWaypoint(points, cumulative, waypointRouteIndexes, waypointIndex);
+	return interval ? withGeometry(points, interval) : null;
+}
+
+/**
+ * Analyze each waypoint once so UI overrides can reuse relaxed candidates
+ * without changing which candidates pass automatic detection.
+ */
+export function analyzeRouteDetours(
+	route: LineString,
+	waypoints: Position[],
+	optionOverrides: Partial<DetourDetectionOptions> = {}
+): WaypointDetourAnalysis[] {
+	const points = route.coordinates;
+	if (points.length < 2 || waypoints.length === 0) return [];
+
+	const options = { ...DEFAULT_OPTIONS, ...optionOverrides };
+	const cumulative = cumulativeDistances(points);
+	const waypointRouteIndexes = locateWaypoints(points, waypoints);
+
+	return waypoints.map((_, waypointIndex) => {
+		if (waypointIndex === 0 || waypointIndex === waypoints.length - 1) {
+			return {
+				waypointIndex,
+				automatic: null,
+				manual: analyzeEndpointWaypoint(
+					points,
+					cumulative,
+					waypointRouteIndexes,
+					waypointIndex,
+					options
+				)
+			};
+		}
+
+		return {
+			waypointIndex,
+			...analyzeIntermediateWaypoint(
+				points,
+				cumulative,
+				waypointRouteIndexes,
+				waypointIndex,
+				options
+			)
+		};
+	});
 }
 
 function mergeIntervals(
@@ -183,6 +374,19 @@ function mergeIntervals(
 	return merged;
 }
 
+/** Merge selected per-waypoint candidates into display intervals. */
+export function mergeRouteDetourCandidates(
+	route: LineString,
+	candidates: RouteDetour[]
+): RouteDetour[] {
+	const points = route.coordinates;
+	if (points.length < 2 || candidates.length === 0) return [];
+	const cumulative = cumulativeDistances(points);
+	return mergeIntervals(points, cumulative, candidates).map((interval) =>
+		withGeometry(points, interval)
+	);
+}
+
 /**
  * Find waypoint-driven route excursions that return close to their entry.
  * Results only mark geometry; the original route remains untouched.
@@ -192,31 +396,9 @@ export function detectRouteDetours(
 	waypoints: Position[],
 	optionOverrides: Partial<DetourDetectionOptions> = {}
 ): RouteDetour[] {
-	const points = route.coordinates;
-	if (points.length < 3 || waypoints.length < 3) return [];
-
-	const options = { ...DEFAULT_OPTIONS, ...optionOverrides };
-	const cumulative = cumulativeDistances(points);
-	const waypointRouteIndexes = locateWaypoints(points, waypoints);
-	const candidates: DetourInterval[] = [];
-
-	// Start/end anchors define the route. Only intermediate vias can be optional excursions.
-	for (let waypointIndex = 1; waypointIndex < waypoints.length - 1; waypointIndex++) {
-		const candidate = candidateAroundWaypoint(
-			points,
-			cumulative,
-			waypointRouteIndexes,
-			waypointIndex,
-			options
-		);
-		if (candidate) candidates.push(candidate);
-	}
-
-	return mergeIntervals(points, cumulative, candidates).map((interval) => ({
-		...interval,
-		geometry: {
-			type: 'LineString',
-			coordinates: points.slice(interval.startIndex, interval.endIndex + 1)
-		}
-	}));
+	if (route.coordinates.length < 3 || waypoints.length < 3) return [];
+	const automaticCandidates = analyzeRouteDetours(route, waypoints, optionOverrides).flatMap(
+		(result) => (result.automatic ? [result.automatic] : [])
+	);
+	return mergeRouteDetourCandidates(route, automaticCandidates);
 }

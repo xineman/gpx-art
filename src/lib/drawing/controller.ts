@@ -1,6 +1,7 @@
 import type { Map as MaplibreMap, MapMouseEvent, MapTouchEvent } from 'maplibre-gl';
 import type { Geometry, Position } from 'geojson';
 import type { ToolId } from '$lib/state/tools.svelte';
+import { routeWaypointAtPoint } from '$lib/map/waypoint-hit';
 import { closedPolygon, lineString, rectanglePolygon, shouldSample } from './geo';
 import { PREVIEW_SOURCE, previewCollection, setSourceData } from './layers';
 import { resolveVertexClick, toLngLat, type ScreenPoint } from './tap';
@@ -227,6 +228,7 @@ export class DrawingController {
 	#onMouseDown = (e: MapMouseEvent) => {
 		const tool = this.#drawTool;
 		if (tool === 'pan') return;
+		if (routeWaypointAtPoint(this.#map, e.point) != null) return;
 		// Ignore secondary buttons; allow button 0 and touch-emulated (0).
 		if (e.originalEvent.button !== 0) return;
 		// A live touch stroke owns the gesture — ignore compatibility mouse events.
@@ -262,6 +264,7 @@ export class DrawingController {
 	#onTouchStart = (e: MapTouchEvent) => {
 		const tool = this.#drawTool;
 		if (tool === 'pan') return;
+		if (e.points[0] && routeWaypointAtPoint(this.#map, e.points[0]) != null) return;
 
 		// Multi-touch: cancel an in-progress drag so pinch-zoom isn't fought.
 		if (e.points.length !== 1) {
@@ -373,6 +376,7 @@ export class DrawingController {
 	// ─── Vertex workflow (polyline / polygon) ──────────────────────────
 
 	#onClick = (e: MapMouseEvent) => {
+		if (routeWaypointAtPoint(this.#map, e.point) != null) return;
 		const tool = this.#drawTool;
 		if (tool !== 'polyline' && tool !== 'polygon') return;
 		// Ignore click that ends a drag from other tools
@@ -429,6 +433,7 @@ export class DrawingController {
 	};
 
 	#onDblClick = (e: MapMouseEvent) => {
+		if (routeWaypointAtPoint(this.#map, e.point) != null) return;
 		const tool = this.#drawTool;
 		if (tool !== 'polyline' && tool !== 'polygon') return;
 		e.preventDefault();

@@ -14,7 +14,7 @@ const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
 const ROUTE_DETOURS = 'gpx-route-detours';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
-const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
+export const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
 /** Sprite id registered via `map.addImage` for line-following direction marks. */
 const ROUTE_CHEVRON_IMAGE = 'gpx-route-chevron';
 
@@ -288,7 +288,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 				'circle-radius': [
 					'case',
 					['==', ['get', 'detour'], true],
-					5.25,
+					['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 5.25],
 					['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 4.25]
 				],
 				'circle-color': [

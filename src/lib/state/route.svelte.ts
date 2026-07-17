@@ -1,24 +1,36 @@
 import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
+import { MIN_VIAS } from '$lib/config/routing';
 import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
-import { detectRouteDetours, type RouteDetour } from '$lib/routing/detours';
+import {
+	analyzeRouteDetours,
+	mergeRouteDetourCandidates,
+	type RouteDetour,
+	type WaypointDetourAnalysis
+} from '$lib/routing/detours';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
 import { prepareRouteVias } from '$lib/routing/prepare';
+import type { RouteResponse, RouteSuccess } from '$lib/routing/types';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
 
 export type WaypointRole = 'start' | 'via' | 'end';
 
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
 let detours = $state<RouteDetour[]>([]);
-/** Prepared OSRM input for the current/last route attempt. */
+let detourAnalysis = $state<WaypointDetourAnalysis[]>([]);
+let detourOverrides = $state<Record<number, boolean>>({});
+/** Prepared OSRM input while loading; OSRM-snapped positions once ready. */
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let errorMessage = $state<string | null>(null);
 /** Drawing revision used for the current/last route attempt. */
 let sourceRevision = $state<number | null>(null);
+let loadingAction = $state<RouteLoadingAction>(null);
+let hasRefinedRoute = $state(false);
 let requestId = 0;
 
 function waypointRole(index: number, total: number): WaypointRole {
@@ -30,23 +42,158 @@ function waypointRole(index: number, total: number): WaypointRole {
 function resetResult() {
 	geometry = null;
 	detours = [];
+	detourAnalysis = [];
+	detourOverrides = {};
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
 	sourceRevision = null;
+	loadingAction = null;
+	hasRefinedRoute = false;
 }
 
 function showError(revision: number, message: string) {
 	status = 'error';
 	geometry = null;
 	detours = [];
+	detourAnalysis = [];
+	detourOverrides = {};
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = message;
 	sourceRevision = revision;
+	loadingAction = null;
+	hasRefinedRoute = false;
 }
 
-function waypointFeatures(points: Position[], detourWaypointIndexes: number[]): Feature[] {
+function isEffectiveDetourWaypoint(index: number): boolean {
+	const analysis = detourAnalysis[index];
+	if (!analysis) return false;
+	return detourOverrides[index] ?? analysis.automatic != null;
+}
+
+function effectiveDetourCandidate(index: number): RouteDetour | null {
+	const analysis = detourAnalysis[index];
+	if (!analysis || !isEffectiveDetourWaypoint(index)) return null;
+	return analysis.automatic ?? analysis.manual;
+}
+
+function rebuildDetours() {
+	if (!geometry) {
+		detours = [];
+		return;
+	}
+
+	const candidates = detourAnalysis.flatMap((analysis) => {
+		const candidate = effectiveDetourCandidate(analysis.waypointIndex);
+		return candidate ? [candidate] : [];
+	});
+	detours = mergeRouteDetourCandidates(geometry, candidates);
+}
+
+function dedupeConsecutivePositions(points: Position[]): Position[] {
+	const distinct: Position[] = [];
+	for (const point of points) {
+		const previous = distinct.at(-1);
+		if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
+			distinct.push(point);
+		}
+	}
+	return distinct;
+}
+
+function markedWaypointIndexes(): number[] {
+	return detourAnalysis
+		.filter((analysis) => isEffectiveDetourWaypoint(analysis.waypointIndex))
+		.map((analysis) => analysis.waypointIndex);
+}
+
+function refinementWaypoints(): Position[] {
+	if (!geometry) return dedupeConsecutivePositions(waypoints);
+
+	const routePoints = geometry.coordinates;
+	return dedupeConsecutivePositions(
+		waypoints.map((waypoint, index) => {
+			const candidate = effectiveDetourCandidate(index);
+			if (!candidate) return waypoint;
+
+			// A start detour has no coordinate before its entry, so begin at its
+			// return instead. Every other marked via moves to the detour entry.
+			const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
+			return routePoints[routeIndex] ?? waypoint;
+		})
+	);
+}
+
+function applyReadyResult(result: RouteSuccess, revision: number, refined: boolean) {
+	status = 'ready';
+	loadingAction = null;
+	geometry = result.geometry;
+	waypoints = result.waypoints;
+	detourAnalysis = analyzeRouteDetours(result.geometry, result.waypoints);
+	detourOverrides = {};
+	rebuildDetours();
+	distanceM = result.distanceM;
+	errorMessage = null;
+	sourceRevision = revision;
+	hasRefinedRoute = refined;
+}
+
+async function requestPreparedRoute(
+	vias: Position[],
+	revision: number,
+	action: Exclude<RouteLoadingAction, null>,
+	options: { preserveCurrent: boolean; refined: boolean }
+): Promise<RouteResponse> {
+	const id = ++requestId;
+	status = 'loading';
+	loadingAction = action;
+	errorMessage = null;
+	sourceRevision = revision;
+
+	if (!options.preserveCurrent) {
+		// Show prepared vias immediately while the first OSRM request runs.
+		waypoints = vias;
+		geometry = null;
+		detours = [];
+		detourAnalysis = [];
+		detourOverrides = {};
+		distanceM = 0;
+		hasRefinedRoute = false;
+	}
+
+	const result = await requestRoute(vias);
+	if (id !== requestId) {
+		return { ok: false, error: 'Superseded.' };
+	}
+
+	if (!result.ok) {
+		loadingAction = null;
+		errorMessage = result.error;
+		if (options.preserveCurrent && geometry) {
+			status = 'ready';
+			return result;
+		}
+
+		status = 'error';
+		geometry = null;
+		detours = [];
+		detourAnalysis = [];
+		detourOverrides = {};
+		distanceM = 0;
+		hasRefinedRoute = false;
+		return result;
+	}
+
+	applyReadyResult(result, revision, options.refined);
+	return result;
+}
+
+function waypointFeatures(
+	points: Position[],
+	detourWaypointIndexes: number[],
+	interactive: boolean
+): Feature[] {
 	const n = points.length;
 	return points.map((coordinates, index) => ({
 		type: 'Feature' as const,
@@ -54,7 +201,8 @@ function waypointFeatures(points: Position[], detourWaypointIndexes: number[]): 
 			kind: 'waypoint',
 			index,
 			role: waypointRole(index, n),
-			detour: detourWaypointIndexes.includes(index)
+			detour: detourWaypointIndexes.includes(index),
+			interactive
 		},
 		geometry: { type: 'Point' as const, coordinates }
 	}));
@@ -73,8 +221,31 @@ export const route = {
 	get detourCount() {
 		return detours.length;
 	},
+	get markedWaypointCount() {
+		return markedWaypointIndexes().length;
+	},
+	get remainingWaypointCount() {
+		return refinementWaypoints().length;
+	},
+	get canRefineRoute() {
+		return (
+			status === 'ready' &&
+			geometry != null &&
+			markedWaypointIndexes().length > 0 &&
+			refinementWaypoints().length >= MIN_VIAS
+		);
+	},
+	get hasRefinedRoute() {
+		return hasRefinedRoute;
+	},
+	get loadingAction() {
+		return loadingAction;
+	},
 	get waypoints() {
 		return waypoints;
+	},
+	isWaypointDetour(index: number) {
+		return isEffectiveDetourWaypoint(index);
 	},
 	get distanceM() {
 		return distanceM;
@@ -93,7 +264,7 @@ export const route = {
 	 */
 	get collection(): FeatureCollection {
 		const features: Feature[] = [];
-		const detourWaypointIndexes = detours.flatMap((detour) => detour.waypointIndexes);
+		const detourWaypointIndexes = markedWaypointIndexes();
 		if (geometry) {
 			features.push({
 				type: 'Feature',
@@ -115,7 +286,13 @@ export const route = {
 			});
 		}
 		if (waypoints.length > 0) {
-			features.push(...waypointFeatures(waypoints, detourWaypointIndexes));
+			features.push(
+				...waypointFeatures(
+					waypoints,
+					detourWaypointIndexes,
+					status === 'ready' && geometry != null
+				)
+			);
 		}
 		return { type: 'FeatureCollection', features };
 	},
@@ -136,6 +313,53 @@ export const route = {
 		status = 'idle';
 		resetResult();
 	},
+	/** Toggle one ready route waypoint's display-only detour classification. */
+	toggleDetourWaypoint(index: number): 'added' | 'removed' | null {
+		if (status !== 'ready' || geometry == null) return null;
+		const analysis = detourAnalysis[index];
+		if (!analysis?.manual) return null;
+
+		const automatic = analysis.automatic != null;
+		const next = !isEffectiveDetourWaypoint(index);
+		if (next === automatic) delete detourOverrides[index];
+		else detourOverrides[index] = next;
+		rebuildDetours();
+		return next ? 'added' : 'removed';
+	},
+	async refineRoute(): Promise<RouteResponse> {
+		if (status !== 'ready' || geometry == null || sourceRevision == null) {
+			return { ok: false, error: 'Generate a route first.' };
+		}
+		if (markedWaypointIndexes().length === 0) {
+			return { ok: false, error: 'Mark at least one waypoint to refine the route.' };
+		}
+
+		const vias = refinementWaypoints();
+		if (vias.length < MIN_VIAS) {
+			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
+		}
+
+		return requestPreparedRoute(vias, sourceRevision, 'refine', {
+			preserveCurrent: true,
+			refined: true
+		});
+	},
+	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
+		if (status !== 'ready' || geometry == null || !hasRefinedRoute) {
+			return { ok: false, error: 'Refine the route first.' };
+		}
+
+		const prepared = prepareRouteVias(features);
+		if (!prepared.ok) {
+			errorMessage = prepared.error;
+			return prepared;
+		}
+
+		return requestPreparedRoute(prepared.vias, revision, 'reset', {
+			preserveCurrent: true,
+			refined: false
+		});
+	},
 	async generate(features: Feature[], revision: number) {
 		if (features.length === 0) {
 			const error = 'Sketch a shape first.';
@@ -149,39 +373,10 @@ export const route = {
 			return prepared;
 		}
 
-		const id = ++requestId;
-		status = 'loading';
-		errorMessage = null;
-		sourceRevision = revision;
-		// Show vias immediately while OSRM runs.
-		waypoints = prepared.vias;
-		geometry = null;
-		detours = [];
-		distanceM = 0;
-
-		const result = await requestRoute(waypoints);
-
-		// Stale response (sketch changed or a newer request started).
-		if (id !== requestId) {
-			return { ok: false as const, error: 'Superseded.' };
-		}
-
-		if (!result.ok) {
-			status = 'error';
-			errorMessage = result.error;
-			geometry = null;
-			detours = [];
-			// Keep waypoints so the user still sees what was attempted.
-			return result;
-		}
-
-		status = 'ready';
-		geometry = result.geometry;
-		detours = detectRouteDetours(result.geometry, result.waypoints);
-		distanceM = result.distanceM;
-		errorMessage = null;
-		sourceRevision = revision;
-		return result;
+		return requestPreparedRoute(prepared.vias, revision, 'generate', {
+			preserveCurrent: false,
+			refined: false
+		});
 	},
 	/** Download GPX for the current route (no-op when not ready). */
 	downloadGpx() {
