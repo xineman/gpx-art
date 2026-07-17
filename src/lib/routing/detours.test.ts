@@ -11,7 +11,7 @@ function line(coordinates: Position[]): LineString {
 }
 
 describe('analyzeRouteDetours', () => {
-	it('retains a relaxed manual candidate when an ordinary bend fails automatic thresholds', () => {
+	it('retains a candidate when an ordinary bend is not a tight hairpin', () => {
 		const route = line([
 			[21, 52],
 			[21.001, 52],
@@ -24,16 +24,14 @@ describe('analyzeRouteDetours', () => {
 			[21.003, 52.001]
 		]);
 
-		expect(analysis[1]!.automatic).toBeNull();
-		expect(analysis[1]!.manual).toMatchObject({
+		expect(analysis[1]!.candidate).toMatchObject({
 			startIndex: 1,
-			endIndex: 3,
-			waypointIndexes: [1]
+			endIndex: 3
 		});
-		expect(isMeaningfulDetourCandidate(analysis[1]!.manual!)).toBe(true);
+		expect(isMeaningfulDetourCandidate(analysis[1]!.candidate!)).toBe(true);
 	});
 
-	it('classifies a straight waypoint span as a redundant routing constraint', () => {
+	it('returns null candidate for a straight waypoint span that is not a meaningful detour', () => {
 		const route = line([
 			[21, 52],
 			[21.001, 52],
@@ -46,11 +44,10 @@ describe('analyzeRouteDetours', () => {
 			[21.003, 52]
 		]);
 
-		expect(analysis[1]!.manual).not.toBeNull();
-		expect(isMeaningfulDetourCandidate(analysis[1]!.manual!)).toBe(false);
+		expect(analysis[1]!.candidate).toBeNull();
 	});
 
-	it('uses the nearest return on each adjacent leg for manual endpoint candidates', () => {
+	it('uses the nearest return on each adjacent leg for endpoint candidates', () => {
 		const route = line([
 			[21, 52],
 			[21.001, 52],
@@ -67,16 +64,14 @@ describe('analyzeRouteDetours', () => {
 		]);
 
 		expect(analysis[0]).toMatchObject({
-			automatic: null,
-			manual: { startIndex: 0, endIndex: 2, waypointIndexes: [0] }
+			candidate: { startIndex: 0, endIndex: 2 }
 		});
 		expect(analysis[2]).toMatchObject({
-			automatic: null,
-			manual: { startIndex: 4, endIndex: 6, waypointIndexes: [2] }
+			candidate: { startIndex: 4, endIndex: 6 }
 		});
 	});
 
-	it('falls back to distinct route coordinates when a via shares a route index', () => {
+	it('returns null candidate when a via shares a route index with a neighbor', () => {
 		const route = line([
 			[21, 52],
 			[21, 52],
@@ -89,8 +84,7 @@ describe('analyzeRouteDetours', () => {
 			[21.002, 52]
 		]);
 
-		expect(analysis[1]!.manual).toMatchObject({ startIndex: 0, endIndex: 2 });
-		expect(analysis[1]!.manual?.geometry.coordinates).toEqual(route.coordinates.slice(0, 3));
+		expect(analysis[1]!.candidate).toBeNull();
 	});
 
 	it('re-merges only the supplied waypoint candidates', () => {
@@ -101,23 +95,22 @@ describe('analyzeRouteDetours', () => {
 			[21.003, 52],
 			[21.004, 52]
 		]);
-		const makeCandidate = (startIndex: number, endIndex: number, waypointIndex: number) => ({
+		const makeCandidate = (startIndex: number, endIndex: number) => ({
 			geometry: line(route.coordinates.slice(startIndex, endIndex + 1)),
 			startIndex,
 			endIndex,
-			waypointIndexes: [waypointIndex],
 			routeDistanceM: 100,
 			returnDistanceM: 10,
 			excessDistanceM: 90
 		});
-		const first = makeCandidate(0, 2, 1);
-		const second = makeCandidate(2, 4, 2);
+		const first = makeCandidate(0, 2);
+		const second = makeCandidate(2, 4);
 
 		expect(mergeRouteDetourCandidates(route, [first, second])).toMatchObject([
-			{ startIndex: 0, endIndex: 4, waypointIndexes: [1, 2] }
+			{ startIndex: 0, endIndex: 4 }
 		]);
 		expect(mergeRouteDetourCandidates(route, [second])).toMatchObject([
-			{ startIndex: 2, endIndex: 4, waypointIndexes: [2] }
+			{ startIndex: 2, endIndex: 4 }
 		]);
 	});
 });

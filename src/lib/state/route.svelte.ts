@@ -5,7 +5,6 @@ import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
 import {
 	analyzeRouteDetours,
-	isMeaningfulDetourCandidate,
 	mergeRouteDetourCandidates,
 	type RouteDetour,
 	type WaypointDetourAnalysis
@@ -70,13 +69,13 @@ function showError(revision: number, message: string) {
 function isEffectiveDetourWaypoint(index: number): boolean {
 	const analysis = detourAnalysis[index];
 	if (!analysis) return false;
-	return detourOverrides[index] ?? analysis.automatic != null;
+	return detourOverrides[index] ?? analysis.candidate != null;
 }
 
 function selectedDetourCandidate(index: number): RouteDetour | null {
 	const analysis = detourAnalysis[index];
 	if (!analysis || !isEffectiveDetourWaypoint(index)) return null;
-	return analysis.automatic ?? analysis.manual;
+	return analysis.candidate;
 }
 
 function rebuildDetours() {
@@ -87,7 +86,7 @@ function rebuildDetours() {
 
 	const candidates = detourAnalysis.flatMap((analysis) => {
 		const candidate = selectedDetourCandidate(analysis.waypointIndex);
-		return candidate && isMeaningfulDetourCandidate(candidate) ? [candidate] : [];
+		return candidate ? [candidate] : [];
 	});
 	detours = mergeRouteDetourCandidates(geometry, candidates);
 }
@@ -118,12 +117,6 @@ function refinementWaypoints(): Position[] {
 			const candidate = selectedDetourCandidate(index);
 			if (!candidate) return [waypoint];
 
-			// A selected point on an effectively straight route is a redundant via.
-			// Drop it from the next OSRM request instead of highlighting a token span.
-			if (!isMeaningfulDetourCandidate(candidate)) return [];
-
-			// A start detour has no coordinate before its entry, so begin at its
-			// return instead. Every other marked via moves to the detour entry.
 			const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
 			return [routePoints[routeIndex] ?? waypoint];
 		})
@@ -282,7 +275,6 @@ export const route = {
 				type: 'Feature',
 				properties: {
 					kind: 'detour',
-					waypointIndexes: detour.waypointIndexes,
 					routeDistanceM: detour.routeDistanceM,
 					returnDistanceM: detour.returnDistanceM,
 					excessDistanceM: detour.excessDistanceM
@@ -322,12 +314,11 @@ export const route = {
 	toggleDetourWaypoint(index: number): 'added' | 'removed' | null {
 		if (status !== 'ready' || geometry == null) return null;
 		const analysis = detourAnalysis[index];
-		if (!analysis?.manual) return null;
+		if (!analysis?.candidate) return null;
 
-		const automatic = analysis.automatic != null;
 		const next = !isEffectiveDetourWaypoint(index);
-		if (next === automatic) delete detourOverrides[index];
-		else detourOverrides[index] = next;
+		if (next) delete detourOverrides[index];
+		else detourOverrides[index] = false;
 		rebuildDetours();
 		return next ? 'added' : 'removed';
 	},

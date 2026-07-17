@@ -158,7 +158,7 @@ describe('route state', () => {
 		).toEqual(route.detours[0]!.geometry);
 	});
 
-	it('suppresses and restores an automatically detected waypoint', async () => {
+	it('suppresses and restores an automatically selected waypoint', async () => {
 		requestRouteMock.mockResolvedValue(detourSuccess);
 		await route.generate([line], 20);
 
@@ -175,57 +175,62 @@ describe('route state', () => {
 		expect(route.detourCount).toBe(1);
 	});
 
-	it('adds and removes a relaxed manual detour candidate', async () => {
+	it('suppresses and restores a meaningful candidate for a bend waypoint', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 		await route.generate([line], 21);
 
+		// Waypoint 1 is auto-selected and meaningful — shows a detour overlay
+		expect(route.detourCount).toBe(1);
+		expect(route.toggleDetourWaypoint(1)).toBe('removed');
 		expect(route.detourCount).toBe(0);
+		expect(route.detours[0]).toBeUndefined();
+
 		expect(route.toggleDetourWaypoint(1)).toBe('added');
 		expect(route.detourCount).toBe(1);
-		expect(route.detours[0]).toMatchObject({ waypointIndexes: [1] });
+		expect(route.detours[0]).toBeDefined();
 		expect(
 			route.collection.features.find((feature) => feature.properties?.index === 1)?.properties
 		).toMatchObject({ role: 'via', detour: true });
-
-		expect(route.toggleDetourWaypoint(1)).toBe('removed');
-		expect(route.detourCount).toBe(0);
 	});
 
-	it('removes a marked waypoint on a straight span without drawing a detour overlay', async () => {
+	it('does not mark a straight-span waypoint — no meaningful candidate to toggle', async () => {
 		requestRouteMock.mockResolvedValueOnce(straightSuccess).mockResolvedValueOnce(success);
 		await route.generate([line], 21);
 
-		expect(route.toggleDetourWaypoint(1)).toBe('added');
-		expect(route.markedWaypointCount).toBe(1);
+		// Straight-span waypoint has no meaningful candidate → not selectable
+		expect(route.isWaypointDetour(1)).toBe(false);
+		expect(route.toggleDetourWaypoint(1)).toBeNull();
+		expect(route.markedWaypointCount).toBe(0);
 		expect(route.detourCount).toBe(0);
-		expect(route.remainingWaypointCount).toBe(2);
-
-		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
-			straightSuccess.waypoints[0],
-			straightSuccess.waypoints[2]
-		]);
+		// All waypoints stay as-is; nothing gets relocated or dropped
+		expect(route.remainingWaypointCount).toBe(3);
 	});
 
-	it('allows both endpoint waypoints to become manual detours', async () => {
+	it('does not allow toggling endpoints — no meaningful candidate', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 		await route.generate([line], 22);
 
-		expect(route.toggleDetourWaypoint(0)).toBe('added');
-		expect(route.toggleDetourWaypoint(2)).toBe('added');
-		expect(route.isWaypointDetour(0)).toBe(true);
-		expect(route.isWaypointDetour(2)).toBe(true);
+		// Endpoints have no meaningful candidate → not selectable
+		expect(route.isWaypointDetour(0)).toBe(false);
+		expect(route.isWaypointDetour(2)).toBe(false);
+		expect(route.toggleDetourWaypoint(0)).toBeNull();
 
-		const endpoints = route.collection.features.filter(
-			(feature) => feature.properties?.role === 'start' || feature.properties?.role === 'end'
+		const features = route.collection.features.filter(
+			(f) => f.properties?.role === 'start' || f.properties?.role === 'end'
 		);
-		expect(endpoints.map((feature) => feature.properties)).toMatchObject([
-			{ index: 0, role: 'start', detour: true },
-			{ index: 2, role: 'end', detour: true }
-		]);
+		expect(features.find((f) => f.properties?.index === 0)?.properties).toMatchObject({
+			index: 0,
+			role: 'start',
+			detour: false
+		});
+		expect(features.find((f) => f.properties?.index === 2)?.properties).toMatchObject({
+			index: 2,
+			role: 'end',
+			detour: false
+		});
 	});
 
-	it('moves automatic and manual marked waypoints to their detour entries', async () => {
+	it('relocates a meaningful waypoint to its detour entry during refinement', async () => {
 		const refined = {
 			...success,
 			waypoints: [
@@ -237,48 +242,50 @@ describe('route state', () => {
 		requestRouteMock.mockResolvedValueOnce(combinedDetourSuccess).mockResolvedValueOnce(refined);
 		await route.generate([line], 30);
 
+		// Only waypoint 1 is meaningful → auto-selected
 		expect(route.isWaypointDetour(1)).toBe(true);
-		route.toggleDetourWaypoint(3);
-		expect(route.markedWaypointCount).toBe(2);
-		expect(route.remainingWaypointCount).toBe(3);
+		expect(route.markedWaypointCount).toBe(1);
+		// 0, 2, 3 not selected → stay as-is; 1 relocated → total 4
+		expect(route.remainingWaypointCount).toBe(4);
 		expect(route.canRefineRoute).toBe(true);
-
-		await expect(route.refineRoute()).resolves.toEqual(refined);
+		await route.refineRoute();
 		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
 			combinedDetourSuccess.waypoints[0],
 			[21.002, 52],
-			combinedDetourSuccess.waypoints[2]
+			combinedDetourSuccess.waypoints[2],
+			combinedDetourSuccess.waypoints[3]
 		]);
-		expect(route.hasRefinedRoute).toBe(true);
-		expect(route.markedWaypointCount).toBe(0);
 	});
 
 	it('deduplicates relocated and retained waypoints before refinement', async () => {
 		requestRouteMock.mockResolvedValueOnce(loopWaypointsSuccess).mockResolvedValueOnce(success);
 		await route.generate([line], 31);
 
-		expect(route.isWaypointDetour(1)).toBe(true);
-		expect(route.markedWaypointCount).toBe(2);
+		// Waypoints 0 and 3 (endpoints) not meaningful → not selected → stay
+		// Waypoints 1 and 2 meaningful → auto-selected → relocated
 		expect(route.remainingWaypointCount).toBe(3);
-		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
-			loopWaypointsSuccess.waypoints[0],
-			loopWaypointsSuccess.waypoints[1],
-			loopWaypointsSuccess.waypoints[3]
-		]);
-	});
-
-	it('moves a marked start to its return and a marked via to its entry', async () => {
-		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(success);
-		await route.generate([line], 32);
-		route.toggleDetourWaypoint(0);
-		route.toggleDetourWaypoint(1);
-
-		expect(route.markedWaypointCount).toBe(2);
-		expect(route.remainingWaypointCount).toBe(2);
 		expect(route.canRefineRoute).toBe(true);
 		await route.refineRoute();
 		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
+			[21, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]);
+	});
+
+	it('moves a marked via to its detour entry while keeping endpoints as-is', async () => {
+		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(success);
+		await route.generate([line], 32);
+
+		// Waypoint 1 is meaningful → auto-selected; endpoints not meaningful → not selected
+		expect(route.isWaypointDetour(1)).toBe(true);
+		expect(route.markedWaypointCount).toBe(1);
+		// 0 stays, 1 relocated, 2 stays → 3 remaining
+		expect(route.remainingWaypointCount).toBe(3);
+		expect(route.canRefineRoute).toBe(true);
+		await route.refineRoute();
+		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
+			ordinarySuccess.waypoints[0],
 			[21.001, 52],
 			ordinarySuccess.waypoints[2]
 		]);
@@ -287,28 +294,42 @@ describe('route state', () => {
 	it('uses the latest refined waypoint set for another refinement', async () => {
 		requestRouteMock
 			.mockResolvedValueOnce(combinedDetourSuccess)
-			.mockResolvedValueOnce(detourSuccess)
+			.mockResolvedValueOnce(loopWaypointsSuccess)
 			.mockResolvedValueOnce(success);
 		await route.generate([line], 33);
-		route.toggleDetourWaypoint(3);
-		await route.refineRoute();
 
-		expect(route.isWaypointDetour(1)).toBe(true);
+		// Waypoint 1 is meaningful → auto-selected; others not → stay as-is
+		await route.refineRoute();
+		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
+			[21, 52],
+			[21.002, 52],
+			[21.003, 52],
+			[21.004, 52]
+		]);
+		expect(route.hasRefinedRoute).toBe(true);
+
+		// New route is loopWaypointsSuccess; vias 1 and 2 meaningful → relocated
+		expect(route.remainingWaypointCount).toBe(3);
 		await route.refineRoute();
 		expect(requestRouteMock).toHaveBeenNthCalledWith(3, [
-			detourSuccess.waypoints[0],
+			[21, 52],
 			[21.002, 52],
-			detourSuccess.waypoints[2]
+			[21.003, 52]
 		]);
 		expect(route.hasRefinedRoute).toBe(true);
 	});
 
 	it('preserves the ready route when refinement fails', async () => {
 		requestRouteMock
-			.mockResolvedValueOnce(detourSuccess)
+			.mockResolvedValueOnce(combinedDetourSuccess)
 			.mockResolvedValueOnce({ ok: false, error: 'No route found.' });
 		await route.generate([line], 34);
 		const previousGeometry = route.geometry;
+
+		// Suppress endpoints so the meaningful via can be refined
+		route.toggleDetourWaypoint(0);
+		route.toggleDetourWaypoint(3);
+		expect(route.canRefineRoute).toBe(true);
 
 		await expect(route.refineRoute()).resolves.toEqual({
 			ok: false,
@@ -323,10 +344,14 @@ describe('route state', () => {
 
 	it('resets a refined route from sketch-prepared waypoints', async () => {
 		requestRouteMock
-			.mockResolvedValueOnce(detourSuccess)
+			.mockResolvedValueOnce(combinedDetourSuccess)
 			.mockResolvedValueOnce(success)
-			.mockResolvedValueOnce(detourSuccess);
+			.mockResolvedValueOnce(combinedDetourSuccess);
 		await route.generate([line], 35);
+
+		// Suppress endpoints so refinement is possible
+		route.toggleDetourWaypoint(0);
+		route.toggleDetourWaypoint(3);
 		await route.refineRoute();
 		expect(route.hasRefinedRoute).toBe(true);
 
@@ -340,10 +365,14 @@ describe('route state', () => {
 
 	it('preserves a refined route when reset fails', async () => {
 		requestRouteMock
-			.mockResolvedValueOnce(detourSuccess)
+			.mockResolvedValueOnce(combinedDetourSuccess)
 			.mockResolvedValueOnce(success)
 			.mockResolvedValueOnce({ ok: false, error: 'Reset failed.' });
 		await route.generate([line], 38);
+
+		// Suppress endpoints so refinement is possible
+		route.toggleDetourWaypoint(0);
+		route.toggleDetourWaypoint(3);
 		await route.refineRoute();
 		const refinedGeometry = route.geometry;
 
@@ -367,6 +396,8 @@ describe('route state', () => {
 		await route.generate([line], 36);
 		const previousGeometry = route.geometry;
 
+		// Need to suppress endpoints so remaining waypoints ≥ MIN_VIAS
+		route.toggleDetourWaypoint(0);
 		const pending = route.refineRoute();
 		expect(route.loadingAction).toBe('refine');
 		expect(route.geometry).toEqual(previousGeometry);
@@ -378,24 +409,31 @@ describe('route state', () => {
 		expect(route.geometry).toBeNull();
 	});
 
-	it('resets manual overrides on reroute, clear, invalidation, and error', async () => {
+	it('resets overrides on reroute, clear, invalidation, and error', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 		await route.generate([line], 23);
-		route.toggleDetourWaypoint(1);
 		expect(route.isWaypointDetour(1)).toBe(true);
 
-		await route.generate([line], 23);
-		expect(route.isWaypointDetour(1)).toBe(false);
+		// Toggle off
 		route.toggleDetourWaypoint(1);
+		expect(route.isWaypointDetour(1)).toBe(false);
+
+		// Reroute resets
+		await route.generate([line], 23);
+		expect(route.isWaypointDetour(1)).toBe(true);
+		route.toggleDetourWaypoint(1);
+
 		route.clear();
 		expect(route.isWaypointDetour(1)).toBe(false);
 
 		await route.generate([line], 24);
+		expect(route.isWaypointDetour(1)).toBe(true);
 		route.toggleDetourWaypoint(1);
 		route.syncSketch(25);
 		expect(route.isWaypointDetour(1)).toBe(false);
 
 		await route.generate([line], 26);
+		expect(route.isWaypointDetour(1)).toBe(true);
 		route.toggleDetourWaypoint(1);
 		await route.generate([], 27);
 		expect(route.isWaypointDetour(1)).toBe(false);
