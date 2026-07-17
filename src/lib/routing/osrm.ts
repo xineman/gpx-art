@@ -2,7 +2,7 @@ import type { LineString, Position } from 'geojson';
 import type { OsrmRouteResponse } from './types';
 
 export type OsrmFetchResult =
-	| { ok: true; geometry: LineString; distanceM: number }
+	| { ok: true; geometry: LineString; distanceM: number; waypoints: Position[] }
 	| { ok: false; error: string; status?: number };
 
 export type OsrmConfig = {
@@ -16,6 +16,17 @@ export type OsrmConfig = {
 
 function trimTrailingSlash(url: string) {
 	return url.replace(/\/+$/, '');
+}
+
+function isFinitePosition(value: unknown): value is Position {
+	return (
+		Array.isArray(value) &&
+		value.length >= 2 &&
+		typeof value[0] === 'number' &&
+		typeof value[1] === 'number' &&
+		Number.isFinite(value[0]) &&
+		Number.isFinite(value[1])
+	);
 }
 
 /**
@@ -89,10 +100,16 @@ export async function fetchOsrmRoute(
 	if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length < 2) {
 		return { ok: false, error: 'Routing server returned an empty path.' };
 	}
+	const snappedWaypoints = body.waypoints?.map((waypoint) => waypoint.location) ?? [];
+	const waypoints =
+		snappedWaypoints.length === vias.length && snappedWaypoints.every(isFinitePosition)
+			? snappedWaypoints
+			: vias;
 
 	return {
 		ok: true,
 		geometry,
-		distanceM: typeof route?.distance === 'number' ? route.distance : 0
+		distanceM: typeof route?.distance === 'number' ? route.distance : 0,
+		waypoints
 	};
 }

@@ -28,7 +28,11 @@ const success = {
 			[21.01, 52.01]
 		]
 	},
-	distanceM: 1_300
+	distanceM: 1_300,
+	waypoints: [
+		[21, 52],
+		[21.01, 52.01]
+	]
 };
 
 afterEach(() => {
@@ -37,6 +41,41 @@ afterEach(() => {
 });
 
 describe('route state', () => {
+	it('adds detour overlays without changing the route geometry', async () => {
+		const detourSuccess = {
+			ok: true as const,
+			geometry: {
+				type: 'LineString' as const,
+				coordinates: [
+					[21, 52],
+					[21.001, 52],
+					[21.002, 52],
+					[21.002, 52.002],
+					[21.002, 52],
+					[21.003, 52]
+				]
+			},
+			distanceM: 700,
+			waypoints: [
+				[21, 52],
+				[21.002, 52.002],
+				[21.003, 52]
+			]
+		};
+		requestRouteMock.mockResolvedValue(detourSuccess);
+
+		await route.generate([line], 3);
+
+		expect(route.detourCount).toBe(1);
+		expect(route.geometry).toEqual(detourSuccess.geometry);
+		expect(
+			route.collection.features.find((feature) => feature.properties?.kind === 'route')?.geometry
+		).toEqual(detourSuccess.geometry);
+		expect(
+			route.collection.features.find((feature) => feature.properties?.kind === 'detour')?.geometry
+		).toEqual(route.detours[0]!.geometry);
+	});
+
 	it('invalidates a ready route when the drawing revision changes', async () => {
 		requestRouteMock.mockResolvedValue(success);
 
@@ -47,6 +86,7 @@ describe('route state', () => {
 		expect(route.status).toBe('idle');
 		expect(route.geometry).toBeNull();
 		expect(route.waypoints).toEqual([]);
+		expect(route.detours).toEqual([]);
 	});
 
 	it('ignores an in-flight result after the drawing revision changes', async () => {

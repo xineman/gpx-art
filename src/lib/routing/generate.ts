@@ -78,6 +78,7 @@ export async function generateRoute(
 	return {
 		ok: true,
 		geometry: osrm.geometry,
-		distanceM: osrm.distanceM
+		distanceM: osrm.distanceM,
+		waypoints: osrm.waypoints
 	};
 }

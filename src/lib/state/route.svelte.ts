@@ -2,6 +2,7 @@ import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
 import { requestRoute } from '$lib/routing/client';
+import { detectRouteDetours, type RouteDetour } from '$lib/routing/detours';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
 import { prepareRouteVias } from '$lib/routing/prepare';
 
@@ -11,6 +12,7 @@ export type WaypointRole = 'start' | 'via' | 'end';
 
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
+let detours = $state<RouteDetour[]>([]);
 /** Prepared OSRM input for the current/last route attempt. */
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
@@ -27,6 +29,7 @@ function waypointRole(index: number, total: number): WaypointRole {
 
 function resetResult() {
 	geometry = null;
+	detours = [];
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
@@ -36,20 +39,22 @@ function resetResult() {
 function showError(revision: number, message: string) {
 	status = 'error';
 	geometry = null;
+	detours = [];
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = message;
 	sourceRevision = revision;
 }
 
-function waypointFeatures(points: Position[]): Feature[] {
+function waypointFeatures(points: Position[], detourWaypointIndexes: number[]): Feature[] {
 	const n = points.length;
 	return points.map((coordinates, index) => ({
 		type: 'Feature' as const,
 		properties: {
 			kind: 'waypoint',
 			index,
-			role: waypointRole(index, n)
+			role: waypointRole(index, n),
+			detour: detourWaypointIndexes.includes(index)
 		},
 		geometry: { type: 'Point' as const, coordinates }
 	}));
@@ -61,6 +66,12 @@ export const route = {
 	},
 	get geometry() {
 		return geometry;
+	},
+	get detours() {
+		return detours;
+	},
+	get detourCount() {
+		return detours.length;
 	},
 	get waypoints() {
 		return waypoints;
@@ -78,10 +89,11 @@ export const route = {
 		return status === 'ready' && geometry != null;
 	},
 	/**
-	 * Map source data: route LineString (when ready) + via Points (loading or ready).
+	 * Map source data: base route, display-only detour overlays, and via points.
 	 */
 	get collection(): FeatureCollection {
 		const features: Feature[] = [];
+		const detourWaypointIndexes = detours.flatMap((detour) => detour.waypointIndexes);
 		if (geometry) {
 			features.push({
 				type: 'Feature',
@@ -89,8 +101,21 @@ export const route = {
 				geometry
 			});
 		}
+		for (const detour of detours) {
+			features.push({
+				type: 'Feature',
+				properties: {
+					kind: 'detour',
+					waypointIndexes: detour.waypointIndexes,
+					routeDistanceM: detour.routeDistanceM,
+					returnDistanceM: detour.returnDistanceM,
+					excessDistanceM: detour.excessDistanceM
+				},
+				geometry: detour.geometry
+			});
+		}
 		if (waypoints.length > 0) {
-			features.push(...waypointFeatures(waypoints));
+			features.push(...waypointFeatures(waypoints, detourWaypointIndexes));
 		}
 		return { type: 'FeatureCollection', features };
 	},
@@ -131,6 +156,7 @@ export const route = {
 		// Show vias immediately while OSRM runs.
 		waypoints = prepared.vias;
 		geometry = null;
+		detours = [];
 		distanceM = 0;
 
 		const result = await requestRoute(waypoints);
@@ -144,12 +170,14 @@ export const route = {
 			status = 'error';
 			errorMessage = result.error;
 			geometry = null;
+			detours = [];
 			// Keep waypoints so the user still sees what was attempted.
 			return result;
 		}
 
 		status = 'ready';
 		geometry = result.geometry;
+		detours = detectRouteDetours(result.geometry, result.waypoints);
 		distanceM = result.distanceM;
 		errorMessage = null;
 		sourceRevision = revision;

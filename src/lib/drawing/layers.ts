@@ -12,6 +12,7 @@ const PREVIEW_FILL = 'gpx-preview-fill';
 const PREVIEW_POINTS = 'gpx-preview-points';
 const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
+const ROUTE_DETOURS = 'gpx-route-detours';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
 const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
 /** Sprite id registered via `map.addImage` for line-following direction marks. */
@@ -186,6 +187,7 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 export function ensureRouteLayers(map: MaplibreMap) {
 	const route = themeColor('blaze');
 	const routeDeep = themeColor('ink-dark');
+	const detour = themeColor('ember');
 
 	if (!map.getSource(ROUTE_SOURCE)) {
 		map.addSource(ROUTE_SOURCE, { type: 'geojson', data: empty });
@@ -198,6 +200,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			id: ROUTE_LINE_CASING,
 			type: 'line',
 			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'route'],
 			layout: {
 				'line-cap': 'round',
 				'line-join': 'round'
@@ -215,6 +218,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			id: ROUTE_LINE,
 			type: 'line',
 			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'route'],
 			layout: {
 				'line-cap': 'round',
 				'line-join': 'round'
@@ -227,13 +231,32 @@ export function ensureRouteLayers(map: MaplibreMap) {
 		});
 	}
 
+	// Suspected waypoint-driven excursions stay part of the route; ember only marks them.
+	if (!map.getLayer(ROUTE_DETOURS)) {
+		map.addLayer({
+			id: ROUTE_DETOURS,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'detour'],
+			layout: {
+				'line-cap': 'round',
+				'line-join': 'round'
+			},
+			paint: {
+				'line-color': detour,
+				'line-width': 4.5,
+				'line-opacity': 0.98
+			}
+		});
+	}
+
 	// Direction ticks: spaced along the geometry in draw order (start → end).
 	if (!map.getLayer(ROUTE_CHEVRONS)) {
 		map.addLayer({
 			id: ROUTE_CHEVRONS,
 			type: 'symbol',
 			source: ROUTE_SOURCE,
-			filter: ['==', ['geometry-type'], 'LineString'],
+			filter: ['==', ['get', 'kind'], 'route'],
 			layout: {
 				'symbol-placement': 'line',
 				// Screen-pixel spacing along the path.
@@ -260,10 +283,20 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			id: ROUTE_WAYPOINTS,
 			type: 'circle',
 			source: ROUTE_SOURCE,
-			filter: ['==', ['geometry-type'], 'Point'],
+			filter: ['==', ['get', 'kind'], 'waypoint'],
 			paint: {
-				'circle-radius': ['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 4.25],
-				'circle-color': ['match', ['get', 'role'], 'start', vertex, 'end', route, /* via */ route],
+				'circle-radius': [
+					'case',
+					['==', ['get', 'detour'], true],
+					5.25,
+					['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 4.25]
+				],
+				'circle-color': [
+					'case',
+					['==', ['get', 'detour'], true],
+					detour,
+					['match', ['get', 'role'], 'start', vertex, 'end', route, /* via */ route]
+				],
 				'circle-stroke-color': routeDeep,
 				'circle-stroke-width': [
 					'match',

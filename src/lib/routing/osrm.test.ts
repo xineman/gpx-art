@@ -19,6 +19,7 @@ describe('fetchOsrmRoute', () => {
 		const fetchFn = vi.fn(async () =>
 			Response.json({
 				code: 'Ok',
+				waypoints: [{ location: [21.0001, 52.0001] }, { location: [21.0099, 52.0099] }],
 				routes: [
 					{
 						distance: 1234,
@@ -51,6 +52,38 @@ describe('fetchOsrmRoute', () => {
 		if (!result.ok) return;
 		expect(result.distanceM).toBe(1234);
 		expect(result.geometry.coordinates).toHaveLength(2);
+		expect(result.waypoints).toEqual([
+			[21.0001, 52.0001],
+			[21.0099, 52.0099]
+		]);
+	});
+
+	it('falls back to input vias when OSRM omits waypoint matches', async () => {
+		const vias = [
+			[21, 52],
+			[21.01, 52.01]
+		];
+		const fetchFn = vi.fn(async () =>
+			Response.json({
+				code: 'Ok',
+				routes: [
+					{
+						geometry: { type: 'LineString', coordinates: vias }
+					}
+				]
+			})
+		);
+
+		const result = await fetchOsrmRoute(vias, {
+			baseUrl: 'https://example.test/routed-bike',
+			profile: 'driving',
+			userAgent: 'test',
+			fetchFn: fetchFn as unknown as typeof fetch
+		});
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.waypoints).toEqual(vias);
 	});
 
 	it('maps NoRoute to a friendly error', async () => {

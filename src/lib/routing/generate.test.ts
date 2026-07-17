@@ -79,6 +79,10 @@ describe('generateRoute', () => {
 		expect(result.geometry.type).toBe('LineString');
 		expect(result.geometry.coordinates.length).toBeGreaterThanOrEqual(2);
 		expect(result.distanceM).toBe(500);
+		expect(result.waypoints).toEqual([
+			[21, 52],
+			[21.01, 52.01]
+		]);
 	});
 
 	it('routes multiple shapes in one ordered OSRM request', async () => {

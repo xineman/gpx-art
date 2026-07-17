@@ -12,6 +12,8 @@ export type RouteSuccess = {
 	ok: true;
 	geometry: LineString;
 	distanceM: number;
+	/** OSRM-snapped input positions, in route order. */
+	waypoints: Position[];
 };
 
 export type RouteFailure = {
@@ -25,6 +27,9 @@ export type RouteResponse = RouteSuccess | RouteFailure;
 export type OsrmRouteResponse = {
 	code: string;
 	message?: string;
+	waypoints?: Array<{
+		location?: Position;
+	}>;
 	routes?: Array<{
 		distance?: number;
 		geometry?: LineString | string;

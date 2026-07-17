@@ -26,7 +26,10 @@
 		}
 		// Inspect the route without accidentally drawing on it.
 		tools.select('pan');
-		status.flash(`Route ready · ${route.distanceLabel}.`);
+		const detourLabel = route.detourCount
+			? ` · ${route.detourCount} possible ${route.detourCount === 1 ? 'detour' : 'detours'}`
+			: '';
+		status.flash(`Route ready · ${route.distanceLabel}${detourLabel}.`);
 	}
 </script>
 
