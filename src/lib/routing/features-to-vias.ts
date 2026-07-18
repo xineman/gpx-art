@@ -1,28 +1,25 @@
-import type { Feature, Position } from 'geojson';
+import type { Feature } from 'geojson';
 import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
 import { pathLength } from '$lib/geometry/distance';
 import { extractGuidePaths } from './extract';
-import type { GuidePath } from './types';
+import type { GuidePath, PreparedRouteShape } from './types';
 import { guideToVias } from './vias';
 
 export type FeaturesToViasResult =
 	| {
 			ok: true;
-			vias: Position[];
+			shapes: PreparedRouteShape[];
 	  }
 	| { ok: false; error: string };
 
-function appendUnique(target: Position[], points: Position[]) {
-	for (const point of points) {
-		const previous = target.at(-1);
-		if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
-			target.push(point);
-		}
-	}
-}
-
 function minimumVias(guide: GuidePath): number {
 	return guide.closed ? MIN_VIAS + 1 : MIN_VIAS;
+}
+
+function guideKey(guide: GuidePath): string {
+	return `${guide.closed ? 'closed' : 'open'}:${guide.points
+		.map((point) => `${point[0]},${point[1]}`)
+		.join(';')}`;
 }
 
 /**
@@ -62,7 +59,8 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
 }
 
 /**
- * Client-side: sketch features → one ordered OSRM via sequence.
+ * Client-side: sketch features → sampled route shapes. Shape boundaries are
+ * retained so the server can optimize their order and traversal.
  */
 export function featuresToVias(
 	features: Feature[],
@@ -72,7 +70,7 @@ export function featuresToVias(
 		return { ok: false, error: 'Sketch a shape first.' };
 	}
 
-	const guides = extractGuidePaths(features);
+	const guides = extractGuidePaths(features).sort((a, b) => guideKey(a).localeCompare(guideKey(b)));
 	if (guides.length === 0) {
 		return { ok: false, error: 'No routable shapes in the sketch.' };
 	}
@@ -83,19 +81,19 @@ export function featuresToVias(
 		return { ok: false, error: `Too many shapes to route at once (max ${maxVias} waypoints).` };
 	}
 
-	const vias: Position[] = [];
+	const shapes: PreparedRouteShape[] = [];
 
 	for (const [index, guide] of guides.entries()) {
 		const viasResult = guideToVias(guide, { maxVias: viaBudgets[index]! });
 		if (!viasResult.ok) {
 			return viasResult;
 		}
-		appendUnique(vias, viasResult.vias);
+		shapes.push({ vias: viasResult.vias, closed: guide.closed });
 	}
 
-	if (vias.length === 0) {
+	if (shapes.length === 0) {
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	return { ok: true, vias };
+	return { ok: true, shapes };
 }

@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
-import { generateRoute, parseRouteRequest } from '$lib/routing/generate';
+import { generateRoute, parseRouteApiRequest } from '$lib/routing/generate';
 
 const DEFAULT_OSRM_BASE = 'https://routing.openstreetmap.de/routed-bike';
 const DEFAULT_OSRM_PROFILE = 'driving';
@@ -15,7 +15,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ ok: false, error: 'Request body must be JSON.' }, { status: 400 });
 	}
 
-	const parsed = parseRouteRequest(body);
+	const parsed = parseRouteApiRequest(body);
 	if (!parsed.ok) {
 		return json(parsed, { status: 400 });
 	}

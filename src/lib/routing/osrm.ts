@@ -1,5 +1,5 @@
 import type { LineString, Position } from 'geojson';
-import type { OsrmRouteResponse, RouteRequest } from './types';
+import type { OsrmRouteResponse, OsrmTableResponse, RouteRequest } from './types';
 
 export type OsrmFetchResult =
 	| {
@@ -8,6 +8,10 @@ export type OsrmFetchResult =
 			distanceM: number;
 			waypoints: Position[];
 	  }
+	| { ok: false; error: string; status?: number };
+
+export type OsrmTableFetchResult =
+	| { ok: true; distances: Array<Array<number | null>> }
 	| { ok: false; error: string; status?: number };
 
 export type OsrmConfig = {
@@ -54,6 +58,68 @@ export function buildOsrmRouteUrl(baseUrl: string, profile: string, request: Rou
 	if (vias.some(({ bearing }) => bearing != null)) params.set('bearings', bearings);
 	if (continueStraight != null) params.set('continue_straight', String(continueStraight));
 	return `${base}/route/v1/${encodeURIComponent(profile)}/${coords}?${params}`;
+}
+
+/** Build an OSRM Table URL for directed bike-network distances. */
+export function buildOsrmTableUrl(
+	baseUrl: string,
+	profile: string,
+	coordinates: Position[]
+): string {
+	const coords = coordinates.map((location) => `${location[0]},${location[1]}`).join(';');
+	const base = trimTrailingSlash(baseUrl);
+	const params = new URLSearchParams({
+		annotations: 'distance',
+		generate_hints: 'false'
+	});
+	return `${base}/table/v1/${encodeURIComponent(profile)}/${coords}?${params}`;
+}
+
+export async function fetchOsrmDistanceTable(
+	coordinates: Position[],
+	config: OsrmConfig
+): Promise<OsrmTableFetchResult> {
+	const url = buildOsrmTableUrl(config.baseUrl, config.profile, coordinates);
+	const fetchFn = config.fetchFn ?? fetch;
+
+	let response: Response;
+	try {
+		response = await fetchFn(url, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'User-Agent': config.userAgent
+			}
+		});
+	} catch {
+		return {
+			ok: false,
+			error: 'Couldn’t optimize shape order — couldn’t reach the routing server.'
+		};
+	}
+
+	if (!response.ok) {
+		return {
+			ok: false,
+			error: `Couldn’t optimize shape order — routing server error (${response.status}).`,
+			status: response.status
+		};
+	}
+
+	let body: OsrmTableResponse;
+	try {
+		body = (await response.json()) as OsrmTableResponse;
+	} catch {
+		return { ok: false, error: 'Couldn’t optimize shape order — invalid routing response.' };
+	}
+
+	if (body.code !== 'Ok' || !Array.isArray(body.distances)) {
+		return {
+			ok: false,
+			error: 'Couldn’t optimize shape order — no bike-distance table is available.'
+		};
+	}
+	return { ok: true, distances: body.distances };
 }
 
 export async function fetchOsrmRoute(

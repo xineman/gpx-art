@@ -1,10 +1,11 @@
-import type { RouteRequest, RouteResponse } from './types';
+import type { RouteApiRequest, RouteResponse } from './types';
 
 /**
  * Browser client for the app's route API (proxies OSRM server-side).
- * Vias must already be prepared on the client (`featuresToVias`).
+ * Initial routes send grouped shapes for optimization; refinement sends an
+ * already ordered via sequence.
  */
-export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
+export async function requestRoute(request: RouteApiRequest): Promise<RouteResponse> {
 	let response: Response;
 	try {
 		response = await fetch('/api/route', {

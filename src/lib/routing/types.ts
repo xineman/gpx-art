@@ -13,6 +13,19 @@ export type RouteRequest = {
 	continueStraight?: boolean;
 };
 
+/** Prepared waypoints for one sketch feature, kept together for route optimization. */
+export type PreparedRouteShape = {
+	vias: Position[];
+	closed: boolean;
+};
+
+/** Shape-level request whose order and traversal may be optimized server-side. */
+export type OptimizedRouteRequest = {
+	shapes: PreparedRouteShape[];
+};
+
+export type RouteApiRequest = RouteRequest | OptimizedRouteRequest;
+
 /** Continuous sketch path extracted from one feature. */
 export type GuidePath = {
 	/** Open ring for polygons (no duplicate close vertex). */
@@ -47,4 +60,11 @@ export type OsrmRouteResponse = {
 		distance?: number;
 		geometry?: LineString | string;
 	}>;
+};
+
+/** OSRM Table service success body (subset we read). */
+export type OsrmTableResponse = {
+	code: string;
+	message?: string;
+	distances?: Array<Array<number | null>>;
 };

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildOsrmRouteUrl, fetchOsrmRoute } from './osrm';
+import {
+	buildOsrmRouteUrl,
+	buildOsrmTableUrl,
+	fetchOsrmDistanceTable,
+	fetchOsrmRoute
+} from './osrm';
 
 describe('buildOsrmRouteUrl', () => {
 	it('encodes vias and query flags', () => {
@@ -35,6 +40,70 @@ describe('buildOsrmRouteUrl', () => {
 			continueStraight: false
 		});
 		expect(new URL(url).searchParams.get('continue_straight')).toBe('false');
+	});
+});
+
+describe('OSRM Table', () => {
+	it('builds a directed distance-matrix URL', () => {
+		const url = buildOsrmTableUrl('https://routing.example/bike/', 'driving', [
+			[21, 52],
+			[21.01, 52.01]
+		]);
+		expect(url).toContain('/bike/table/v1/driving/21,52;21.01,52.01');
+		const params = new URL(url).searchParams;
+		expect(params.get('annotations')).toBe('distance');
+		expect(params.get('generate_hints')).toBe('false');
+	});
+
+	it('parses distances including unreachable cells', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({
+				code: 'Ok',
+				distances: [
+					[0, 100],
+					[null, 0]
+				]
+			})
+		);
+		const result = await fetchOsrmDistanceTable(
+			[
+				[21, 52],
+				[21.01, 52.01]
+			],
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+		expect(result).toEqual({
+			ok: true,
+			distances: [
+				[0, 100],
+				[null, 0]
+			]
+		});
+	});
+
+	it('returns a specific error when Table is unavailable', async () => {
+		const fetchFn = vi.fn(async () => Response.json({ code: 'NotImplemented' }));
+		const result = await fetchOsrmDistanceTable(
+			[
+				[21, 52],
+				[21.01, 52.01]
+			],
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+		expect(result).toEqual({
+			ok: false,
+			error: 'Couldn’t optimize shape order — no bike-distance table is available.'
+		});
 	});
 });
 

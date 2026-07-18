@@ -21,7 +21,12 @@ import {
 	type RefinementPlan,
 	type WaypointRefinementAction
 } from '$lib/routing/refinement';
-import type { RouteRequest, RouteResponse, RouteSuccess } from '$lib/routing/types';
+import type {
+	OptimizedRouteRequest,
+	RouteApiRequest,
+	RouteResponse,
+	RouteSuccess
+} from '$lib/routing/types';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
@@ -123,12 +128,12 @@ function applyReadyResult(
 	hasRefinedRoute = refined;
 }
 
-function requestFromPositions(points: Position[]): RouteRequest {
-	return { vias: points.map((location) => ({ location })) };
+function requestFromShapes(shapes: OptimizedRouteRequest['shapes']): OptimizedRouteRequest {
+	return { shapes };
 }
 
 async function runPreparedRouteRequest(
-	request: RouteRequest,
+	request: RouteApiRequest,
 	revision: number,
 	action: Exclude<RouteLoadingAction, null>,
 	options: {
@@ -138,7 +143,9 @@ async function runPreparedRouteRequest(
 		keepLoadingAfterSuccess?: boolean;
 	}
 ): Promise<RouteResponse> {
-	const previewVias = request.vias.map(({ location }) => location);
+	// Optimized shape requests do not have truthful start/end roles until the
+	// server has selected their order and traversal.
+	const previewVias = 'vias' in request ? request.vias.map(({ location }) => location) : [];
 	const id = ++requestId;
 	status = 'loading';
 	loadingAction = action;
@@ -368,7 +375,7 @@ export const route = {
 		}
 
 		const result = await runPreparedRouteRequest(
-			requestFromPositions(prepared.vias),
+			requestFromShapes(prepared.shapes),
 			revision,
 			'generate',
 			{
@@ -408,7 +415,7 @@ export const route = {
 			return prepared;
 		}
 
-		return runPreparedRouteRequest(requestFromPositions(prepared.vias), revision, 'reset', {
+		return runPreparedRouteRequest(requestFromShapes(prepared.shapes), revision, 'reset', {
 			preserveCurrent: true,
 			refined: false
 		});

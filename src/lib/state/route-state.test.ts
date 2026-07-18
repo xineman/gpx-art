@@ -123,6 +123,30 @@ afterEach(() => {
 });
 
 describe('route state', () => {
+	it('sends grouped shapes and hides provisional endpoint roles while optimizing', async () => {
+		let resolveRoute!: (result: typeof success) => void;
+		const response = new Promise<typeof success>((resolve) => {
+			resolveRoute = resolve;
+		});
+		requestRouteMock.mockReturnValueOnce(response);
+
+		const pending = route.generate([line], 1);
+		expect(route.status).toBe('loading');
+		expect(waypointCoordinates()).toEqual([]);
+		expect(requestRouteMock).toHaveBeenCalledWith({
+			shapes: [
+				{
+					closed: false,
+					vias: expect.any(Array)
+				}
+			]
+		});
+
+		resolveRoute(success);
+		await pending;
+		expect(waypointCoordinates()).toEqual(success.waypoints);
+	});
+
 	it('automatically refines a freshly generated route when requested', async () => {
 		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(straightSuccess);
 
@@ -361,7 +385,7 @@ describe('route state', () => {
 			ok: false,
 			error: 'No route found.'
 		});
-		expect(waypointProperties(1)?.action).toBe('keep');
+		expect(waypointProperties(1)).toBeUndefined();
 
 		await route.generate([line], 12);
 		route.cycleWaypointAction(1);
