@@ -17,35 +17,17 @@ export type DetourScore = {
 
 const MAX_AUTOMATIC_DISTANCE_INCREASE_RATIO = 1.1;
 
-export function hasWaypointDetourCandidate(
-	analysis: WaypointDetourAnalysis[],
-	index: number
-): boolean {
-	return analysis[index]?.candidate != null;
-}
-
 export function defaultWaypointRefinementAction(
-	analysis: WaypointDetourAnalysis[],
-	index: number
+	candidate: RouteDetour | null
 ): WaypointRefinementAction {
-	return hasWaypointDetourCandidate(analysis, index) ? 'move' : 'keep';
+	return candidate ? 'move' : 'keep';
 }
 
 export function getWaypointRefinementAction(
-	analysis: WaypointDetourAnalysis[],
-	overrides: Record<number, WaypointRefinementAction>,
-	index: number
+	candidate: RouteDetour | null,
+	override: WaypointRefinementAction | undefined
 ): WaypointRefinementAction {
-	return overrides[index] ?? defaultWaypointRefinementAction(analysis, index);
-}
-
-export function selectedWaypointDetourCandidate(
-	analysis: WaypointDetourAnalysis[],
-	overrides: Record<number, WaypointRefinementAction>,
-	index: number
-): RouteDetour | null {
-	if (getWaypointRefinementAction(analysis, overrides, index) !== 'move') return null;
-	return analysis[index]?.candidate ?? null;
+	return override ?? defaultWaypointRefinementAction(candidate);
 }
 
 function samePosition(a: Position, b: Position): boolean {
@@ -79,12 +61,12 @@ export function buildRefinementPlan(
 
 	for (let index = 0; index < waypoints.length; index++) {
 		const waypoint = waypoints[index]!;
-		const action = getWaypointRefinementAction(analysis, overrides, index);
+		const candidate = analysis[index]?.candidate ?? null;
+		const action = getWaypointRefinementAction(candidate, overrides[index]);
 		if (action === 'remove') continue;
 
 		let via: RouteVia = { location: waypoint };
 		if (action === 'move') {
-			const candidate = selectedWaypointDetourCandidate(analysis, overrides, index);
 			if (candidate) {
 				const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
 				const bearing = bearingAtRouteIndex(routePoints, routeIndex);

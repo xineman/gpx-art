@@ -133,6 +133,19 @@ describe('route state', () => {
 		expect(route.hasRefinedRoute).toBe(true);
 	});
 
+	it('returns an automatic-refinement failure while preserving the initial route', async () => {
+		requestRouteMock
+			.mockResolvedValueOnce(ordinarySuccess)
+			.mockResolvedValueOnce({ ok: false, error: 'No route found.' });
+
+		const result = await route.generate([line], 2, { autoRefine: true });
+
+		expect(result).toEqual({ ok: false, error: 'No route found.' });
+		expect(route.status).toBe('ready');
+		expect(routeGeometry()).toEqual(ordinarySuccess.geometry);
+		expect(route.hasRefinedRoute).toBe(false);
+	});
+
 	it('keeps explicit refinement loading until its single request settles', async () => {
 		let resolveRefinement!: (result: typeof straightSuccess) => void;
 		const refinementResponse = new Promise<typeof straightSuccess>((resolve) => {

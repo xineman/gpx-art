@@ -3,6 +3,7 @@ import type { LineString } from 'geojson';
 import type { WaypointDetourAnalysis } from './detours';
 import {
 	buildRefinementPlan,
+	getWaypointRefinementAction,
 	improvesDetourScore,
 	routeRequestHash,
 	scoreRouteDetours
@@ -64,6 +65,13 @@ describe('buildRefinementPlan', () => {
 });
 
 describe('automatic refinement policy', () => {
+	it('defaults to moving candidates while honoring an explicit override', () => {
+		const candidate = analysis[1]!.candidate;
+		expect(getWaypointRefinementAction(candidate, undefined)).toBe('move');
+		expect(getWaypointRefinementAction(null, undefined)).toBe('keep');
+		expect(getWaypointRefinementAction(candidate, 'remove')).toBe('remove');
+	});
+
 	it('scores candidate count and excess distance', () => {
 		expect(scoreRouteDetours(analysis, 500)).toEqual({
 			candidateCount: 1,

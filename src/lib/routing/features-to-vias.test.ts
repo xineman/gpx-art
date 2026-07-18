@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Feature } from 'geojson';
-import { prepareRouteVias } from './prepare';
+import { featuresToVias } from './features-to-vias';
 
-describe('prepareRouteVias', () => {
+describe('featuresToVias', () => {
 	it('builds vias from a polyline', () => {
 		const features: Feature[] = [
 			{
@@ -18,7 +18,7 @@ describe('prepareRouteVias', () => {
 				}
 			}
 		];
-		const result = prepareRouteVias(features);
+		const result = featuresToVias(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.vias.length).toBeGreaterThanOrEqual(2);
@@ -43,7 +43,7 @@ describe('prepareRouteVias', () => {
 				}
 			}
 		];
-		const result = prepareRouteVias(features);
+		const result = featuresToVias(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		const vias = result.vias;
@@ -54,7 +54,7 @@ describe('prepareRouteVias', () => {
 	});
 
 	it('rejects empty sketch', () => {
-		const result = prepareRouteVias([]);
+		const result = featuresToVias([]);
 		expect(result.ok).toBe(false);
 	});
 
@@ -83,7 +83,7 @@ describe('prepareRouteVias', () => {
 				}
 			}
 		];
-		const result = prepareRouteVias(features, { maxVias: 4 });
+		const result = featuresToVias(features, { maxVias: 4 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.vias).toEqual([
@@ -125,7 +125,7 @@ describe('prepareRouteVias', () => {
 			}
 		];
 
-		const result = prepareRouteVias(features, { maxVias: 5 });
+		const result = featuresToVias(features, { maxVias: 5 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.vias).toHaveLength(5);
@@ -151,7 +151,7 @@ describe('prepareRouteVias', () => {
 			}
 		}));
 
-		const result = prepareRouteVias(features);
+		const result = featuresToVias(features);
 		expect(result).toEqual({
 			ok: false,
 			error: 'Too many shapes to route at once (max 60 waypoints).'

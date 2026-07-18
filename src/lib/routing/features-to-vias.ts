@@ -5,7 +5,7 @@ import { extractGuidePaths } from './extract';
 import type { GuidePath } from './types';
 import { guideToVias } from './vias';
 
-export type PrepareRouteViasResult =
+export type FeaturesToViasResult =
 	| {
 			ok: true;
 			vias: Position[];
@@ -64,10 +64,10 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
 /**
  * Client-side: sketch features → one ordered OSRM via sequence.
  */
-export function prepareRouteVias(
+export function featuresToVias(
 	features: Feature[],
 	options: { maxVias?: number } = {}
-): PrepareRouteViasResult {
+): FeaturesToViasResult {
 	if (features.length === 0) {
 		return { ok: false, error: 'Sketch a shape first.' };
 	}
