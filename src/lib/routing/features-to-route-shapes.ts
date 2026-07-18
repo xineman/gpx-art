@@ -5,7 +5,7 @@ import { extractGuidePaths } from './extract';
 import type { GuidePath, PreparedRouteShape } from './types';
 import { guideToVias } from './vias';
 
-export type FeaturesToViasResult =
+export type FeaturesToRouteShapesResult =
 	| {
 			ok: true;
 			shapes: PreparedRouteShape[];
@@ -62,10 +62,10 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
  * Client-side: sketch features → sampled route shapes. Shape boundaries are
  * retained so the server can optimize their order and traversal.
  */
-export function featuresToVias(
+export function featuresToRouteShapes(
 	features: Feature[],
 	options: { maxVias?: number } = {}
-): FeaturesToViasResult {
+): FeaturesToRouteShapesResult {
 	if (features.length === 0) {
 		return { ok: false, error: 'Sketch a shape first.' };
 	}

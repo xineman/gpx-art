@@ -10,7 +10,7 @@ import {
 	type WaypointDetourAnalysis
 } from '$lib/routing/detours';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { featuresToVias } from '$lib/routing/features-to-vias';
+import { featuresToRouteShapes } from '$lib/routing/features-to-route-shapes';
 import {
 	buildRefinementPlan,
 	defaultWaypointRefinementAction,
@@ -368,7 +368,7 @@ export const route = {
 			return { ok: false as const, error };
 		}
 
-		const prepared = featuresToVias(features);
+		const prepared = featuresToRouteShapes(features);
 		if (!prepared.ok) {
 			resetRoute('error', revision);
 			return prepared;
@@ -410,7 +410,7 @@ export const route = {
 			return { ok: false, error: 'Refine the route first.' };
 		}
 
-		const prepared = featuresToVias(features);
+		const prepared = featuresToRouteShapes(features);
 		if (!prepared.ok) {
 			return prepared;
 		}

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Feature } from 'geojson';
-import { featuresToVias } from './features-to-vias';
+import { featuresToRouteShapes } from './features-to-route-shapes';
 
-describe('featuresToVias', () => {
+describe('featuresToRouteShapes', () => {
 	it('builds vias from a polyline', () => {
 		const features: Feature[] = [
 			{
@@ -18,7 +18,7 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.shapes).toHaveLength(1);
@@ -44,7 +44,7 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		const vias = result.shapes[0]!.vias;
@@ -55,7 +55,7 @@ describe('featuresToVias', () => {
 	});
 
 	it('rejects empty sketch', () => {
-		const result = featuresToVias([]);
+		const result = featuresToRouteShapes([]);
 		expect(result.ok).toBe(false);
 	});
 
@@ -84,7 +84,7 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features, { maxVias: 4 });
+		const result = featuresToRouteShapes(features, { maxVias: 4 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.shapes).toEqual([
@@ -137,7 +137,7 @@ describe('featuresToVias', () => {
 			}
 		];
 
-		const result = featuresToVias(features, { maxVias: 5 });
+		const result = featuresToRouteShapes(features, { maxVias: 5 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.shapes.flatMap((shape) => shape.vias)).toHaveLength(5);
@@ -159,8 +159,8 @@ describe('featuresToVias', () => {
 			}
 		}));
 
-		const forward = featuresToVias(features, { maxVias: 7 });
-		const reversed = featuresToVias([...features].reverse(), { maxVias: 7 });
+		const forward = featuresToRouteShapes(features, { maxVias: 7 });
+		const reversed = featuresToRouteShapes([...features].reverse(), { maxVias: 7 });
 		expect(reversed).toEqual(forward);
 	});
 
@@ -181,7 +181,7 @@ describe('featuresToVias', () => {
 			}
 		}));
 
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result).toEqual({
 			ok: false,
 			error: 'Too many shapes to route at once (max 60 waypoints).'
