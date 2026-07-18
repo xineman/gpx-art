@@ -15,8 +15,11 @@ const ROUTE_LINE_CASING = 'gpx-route-line-casing';
 const ROUTE_DETOURS = 'gpx-route-detours';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
 export const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
+const ROUTE_WAYPOINT_ACTIONS = 'gpx-route-waypoint-actions';
 /** Sprite id registered via `map.addImage` for line-following direction marks. */
 const ROUTE_CHEVRON_IMAGE = 'gpx-route-chevron';
+const ROUTE_MOVE_WAYPOINT_IMAGE = 'gpx-route-waypoint-move';
+const ROUTE_REMOVE_WAYPOINT_IMAGE = 'gpx-route-waypoint-remove';
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -89,6 +92,54 @@ function ensureRouteChevronImage(map: MaplibreMap) {
 		},
 		{ pixelRatio: 2 }
 	);
+}
+
+/** Compact action glyphs layered over route-waypoint circles. */
+function ensureRouteWaypointActionImages(map: MaplibreMap) {
+	const ink = themeColor('ink-dark');
+
+	function addActionImage(id: string, action: 'move' | 'remove') {
+		if (map.hasImage(id)) return;
+
+		const size = 32;
+		const canvas = document.createElement('canvas');
+		canvas.width = size;
+		canvas.height = size;
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return;
+
+		ctx.strokeStyle = ink;
+		ctx.lineWidth = 4;
+		ctx.lineCap = 'round';
+		ctx.lineJoin = 'round';
+		ctx.beginPath();
+		if (action === 'move') {
+			// A short diagonal arrow reads as a map nudge without implying route direction.
+			ctx.moveTo(9, 23);
+			ctx.lineTo(22, 10);
+			ctx.moveTo(15, 10);
+			ctx.lineTo(22, 10);
+			ctx.lineTo(22, 17);
+		} else {
+			ctx.moveTo(9, 16);
+			ctx.lineTo(23, 16);
+		}
+		ctx.stroke();
+
+		const imageData = ctx.getImageData(0, 0, size, size);
+		map.addImage(
+			id,
+			{
+				width: size,
+				height: size,
+				data: new Uint8Array(imageData.data)
+			},
+			{ pixelRatio: 2 }
+		);
+	}
+
+	addActionImage(ROUTE_MOVE_WAYPOINT_IMAGE, 'move');
+	addActionImage(ROUTE_REMOVE_WAYPOINT_IMAGE, 'remove');
 }
 
 export function ensureDrawingLayers(map: MaplibreMap) {
@@ -194,6 +245,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 	}
 
 	ensureRouteChevronImage(map);
+	ensureRouteWaypointActionImages(map);
 
 	if (!map.getLayer(ROUTE_LINE_CASING)) {
 		map.addLayer({
@@ -231,7 +283,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 		});
 	}
 
-	// Suspected waypoint-driven excursions stay part of the route; ember only marks them.
+	// Move actions retain a prominent route segment so the proposed correction is visible.
 	if (!map.getLayer(ROUTE_DETOURS)) {
 		map.addLayer({
 			id: ROUTE_DETOURS,
@@ -287,27 +339,65 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			paint: {
 				'circle-radius': [
 					'case',
-					['==', ['get', 'detour'], true],
+					['==', ['get', 'action'], 'move'],
+					['match', ['get', 'role'], 'start', 7, 'end', 7, /* via */ 6.25],
+					['==', ['get', 'action'], 'remove'],
+					['match', ['get', 'role'], 'start', 7, 'end', 7, /* via */ 6.25],
+					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
 					['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 5.25],
 					['match', ['get', 'role'], 'start', 6.5, 'end', 6.5, /* via */ 4.25]
 				],
 				'circle-color': [
 					'case',
-					['==', ['get', 'detour'], true],
+					['==', ['get', 'action'], 'remove'],
 					detour,
+					['==', ['get', 'action'], 'move'],
+					detour,
+					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
+					routeDeep,
 					['match', ['get', 'role'], 'start', vertex, 'end', route, /* via */ route]
 				],
-				'circle-stroke-color': routeDeep,
+				'circle-stroke-color': [
+					'case',
+					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
+					route,
+					routeDeep
+				],
 				'circle-stroke-width': [
-					'match',
-					['get', 'role'],
-					'start',
-					2.25,
-					'end',
-					2.25,
-					/* via */ 1.75
+					'case',
+					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
+					2.5,
+					['match', ['get', 'role'], 'start', 2.25, 'end', 2.25, /* via */ 1.75]
 				],
 				'circle-opacity': 0.95
+			}
+		});
+	}
+
+	if (!map.getLayer(ROUTE_WAYPOINT_ACTIONS)) {
+		map.addLayer({
+			id: ROUTE_WAYPOINT_ACTIONS,
+			type: 'symbol',
+			source: ROUTE_SOURCE,
+			filter: ['in', ['get', 'action'], ['literal', ['move', 'remove']]],
+			layout: {
+				'icon-image': [
+					'match',
+					['get', 'action'],
+					'move',
+					ROUTE_MOVE_WAYPOINT_IMAGE,
+					'remove',
+					ROUTE_REMOVE_WAYPOINT_IMAGE,
+					ROUTE_MOVE_WAYPOINT_IMAGE
+				],
+				'icon-size': 0.8,
+				'icon-allow-overlap': true,
+				'icon-ignore-placement': true,
+				'icon-rotation-alignment': 'viewport',
+				'icon-pitch-alignment': 'viewport'
+			},
+			paint: {
+				'icon-opacity': 0.95
 			}
 		});
 	}

@@ -35,13 +35,17 @@
 		const waypointIndex = routeWaypointAtPoint(map, event.point);
 		if (waypointIndex == null) return;
 		event.preventDefault();
-		const result = route.toggleDetourWaypoint(waypointIndex);
+		const result = route.cycleWaypointAction(waypointIndex);
 		if (result) {
-			const keepMinimum = route.markedWaypointCount > 0 && !route.canRefineRoute;
+			const message =
+				result === 'move'
+					? 'Move waypoint selected'
+					: result === 'remove'
+						? 'Remove waypoint selected'
+						: 'Waypoint kept';
+			const keepMinimum = route.pendingWaypointCount > 0 && !route.canRefineRoute;
 			status.flash(
-				keepMinimum
-					? `Detour ${result} · keep at least 2 waypoints to refine the route.`
-					: `Detour ${result}.`
+				keepMinimum ? `${message} · keep at least 2 waypoints to refine the route.` : `${message}.`
 			);
 		}
 	}

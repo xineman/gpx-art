@@ -17,12 +17,13 @@ export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
 
 export type WaypointRole = 'start' | 'via' | 'end';
+export type WaypointRefinementAction = 'keep' | 'move' | 'remove';
 
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
 let detours = $state<RouteDetour[]>([]);
 let detourAnalysis = $state<WaypointDetourAnalysis[]>([]);
-let detourOverrides = $state<Record<number, boolean>>({});
+let waypointActionOverrides = $state<Record<number, WaypointRefinementAction>>({});
 /** Prepared OSRM input while loading; OSRM-snapped positions once ready. */
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
@@ -43,7 +44,7 @@ function resetResult() {
 	geometry = null;
 	detours = [];
 	detourAnalysis = [];
-	detourOverrides = {};
+	waypointActionOverrides = {};
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = null;
@@ -57,7 +58,7 @@ function showError(revision: number, message: string) {
 	geometry = null;
 	detours = [];
 	detourAnalysis = [];
-	detourOverrides = {};
+	waypointActionOverrides = {};
 	waypoints = [];
 	distanceM = 0;
 	errorMessage = message;
@@ -66,16 +67,29 @@ function showError(revision: number, message: string) {
 	hasRefinedRoute = false;
 }
 
-function isEffectiveDetourWaypoint(index: number): boolean {
-	const analysis = detourAnalysis[index];
-	if (!analysis) return false;
-	return detourOverrides[index] ?? analysis.candidate != null;
+function hasDetourCandidate(index: number): boolean {
+	return detourAnalysis[index]?.candidate != null;
+}
+
+function defaultWaypointAction(index: number): WaypointRefinementAction {
+	return hasDetourCandidate(index) ? 'move' : 'keep';
+}
+
+function waypointAction(index: number): WaypointRefinementAction {
+	return waypointActionOverrides[index] ?? defaultWaypointAction(index);
+}
+
+function actionCount(action: Exclude<WaypointRefinementAction, 'keep'>): number {
+	return waypoints.filter((_, index) => waypointAction(index) === action).length;
+}
+
+function pendingWaypointCount(): number {
+	return actionCount('move') + actionCount('remove');
 }
 
 function selectedDetourCandidate(index: number): RouteDetour | null {
-	const analysis = detourAnalysis[index];
-	if (!analysis || !isEffectiveDetourWaypoint(index)) return null;
-	return analysis.candidate;
+	if (waypointAction(index) !== 'move') return null;
+	return detourAnalysis[index]?.candidate ?? null;
 }
 
 function rebuildDetours() {
@@ -102,18 +116,16 @@ function dedupeConsecutivePositions(points: Position[]): Position[] {
 	return distinct;
 }
 
-function markedWaypointIndexes(): number[] {
-	return detourAnalysis
-		.filter((analysis) => isEffectiveDetourWaypoint(analysis.waypointIndex))
-		.map((analysis) => analysis.waypointIndex);
-}
-
 function refinementWaypoints(): Position[] {
 	if (!geometry) return dedupeConsecutivePositions(waypoints);
 
 	const routePoints = geometry.coordinates;
 	return dedupeConsecutivePositions(
 		waypoints.flatMap((waypoint, index) => {
+			const action = waypointAction(index);
+			if (action === 'remove') return [];
+			if (action === 'keep') return [waypoint];
+
 			const candidate = selectedDetourCandidate(index);
 			if (!candidate) return [waypoint];
 
@@ -129,7 +141,7 @@ function applyReadyResult(result: RouteSuccess, revision: number, refined: boole
 	geometry = result.geometry;
 	waypoints = result.waypoints;
 	detourAnalysis = analyzeRouteDetours(result.geometry, result.waypoints);
-	detourOverrides = {};
+	waypointActionOverrides = {};
 	rebuildDetours();
 	distanceM = result.distanceM;
 	errorMessage = null;
@@ -155,7 +167,7 @@ async function requestPreparedRoute(
 		geometry = null;
 		detours = [];
 		detourAnalysis = [];
-		detourOverrides = {};
+		waypointActionOverrides = {};
 		distanceM = 0;
 		hasRefinedRoute = false;
 	}
@@ -177,7 +189,7 @@ async function requestPreparedRoute(
 		geometry = null;
 		detours = [];
 		detourAnalysis = [];
-		detourOverrides = {};
+		waypointActionOverrides = {};
 		distanceM = 0;
 		hasRefinedRoute = false;
 		return result;
@@ -187,11 +199,7 @@ async function requestPreparedRoute(
 	return result;
 }
 
-function waypointFeatures(
-	points: Position[],
-	detourWaypointIndexes: number[],
-	interactive: boolean
-): Feature[] {
+function waypointFeatures(points: Position[], interactive: boolean): Feature[] {
 	const n = points.length;
 	return points.map((coordinates, index) => ({
 		type: 'Feature' as const,
@@ -199,7 +207,8 @@ function waypointFeatures(
 			kind: 'waypoint',
 			index,
 			role: waypointRole(index, n),
-			detour: detourWaypointIndexes.includes(index),
+			candidate: hasDetourCandidate(index),
+			action: waypointAction(index),
 			interactive
 		},
 		geometry: { type: 'Point' as const, coordinates }
@@ -219,8 +228,14 @@ export const route = {
 	get detourCount() {
 		return detours.length;
 	},
-	get markedWaypointCount() {
-		return markedWaypointIndexes().length;
+	get moveWaypointCount() {
+		return actionCount('move');
+	},
+	get removeWaypointCount() {
+		return actionCount('remove');
+	},
+	get pendingWaypointCount() {
+		return pendingWaypointCount();
 	},
 	get remainingWaypointCount() {
 		return refinementWaypoints().length;
@@ -229,7 +244,7 @@ export const route = {
 		return (
 			status === 'ready' &&
 			geometry != null &&
-			markedWaypointIndexes().length > 0 &&
+			pendingWaypointCount() > 0 &&
 			refinementWaypoints().length >= MIN_VIAS
 		);
 	},
@@ -242,8 +257,11 @@ export const route = {
 	get waypoints() {
 		return waypoints;
 	},
-	isWaypointDetour(index: number) {
-		return isEffectiveDetourWaypoint(index);
+	getWaypointAction(index: number) {
+		return waypointAction(index);
+	},
+	isWaypointDetourCandidate(index: number) {
+		return hasDetourCandidate(index);
 	},
 	get distanceM() {
 		return distanceM;
@@ -262,7 +280,6 @@ export const route = {
 	 */
 	get collection(): FeatureCollection {
 		const features: Feature[] = [];
-		const detourWaypointIndexes = markedWaypointIndexes();
 		if (geometry) {
 			features.push({
 				type: 'Feature',
@@ -275,6 +292,7 @@ export const route = {
 				type: 'Feature',
 				properties: {
 					kind: 'detour',
+					action: 'move',
 					routeDistanceM: detour.routeDistanceM,
 					returnDistanceM: detour.returnDistanceM,
 					excessDistanceM: detour.excessDistanceM
@@ -283,13 +301,7 @@ export const route = {
 			});
 		}
 		if (waypoints.length > 0) {
-			features.push(
-				...waypointFeatures(
-					waypoints,
-					detourWaypointIndexes,
-					status === 'ready' && geometry != null
-				)
-			);
+			features.push(...waypointFeatures(waypoints, status === 'ready' && geometry != null));
 		}
 		return { type: 'FeatureCollection', features };
 	},
@@ -310,24 +322,27 @@ export const route = {
 		status = 'idle';
 		resetResult();
 	},
-	/** Toggle one ready route waypoint's display-only detour classification. */
-	toggleDetourWaypoint(index: number): 'added' | 'removed' | null {
+	/** Advance one ready route waypoint through its available refinement actions. */
+	cycleWaypointAction(index: number): WaypointRefinementAction | null {
 		if (status !== 'ready' || geometry == null) return null;
-		const analysis = detourAnalysis[index];
-		if (!analysis?.candidate) return null;
+		if (!Number.isInteger(index) || index < 0 || index >= waypoints.length) return null;
 
-		const next = !isEffectiveDetourWaypoint(index);
-		if (next) delete detourOverrides[index];
-		else detourOverrides[index] = false;
+		const actions: WaypointRefinementAction[] = hasDetourCandidate(index)
+			? ['move', 'remove', 'keep']
+			: ['keep', 'remove'];
+		const current = waypointAction(index);
+		const next = actions[(actions.indexOf(current) + 1) % actions.length]!;
+		if (next === defaultWaypointAction(index)) delete waypointActionOverrides[index];
+		else waypointActionOverrides[index] = next;
 		rebuildDetours();
-		return next ? 'added' : 'removed';
+		return next;
 	},
 	async refineRoute(): Promise<RouteResponse> {
 		if (status !== 'ready' || geometry == null || sourceRevision == null) {
 			return { ok: false, error: 'Generate a route first.' };
 		}
-		if (markedWaypointIndexes().length === 0) {
-			return { ok: false, error: 'Mark at least one waypoint to refine the route.' };
+		if (pendingWaypointCount() === 0) {
+			return { ok: false, error: 'Choose at least one waypoint action to refine the route.' };
 		}
 
 		const vias = refinementWaypoints();

@@ -13,9 +13,14 @@ type RouteActionInput = {
 	status: RouteStatus;
 	loadingAction: RouteLoadingAction;
 	hasSketch: boolean;
-	markedWaypointCount: number;
+	moveWaypointCount: number;
+	removeWaypointCount: number;
 	canRefineRoute: boolean;
 };
+
+function actionDescription(action: 'move' | 'remove', count: number): string {
+	return `${action} ${count} ${count === 1 ? 'waypoint' : 'waypoints'}`;
+}
 
 /** Pure view model for the route cartridge's adaptive primary segment. */
 export function routeActionModel(input: RouteActionInput): RouteActionModel {
@@ -31,13 +36,19 @@ export function routeActionModel(input: RouteActionInput): RouteActionModel {
 	}
 
 	if (input.status === 'ready') {
-		if (input.markedWaypointCount > 0) {
+		const actionCount = input.moveWaypointCount + input.removeWaypointCount;
+		if (actionCount > 0) {
 			if (input.canRefineRoute) {
-				const noun = input.markedWaypointCount === 1 ? 'waypoint' : 'waypoints';
+				const actions = [
+					input.moveWaypointCount > 0 ? actionDescription('move', input.moveWaypointCount) : null,
+					input.removeWaypointCount > 0
+						? actionDescription('remove', input.removeWaypointCount)
+						: null
+				].filter((action): action is string => action != null);
 				return {
 					kind: 'refine',
-					label: `Refine ${input.markedWaypointCount}`,
-					ariaLabel: `Refine route around ${input.markedWaypointCount} marked ${noun}`
+					label: `Refine ${actionCount}`,
+					ariaLabel: `Refine route: ${actions.join(' and ')}`
 				};
 			}
 			return {

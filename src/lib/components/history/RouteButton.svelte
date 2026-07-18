@@ -18,7 +18,8 @@
 			status: route.status,
 			loadingAction: route.loadingAction,
 			hasSketch,
-			markedWaypointCount: route.markedWaypointCount,
+			moveWaypointCount: route.moveWaypointCount,
+			removeWaypointCount: route.removeWaypointCount,
 			canRefineRoute: route.canRefineRoute
 		})
 	);
@@ -27,10 +28,12 @@
 	);
 
 	function resultMessage(prefix: string): string {
-		const detourLabel = route.detourCount
-			? ` · ${route.detourCount} possible ${route.detourCount === 1 ? 'detour' : 'detours'}`
+		const suggestionLabel = route.moveWaypointCount
+			? ` · ${route.moveWaypointCount} move ${
+					route.moveWaypointCount === 1 ? 'suggestion' : 'suggestions'
+				}`
 			: '';
-		return `${prefix} · ${route.distanceLabel}${detourLabel}.`;
+		return `${prefix} · ${route.distanceLabel}${suggestionLabel}.`;
 	}
 
 	function handleFailure(error: string) {

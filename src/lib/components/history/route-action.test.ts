@@ -5,7 +5,8 @@ const base = {
 	status: 'idle' as const,
 	loadingAction: null,
 	hasSketch: true,
-	markedWaypointCount: 0,
+	moveWaypointCount: 0,
+	removeWaypointCount: 0,
 	canRefineRoute: false
 };
 
@@ -17,18 +18,19 @@ describe('routeActionModel', () => {
 		);
 	});
 
-	it('counts marked waypoints in the refinement action and accessible label', () => {
+	it('counts waypoint actions in the refinement action and accessible label', () => {
 		expect(
 			routeActionModel({
 				...base,
 				status: 'ready',
-				markedWaypointCount: 3,
+				moveWaypointCount: 2,
+				removeWaypointCount: 1,
 				canRefineRoute: true
 			})
 		).toEqual({
 			kind: 'refine',
 			label: 'Refine 3',
-			ariaLabel: 'Refine route around 3 marked waypoints'
+			ariaLabel: 'Refine route: move 2 waypoints and remove 1 waypoint'
 		});
 	});
 
@@ -37,7 +39,7 @@ describe('routeActionModel', () => {
 			kind: 'ready',
 			label: 'Ready'
 		});
-		expect(routeActionModel({ ...base, status: 'ready', markedWaypointCount: 2 })).toEqual({
+		expect(routeActionModel({ ...base, status: 'ready', removeWaypointCount: 2 })).toEqual({
 			kind: 'keep',
 			label: 'Keep 2',
 			ariaLabel: 'Keep at least 2 distinct waypoints to refine the route'
