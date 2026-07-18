@@ -1,44 +1,58 @@
-import type { Point } from '$lib/types/sketch';
-
-// Emit a GPX 1.1 document containing a single track with a single segment.
-//
-// One `<trkseg>` per contiguous path — we emit just one because the routed
-// output is logically one ride, even if it has shape-to-shape transitions. GPX
-// supports multiple segments but most consumers (Strava, Komoot, gpx.studio)
-// treat them as separate laps, which would split the route visually.
-//
-// Coordinates are emitted with 7 decimal places (~11mm precision), which is
-// the resolution GPX producers like Strava emit and what most consumers expect.
-export function pointsToGpx(points: Point[], name: string = 'gpx-art route'): string {
-	const esc = escapeXml(name);
-	const now = new Date().toISOString();
-
-	const trkpts = points.map(
-		(p) => `      <trkpt lat="${p.lat.toFixed(7)}" lon="${p.lng.toFixed(7)}"/>`
-	);
-
-	return [
-		`<?xml version="1.0" encoding="UTF-8"?>`,
-		`<gpx version="1.1" creator="gpx-art" xmlns="http://www.topografix.com/GPX/1/1">`,
-		`  <metadata>`,
-		`    <time>${now}</time>`,
-		`  </metadata>`,
-		`  <trk>`,
-		`    <name>${esc}</name>`,
-		`    <trkseg>`,
-		...trkpts,
-		`    </trkseg>`,
-		`  </trk>`,
-		`</gpx>`,
-		''
-	].join('\n');
-}
+import type { LineString, Position } from 'geojson';
 
 function escapeXml(value: string): string {
 	return value
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&apos;');
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.replaceAll('"', '&quot;')
+		.replaceAll("'", '&apos;');
+}
+
+function trackPointXml(p: Position): string {
+	const lon = p[0]!;
+	const lat = p[1]!;
+	return `<trkpt lat="${lat}" lon="${lon}"></trkpt>`;
+}
+
+/**
+ * Serialize a route LineString as GPX 1.1 with a single track.
+ * Coordinates are GeoJSON `[lng, lat]` → GPX `lat` / `lon`.
+ */
+export function lineStringToGpx(
+	geometry: LineString,
+	options: { name?: string; creator?: string } = {}
+): string {
+	const name = escapeXml(options.name ?? 'GPX Art route');
+	const creator = escapeXml(options.creator ?? 'GPX Art');
+	const points = geometry.coordinates;
+	const trkpts = points.map(trackPointXml).join('\n      ');
+
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="${creator}" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${name}</name>
+  </metadata>
+  <trk>
+    <name>${name}</name>
+    <trkseg>
+      ${trkpts}
+    </trkseg>
+  </trk>
+</gpx>
+`;
+}
+
+/** Local-time export filename: `gpx-art-route-YYYY-MM-DD-HH-mm-ss.gpx`. */
+export function routeGpxFilename(date = new Date()): string {
+	const p = (n: number) => String(n).padStart(2, '0');
+	const stamp = [
+		date.getFullYear(),
+		p(date.getMonth() + 1),
+		p(date.getDate()),
+		p(date.getHours()),
+		p(date.getMinutes()),
+		p(date.getSeconds())
+	].join('-');
+	return `gpx-art-route-${stamp}.gpx`;
 }

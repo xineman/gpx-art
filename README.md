@@ -15,7 +15,7 @@ To recreate this project with the same configuration:
 
 ```sh
 # recreate this project
-pnpm dlx sv@0.15.4 create --template minimal --types ts --add prettier eslint playwright tailwindcss="plugins:none" sveltekit-adapter="adapter:auto" --install pnpm gpx-art
+pnpm dlx sv@0.16.3 create --template minimal --types ts --add prettier eslint vitest="usages:unit,component" tailwindcss="plugins:none" --install pnpm gpx-art
 ```
 
 ## Developing

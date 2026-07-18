@@ -1,35 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
+
+/*
+  GPX Art design tokens — single source for app colors.
+  `static` keeps every token in the CSS output (MapLibre reads them via
+  getComputedStyle; default @theme only emits variables used by utilities).
+*/
+@theme static {
+	--color-canvas: #1d201d;
+	--color-panel: #2c2924;
+	--color-panel-lift: #1f1d19;
+	--color-panel-edge: #fff7df;
+	--color-ink-bright: #fff7df;
+	--color-ink-muted: #c9bfa0;
+	--color-ink-soft: #67604f;
+	--color-ink-dark: #1f1d19;
+	--color-blaze: #e6b84a;
+	--color-ember: #d96a4a;
+	--color-trail: #14b8a6;
+	--color-trail-deep: #0d9488;
+	--color-trail-vertex: #f4f0e8;
+
+	--shadow-panel: 0 18px 50px color-mix(in srgb, var(--color-panel-lift) 28%, transparent);
+	--shadow-tooltip: 0 18px 40px -8px color-mix(in srgb, var(--color-panel-lift) 55%, transparent);
+
+	--font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
 @layer base {
 	html,
-	body,
-	#svelte {
-		@apply min-h-full;
-	}
-
 	body {
-		@apply m-0 bg-[#1d201d] font-['Avenir_Next_Condensed','Bahnschrift','Gill_Sans','Trebuchet_MS',sans-serif] text-[#27231e];
-	}
-
-	button,
-	.maplibregl-map {
-		@apply font-[inherit];
-	}
-
-	* {
-		@apply box-border;
-	}
-}
-
-@layer components {
-	.maplibregl-ctrl-attrib {
-		@apply rounded-tl-full text-[10px];
-	}
-
-	/* Full-bleed map: MapLibre needs the canvas container to fill the host. */
-	.maplibregl-map,
-	.maplibregl-canvas-container,
-	.maplibregl-canvas {
-		@apply h-full w-full;
+		@apply m-0 h-full w-full overflow-hidden bg-canvas p-0 font-sans text-ink-bright antialiased;
 	}
 }

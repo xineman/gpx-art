@@ -1,151 +1,158 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
-import { PENCIL_MAX_VIAS } from '$lib/constants/routing';
-import { getDistanceTable, getRoute, pencilRouteAnchors } from './osrm';
+import { describe, expect, it, vi } from 'vitest';
+import { buildOsrmRouteUrl, fetchOsrmRoute } from './osrm';
 
-const point = (n: number) => ({ lat: 52 + n * 0.001, lng: 21 + n * 0.001 });
-
-afterEach(() => {
-	vi.restoreAllMocks();
-});
-
-describe('pencilRouteAnchors', () => {
-	test('always returns at least the two endpoints', () => {
-		const points = [point(0), point(1)];
-		expect(pencilRouteAnchors(points)).toEqual(points);
+describe('buildOsrmRouteUrl', () => {
+	it('encodes vias and query flags', () => {
+		const url = buildOsrmRouteUrl('https://routing.openstreetmap.de/routed-bike/', 'driving', {
+			vias: [{ location: [21.0, 52.2] }, { location: [21.01, 52.21] }]
+		});
+		expect(url).toContain('https://routing.openstreetmap.de/routed-bike/route/v1/driving/');
+		expect(url).toContain('21,52.2;21.01,52.21');
+		expect(url).toContain('geometries=geojson');
+		expect(url).toContain('overview=full');
+		expect(new URL(url).searchParams.get('generate_hints')).toBe('false');
 	});
 
-	test('collapses a long collinear chunk and always keeps endpoints', () => {
-		// ~10 m steps along lng — all collinear, so RDP collapses to ends.
-		const points = Array.from({ length: 20 }, (_, i) => ({
-			lat: 52,
-			lng: 21 + i * 0.0001
-		}));
-		const anchors = pencilRouteAnchors(points);
-
-		expect(anchors[0]).toEqual(points[0]);
-		expect(anchors.at(-1)).toEqual(points[points.length - 1]);
-		expect(anchors.length).toBeLessThan(points.length);
-		expect(anchors.length).toBeLessThanOrEqual(PENCIL_MAX_VIAS);
+	it('encodes optional snapping constraints for a refinement request', () => {
+		const url = buildOsrmRouteUrl('https://example.test', 'driving', {
+			vias: [
+				{ location: [21, 52] },
+				{ location: [21.01, 52.01], radiusM: 20, bearing: 45, bearingRange: 30 }
+			],
+			continueStraight: true
+		});
+		const params = new URL(url).searchParams;
+		expect(params.has('hints')).toBe(false);
+		expect(params.get('generate_hints')).toBe('false');
+		expect(params.get('radiuses')).toBe(';20');
+		expect(params.get('bearings')).toBe(';45,30');
+		expect(params.get('continue_straight')).toBe('true');
 	});
 
-	test('caps dense zig-zags at PENCIL_MAX_VIAS', () => {
-		// Alternating north/south jogs so RDP keeps many corners.
-		const points = Array.from({ length: 30 }, (_, i) => ({
-			lat: 52 + (i % 2 === 0 ? 0 : 0.001),
-			lng: 21 + i * 0.0002
-		}));
-		const anchors = pencilRouteAnchors(points);
-
-		expect(anchors.length).toBeLessThanOrEqual(PENCIL_MAX_VIAS);
-		expect(anchors[0]).toEqual(points[0]);
-		expect(anchors.at(-1)).toEqual(points[points.length - 1]);
-	});
-
-	test('rejects max vias below 2', () => {
-		expect(() => pencilRouteAnchors([point(0), point(1)], 25, 1)).toThrow('at least 2');
+	it('preserves an explicit false continue-straight option', () => {
+		const url = buildOsrmRouteUrl('https://example.test', 'driving', {
+			vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }],
+			continueStraight: false
+		});
+		expect(new URL(url).searchParams.get('continue_straight')).toBe('false');
 	});
 });
 
-describe('getDistanceTable', () => {
-	test('requests annotations=distance and returns the matrix', async () => {
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					code: 'Ok',
-					distances: [
-						[0, 10],
-						[12, 0]
-					]
-				}),
-				{ status: 200 }
-			)
+describe('fetchOsrmRoute', () => {
+	it('parses a successful OSRM payload', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({
+				code: 'Ok',
+				waypoints: [{ location: [21.0001, 52.0001] }, { location: [21.0099, 52.0099] }],
+				routes: [
+					{
+						distance: 1234,
+						geometry: {
+							type: 'LineString',
+							coordinates: [
+								[21, 52],
+								[21.01, 52.01]
+							]
+						}
+					}
+				]
+			})
 		);
 
-		const matrix = await getDistanceTable([point(0), point(1)]);
-		const url = String(fetchMock.mock.calls[0][0]);
+		const result = await fetchOsrmRoute(
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
 
-		expect(url).toContain('/table/v1/bike/');
-		expect(url).toContain('annotations=distance');
-		expect(matrix).toEqual([
-			[0, 10],
-			[12, 0]
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.distanceM).toBe(1234);
+		expect(result.geometry.coordinates).toHaveLength(2);
+		expect(result.waypoints).toEqual([
+			[21.0001, 52.0001],
+			[21.0099, 52.0099]
 		]);
 	});
 
-	test('maps null table cells to Infinity', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					code: 'Ok',
-					distances: [
-						[0, null],
-						[null, 0]
-					]
-				}),
-				{ status: 200 }
-			)
+	it('falls back to input vias when OSRM omits waypoint matches', async () => {
+		const vias = [
+			[21, 52],
+			[21.01, 52.01]
+		];
+		const fetchFn = vi.fn(async () =>
+			Response.json({
+				code: 'Ok',
+				routes: [
+					{
+						geometry: { type: 'LineString', coordinates: vias }
+					}
+				]
+			})
 		);
 
-		const matrix = await getDistanceTable([point(0), point(1)]);
-		expect(matrix[0][1]).toBe(Infinity);
-		expect(matrix[1][0]).toBe(Infinity);
-	});
-});
-
-describe('getRoute options', () => {
-	test('sends continue_straight and bearings for multi-via routes', async () => {
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					code: 'Ok',
-					routes: [{ geometry: 'poly', distance: 100, duration: 20 }]
-				}),
-				{ status: 200 }
-			)
+		const result = await fetchOsrmRoute(
+			{ vias: vias.map((location) => ({ location })) },
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
 		);
 
-		await getRoute([point(0), point(1), point(2)], {
-			continueStraight: true,
-			bearings: [
-				{ bearing: 45, range: 75 },
-				{ bearing: 90, range: 75 },
-				{ bearing: 90, range: 75 }
-			]
-		});
-
-		const url = String(fetchMock.mock.calls[0][0]);
-		expect(url).toContain('continue_straight=true');
-		expect(url).toContain('bearings=');
-		expect(url).toContain('45%2C75');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.waypoints).toEqual(vias);
 	});
 
-	test('retries without bearings when first request fails', async () => {
-		const fetchMock = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ code: 'NoRoute', message: 'No route' }), { status: 200 })
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						code: 'Ok',
-						routes: [{ geometry: 'poly', distance: 100, duration: 20 }]
-					}),
-					{ status: 200 }
-				)
-			);
+	it('maps NoRoute to a friendly error', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({ code: 'NoRoute', message: 'No route found' })
+		);
 
-		const result = await getRoute([point(0), point(1), point(2)], {
-			continueStraight: true,
-			bearings: [
-				{ bearing: 0, range: 10 },
-				{ bearing: 0, range: 10 },
-				{ bearing: 0, range: 10 }
-			]
+		const result = await fetchOsrmRoute(
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toMatch(/No bike route/i);
+	});
+
+	it('handles network failure', async () => {
+		const fetchFn = vi.fn(async () => {
+			throw new Error('offline');
 		});
 
-		expect(result.geometry).toBe('poly');
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(String(fetchMock.mock.calls[1][0])).not.toContain('bearings=');
+		const result = await fetchOsrmRoute(
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toMatch(/reach the routing/i);
 	});
 });

@@ -1,191 +1,127 @@
-import {
-	OSRM_BASE_URL,
-	OSRM_PROFILE,
-	PENCIL_MAX_VIAS,
-	PENCIL_ROUTE_RDP_TOLERANCE
-} from '$lib/constants/routing';
-import type { Point } from '$lib/types/sketch';
-import { simplifyRdp } from './rdp';
+import type { LineString, Position } from 'geojson';
+import type { OsrmRouteResponse, RouteRequest } from './types';
 
-// ---------------------------------------------------------------------------
-// /table — road-network pairwise distances for TSP transition costs
-// ---------------------------------------------------------------------------
+export type OsrmFetchResult =
+	| {
+			ok: true;
+			geometry: LineString;
+			distanceM: number;
+			waypoints: Position[];
+	  }
+	| { ok: false; error: string; status?: number };
 
-// Fetch an N×N road-distance matrix (meters) via OSRM /table.
-// `distances[i][j]` is the bike-network length from points[i] to points[j].
-// Throws on HTTP / OSRM errors; callers that want haversine fallback catch.
-export async function getDistanceTable(points: Point[]): Promise<number[][]> {
-	if (points.length === 0) return [];
-	if (points.length === 1) return [[0]];
+export type OsrmConfig = {
+	baseUrl: string;
+	/** Path profile segment, e.g. `driving` on FOSSGIS routed-bike. */
+	profile: string;
+	userAgent: string;
+	/** Optional inject for tests. */
+	fetchFn?: typeof fetch;
+};
 
-	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
-	const url = `${OSRM_BASE_URL}/table/v1/${OSRM_PROFILE}/${coords}?annotations=distance`;
+function trimTrailingSlash(url: string) {
+	return url.replace(/\/+$/, '');
+}
 
-	const response = await fetch(url, { headers: { Accept: 'application/json' } });
-	if (!response.ok) {
-		throw new Error(`OSRM table request failed: ${response.status} ${response.statusText}`);
-	}
-
-	const body = (await response.json()) as OsrmTableResponse;
-	if (body.code !== 'Ok') {
-		throw new Error(
-			`OSRM table error: ${body.code}${body.message ? ` — ${body.message}` : ''}`
-		);
-	}
-	if (!body.distances || body.distances.length !== points.length) {
-		throw new Error('OSRM table returned an unexpected distances matrix.');
-	}
-
-	return body.distances.map((row) =>
-		row.map((d) => (d === null || !Number.isFinite(d) ? Infinity : d))
+function isFinitePosition(value: unknown): value is Position {
+	return (
+		Array.isArray(value) &&
+		value.length >= 2 &&
+		typeof value[0] === 'number' &&
+		typeof value[1] === 'number' &&
+		Number.isFinite(value[0]) &&
+		Number.isFinite(value[1])
 	);
 }
 
-export type RouteResult = {
-	geometry: string;
-	distance: number;
-	duration: number;
-};
-
-export type RouteBearing = { bearing: number; range: number };
-
-export type GetRouteOptions = {
-	// Force the route to keep going straight at intermediate waypoints
-	// (no U-turn even if faster). Essential for multi-via structured edges.
-	continueStraight?: boolean;
-	// Per-waypoint OSRM bearings constraint. null = unconstrained.
-	// When set and the request fails, getRoute retries once without bearings.
-	bearings?: Array<RouteBearing | null>;
-};
-
-// Thin wrapper around OSRM /route. Waypoints are ordered — this function does
-// NOT solve the TSP. For TSP solving, see ./tsp.ts and the createRoute()
-// pipeline in state.svelte.ts which first solves cluster ordering and then
-// invokes getRoute per shape plus per transition.
-//
-// overview=full keeps every road segment in the response (the simplified
-// default would produce wobbly GPX tracks).
-// geometries=polyline returns Google's precision-5 encoded polyline, decoded
-// by ./polyline.ts.
-// steps=false keeps the response payload small — we don't render turn-by-turn.
-//
-// We deliberately omit the `radiuses=` parameter: when it's missing, OSRM's
-// `/route` default is effectively unlimited per-waypoint snapping, which is
-// what we want after RDP simplification has already cut the input down to a
-// handful of geometric anchors. Passing an explicit finite radius would
-// re-introduce `NoSegment` failures for mid-block anchors; passing
-// `radiuses=0` would demand exact road matches and break those same anchors.
-//
-// Multi-via structured shapes pass continueStraight + sketch-aligned bearings
-// so OSRM does not reverse at each intermediate snap.
-export async function getRoute(points: Point[], options: GetRouteOptions = {}): Promise<RouteResult> {
-	if (points.length < 2) {
-		throw new Error('OSRM /route requires at least 2 waypoints.');
-	}
-
-	try {
-		return await fetchRoute(points, options);
-	} catch (err) {
-		// Bearings can be too tight against OSM geometry — fall back once.
-		if (options.bearings && options.bearings.length > 0) {
-			const rest = { ...options };
-			delete rest.bearings;
-			return fetchRoute(points, rest);
-		}
-		throw err;
-	}
-}
-
-async function fetchRoute(points: Point[], options: GetRouteOptions): Promise<RouteResult> {
-	const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
+/** Build an OSRM Route URL from an already validated request. */
+export function buildOsrmRouteUrl(baseUrl: string, profile: string, request: RouteRequest): string {
+	const { vias, continueStraight } = request;
+	const coords = vias.map(({ location }) => `${location[0]},${location[1]}`).join(';');
+	const base = trimTrailingSlash(baseUrl);
 	const params = new URLSearchParams({
 		overview: 'full',
-		geometries: 'polyline',
-		steps: 'false'
+		geometries: 'geojson',
+		steps: 'false',
+		annotations: 'false',
+		generate_hints: 'false'
 	});
+	const radiuses = vias.map(({ radiusM }) => (radiusM == null ? '' : String(radiusM))).join(';');
+	const bearings = vias
+		.map(({ bearing, bearingRange }) => (bearing == null ? '' : `${bearing},${bearingRange ?? 45}`))
+		.join(';');
+	if (vias.some(({ radiusM }) => radiusM != null)) params.set('radiuses', radiuses);
+	if (vias.some(({ bearing }) => bearing != null)) params.set('bearings', bearings);
+	if (continueStraight != null) params.set('continue_straight', String(continueStraight));
+	return `${base}/route/v1/${encodeURIComponent(profile)}/${coords}?${params}`;
+}
 
-	// Only meaningful with intermediate waypoints; still safe for 2-point.
-	if (options.continueStraight ?? points.length > 2) {
-		params.set('continue_straight', 'true');
+export async function fetchOsrmRoute(
+	request: RouteRequest,
+	config: OsrmConfig
+): Promise<OsrmFetchResult> {
+	const { vias } = request;
+	if (vias.length < 2) {
+		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	if (options.bearings && options.bearings.length === points.length) {
-		params.set(
-			'bearings',
-			options.bearings
-				.map((b) => (b ? `${Math.round(b.bearing)},${Math.round(b.range)}` : ''))
-				.join(';')
-		);
+	const url = buildOsrmRouteUrl(config.baseUrl, config.profile, request);
+	const fetchFn = config.fetchFn ?? fetch;
+
+	let response: Response;
+	try {
+		response = await fetchFn(url, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'User-Agent': config.userAgent
+			}
+		});
+	} catch {
+		return { ok: false, error: 'Couldn’t reach the routing server.' };
 	}
 
-	const url = `${OSRM_BASE_URL}/route/v1/${OSRM_PROFILE}/${coords}?${params.toString()}`;
-
-	const response = await fetch(url, { headers: { Accept: 'application/json' } });
 	if (!response.ok) {
-		throw new Error(`OSRM request failed: ${response.status} ${response.statusText}`);
+		return {
+			ok: false,
+			error: `Routing server error (${response.status}).`,
+			status: response.status
+		};
 	}
 
-	const body = (await response.json()) as OsrmRouteResponse;
+	let body: OsrmRouteResponse;
+	try {
+		body = (await response.json()) as OsrmRouteResponse;
+	} catch {
+		return { ok: false, error: 'Routing server returned invalid JSON.' };
+	}
+
 	if (body.code !== 'Ok') {
-		throw new Error(`OSRM returned error: ${body.code}${body.message ? ` — ${body.message}` : ''}`);
+		const msg =
+			body.code === 'NoRoute'
+				? 'No bike route found near that sketch — try closer to roads.'
+				: body.message?.trim() || `Routing failed (${body.code}).`;
+		return { ok: false, error: msg };
 	}
 
-	const route = body.routes[0];
-	if (!route) {
-		throw new Error('OSRM returned no route.');
+	const route = body.routes?.[0];
+	const geometry = route?.geometry;
+	if (!geometry || typeof geometry === 'string' || geometry.type !== 'LineString') {
+		return { ok: false, error: 'Routing server returned no geometry.' };
 	}
+	if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length < 2) {
+		return { ok: false, error: 'Routing server returned an empty path.' };
+	}
+	const snappedWaypoints = body.waypoints?.map((waypoint) => waypoint.location) ?? [];
+	const waypoints =
+		snappedWaypoints.length === vias.length && snappedWaypoints.every(isFinitePosition)
+			? snappedWaypoints
+			: vias.map(({ location }) => location);
 
 	return {
-		geometry: route.geometry,
-		distance: route.distance,
-		duration: route.duration
+		ok: true,
+		geometry,
+		distanceM: typeof route?.distance === 'number' ? route.distance : 0,
+		waypoints
 	};
 }
-
-// Collapse a densified pencil trace to a short list of hard vias for /route.
-// Endpoints always survive; interiors come from a higher-tolerance RDP pass
-// and are capped so /route cannot weave through every sample.
-export function pencilRouteAnchors(
-	points: Point[],
-	toleranceMeters = PENCIL_ROUTE_RDP_TOLERANCE,
-	maxVias = PENCIL_MAX_VIAS
-): Point[] {
-	if (points.length < 2) return points.slice();
-	if (maxVias < 2) {
-		throw new Error('Pencil max vias must be at least 2.');
-	}
-
-	let anchors = simplifyRdp(points, toleranceMeters);
-	if (anchors.length < 2) {
-		anchors = [points[0], points[points.length - 1]];
-	}
-	// RDP can drop endpoint object identity — force original ends.
-	anchors[0] = points[0];
-	anchors[anchors.length - 1] = points[points.length - 1];
-
-	if (anchors.length <= maxVias) return anchors;
-
-	const subsampled: Point[] = [];
-	for (let i = 0; i < maxVias; i++) {
-		const idx = Math.round((i * (anchors.length - 1)) / (maxVias - 1));
-		subsampled.push(anchors[idx]);
-	}
-	return subsampled;
-}
-
-type OsrmRouteResponse = {
-	code: string;
-	message?: string;
-	routes: Array<{
-		geometry: string;
-		distance: number;
-		duration: number;
-	}>;
-};
-
-type OsrmTableResponse = {
-	code: string;
-	message?: string;
-	// null when OSRM cannot route between a pair
-	distances?: Array<Array<number | null>>;
-};
