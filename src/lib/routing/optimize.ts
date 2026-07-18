@@ -20,7 +20,7 @@ function samePosition(a: Position, b: Position): boolean {
 	return a[0] === b[0] && a[1] === b[1];
 }
 
-function matrixIsValid(matrix: Array<Array<number | null>>, size: number): boolean {
+function matrixIsValid(matrix: (number | null)[][], size: number): boolean {
 	return (
 		matrix.length === size &&
 		matrix.every(
@@ -34,7 +34,7 @@ function matrixIsValid(matrix: Array<Array<number | null>>, size: number): boole
 function connectorDistance(
 	from: ShapeTraversalCandidate,
 	to: ShapeTraversalCandidate,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): number {
 	return matrix[from.exitIndex]![to.entryIndex] ?? Number.POSITIVE_INFINITY;
 }
@@ -58,7 +58,7 @@ function allCandidates(problem: ShapeOptimizationProblem): ShapeTraversalCandida
 
 function exactPath(
 	problem: ShapeOptimizationProblem,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): PathResult | null {
 	const shapeCount = problem.shapes.length;
 	const fullMask = (1 << shapeCount) - 1;
@@ -125,7 +125,7 @@ function exactPath(
 function bestStatesForOrder(
 	order: number[],
 	problem: ShapeOptimizationProblem,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): PathResult | null {
 	let previous = new Map<number, { cost: number; path: ShapeTraversalCandidate[] }>();
 	for (const candidate of problem.shapes[order[0]!]!) {
@@ -160,7 +160,7 @@ function bestStatesForOrder(
 function greedyOrder(
 	start: ShapeTraversalCandidate,
 	problem: ShapeOptimizationProblem,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): number[] | null {
 	const order = [start.shapeIndex];
 	const used = new Set(order);
@@ -226,7 +226,7 @@ function neighboringOrders(order: number[]): number[][] {
 
 function heuristicPath(
 	problem: ShapeOptimizationProblem,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): PathResult | null {
 	let best: PathResult | null = null;
 	let bestOrder: number[] | null = null;
@@ -262,7 +262,7 @@ function heuristicPath(
 
 export function optimizeShapeOrder(
 	problem: ShapeOptimizationProblem,
-	matrix: Array<Array<number | null>>
+	matrix: (number | null)[][]
 ): ShapeOptimizationResult {
 	if (problem.shapes.length === 0) {
 		return { ok: false, error: 'No routable shapes in the sketch.' };

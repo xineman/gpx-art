@@ -1,5 +1,5 @@
 import type { LineString, Position } from 'geojson';
-import type { OsrmRouteResponse, OsrmTableResponse, RouteRequest } from './types';
+import type { OsrmRouteResponse, OsrmTableResponse, RouteRequest } from '../types';
 
 export type OsrmFetchResult =
 	| {
@@ -11,8 +11,7 @@ export type OsrmFetchResult =
 	| { ok: false; error: string; status?: number };
 
 export type OsrmTableFetchResult =
-	| { ok: true; distances: Array<Array<number | null>> }
-	| { ok: false; error: string; status?: number };
+	{ ok: true; distances: (number | null)[][] } | { ok: false; error: string; status?: number };
 
 export type OsrmConfig = {
 	baseUrl: string;
@@ -118,6 +117,17 @@ export async function fetchOsrmDistanceTable(
 			ok: false,
 			error: 'Couldn’t optimize shape order — no bike-distance table is available.'
 		};
+	}
+	const validMatrix =
+		body.distances.length === coordinates.length &&
+		body.distances.every(
+			(row) =>
+				Array.isArray(row) &&
+				row.length === coordinates.length &&
+				row.every((value) => value === null || (Number.isFinite(value) && value >= 0))
+		);
+	if (!validMatrix) {
+		return { ok: false, error: 'Couldn’t optimize shape order — invalid routing response.' };
 	}
 	return { ok: true, distances: body.distances };
 }

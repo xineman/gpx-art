@@ -1,7 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { resolveOsrmConfig } from '$lib/routing/server/config.server';
-import { generateRoute, parseRouteRequest } from '$lib/routing/server/route.server';
+import { fetchOsrmDistanceTable } from '$lib/routing/server/osrm.server';
+import { parseTableRequest } from '$lib/routing/server/table.server';
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: unknown;
@@ -11,7 +12,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ ok: false, error: 'Request body must be JSON.' }, { status: 400 });
 	}
 
-	const parsed = parseRouteRequest(body);
+	const parsed = parseTableRequest(body);
 	if (!parsed.ok) {
 		return json(parsed, { status: 400 });
 	}
@@ -21,18 +22,9 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(osrm, { status: 503 });
 	}
 
-	const result = await generateRoute(parsed.request, {
-		osrm: osrm.config
-	});
-
+	const result = await fetchOsrmDistanceTable(parsed.request.coordinates, osrm.config);
 	if (!result.ok) {
-		const status =
-			result.error.includes('reach the routing') ||
-			result.error.includes('server error') ||
-			result.error.includes('returned')
-				? 502
-				: 400;
-		return json({ ok: false, error: result.error }, { status });
+		return json({ ok: false, error: result.error }, { status: 502 });
 	}
 
 	return json(result);

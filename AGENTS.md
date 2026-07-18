@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify grouped shape vias → `POST /api/route` → OSRM bike **Table** + shape-level open-route optimization → one ordered OSRM **Route** request → display-only detour detection → road line + chevrons + optional GPX
+- **Route pipeline:** client extract/simplify grouped shape vias → `POST /api/table` → client-side shape-level open-route optimization → `POST /api/route` → one ordered OSRM bike **Route** request → display-only detour detection → road line + chevrons + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
@@ -70,7 +70,8 @@ src/
     routing/              # pure route pipeline + GPX serialize
       extract.ts          # features → guide paths
       vias.ts             # RDP / sample → OSRM via points
-      osrm.ts / generate.ts / client.ts / gpx.ts / detours.ts
+      client.ts / gpx.ts / detours.ts
+      server/             # server-only request validation + OSRM proxies
     geometry/             # haversine distance + sketch stats (pure)
     map/context.ts        # provideMap / useMap (Svelte context)
     state/
@@ -84,6 +85,7 @@ src/
     +layout.svelte
     +page.svelte          # FullscreenMap only
     api/route/+server.ts  # OSRM proxy (FOSSGIS bike by default)
+    api/table/+server.ts  # OSRM Table proxy for client-side optimization
     layout.css            # Tailwind + theme tokens + viewport reset
 ```
 

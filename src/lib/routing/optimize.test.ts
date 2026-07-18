@@ -18,7 +18,7 @@ function closed(...xs: number[]): PreparedRouteShape {
 function distanceMatrix(
 	problem: ShapeOptimizationProblem,
 	distance: (from: Position, to: Position) => number | null
-): Array<Array<number | null>> {
+): (number | null)[][] {
 	return problem.coordinates.map((from) => problem.coordinates.map((to) => distance(from, to)));
 }
 

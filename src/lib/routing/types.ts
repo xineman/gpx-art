@@ -19,12 +19,9 @@ export type PreparedRouteShape = {
 	closed: boolean;
 };
 
-/** Shape-level request whose order and traversal may be optimized server-side. */
-export type OptimizedRouteRequest = {
-	shapes: PreparedRouteShape[];
+export type TableRequest = {
+	coordinates: Position[];
 };
-
-export type RouteApiRequest = RouteRequest | OptimizedRouteRequest;
 
 /** Continuous sketch path extracted from one feature. */
 export type GuidePath = {
@@ -49,22 +46,29 @@ export type RouteFailure = {
 
 export type RouteResponse = RouteSuccess | RouteFailure;
 
+export type TableSuccess = {
+	ok: true;
+	distances: (number | null)[][];
+};
+
+export type TableResponse = TableSuccess | RouteFailure;
+
 /** OSRM route service success body (subset we read). */
 export type OsrmRouteResponse = {
 	code: string;
 	message?: string;
-	waypoints?: Array<{
+	waypoints?: {
 		location?: Position;
-	}>;
-	routes?: Array<{
+	}[];
+	routes?: {
 		distance?: number;
 		geometry?: LineString | string;
-	}>;
+	}[];
 };
 
 /** OSRM Table service success body (subset we read). */
 export type OsrmTableResponse = {
 	code: string;
 	message?: string;
-	distances?: Array<Array<number | null>>;
+	distances?: (number | null)[][];
 };

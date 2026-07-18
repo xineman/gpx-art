@@ -60,7 +60,7 @@ function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | nu
 
 /**
  * Client-side: sketch features → sampled route shapes. Shape boundaries are
- * retained so the server can optimize their order and traversal.
+ * retained so the browser can optimize their order and traversal.
  */
 export function featuresToRouteShapes(
 	features: Feature[],

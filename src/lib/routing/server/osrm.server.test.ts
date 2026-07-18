@@ -4,7 +4,7 @@ import {
 	buildOsrmTableUrl,
 	fetchOsrmDistanceTable,
 	fetchOsrmRoute
-} from './osrm';
+} from './osrm.server';
 
 describe('buildOsrmRouteUrl', () => {
 	it('encodes vias and query flags', () => {
@@ -103,6 +103,31 @@ describe('OSRM Table', () => {
 		expect(result).toEqual({
 			ok: false,
 			error: 'Couldn’t optimize shape order — no bike-distance table is available.'
+		});
+	});
+
+	it('rejects a malformed matrix', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({
+				code: 'Ok',
+				distances: [[0, 100]]
+			})
+		);
+		const result = await fetchOsrmDistanceTable(
+			[
+				[21, 52],
+				[21.01, 52.01]
+			],
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+		expect(result).toEqual({
+			ok: false,
+			error: 'Couldn’t optimize shape order — invalid routing response.'
 		});
 	});
 });

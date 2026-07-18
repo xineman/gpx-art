@@ -3,7 +3,10 @@ import type { Feature } from 'geojson';
 
 const { requestRouteMock } = vi.hoisted(() => ({ requestRouteMock: vi.fn() }));
 
-vi.mock('$lib/routing/client', () => ({ requestRoute: requestRouteMock }));
+vi.mock('$lib/routing/client', () => ({
+	requestOptimizedRoute: requestRouteMock,
+	requestRoute: requestRouteMock
+}));
 
 import { route } from './route.svelte';
 
@@ -133,14 +136,12 @@ describe('route state', () => {
 		const pending = route.generate([line], 1);
 		expect(route.status).toBe('loading');
 		expect(waypointCoordinates()).toEqual([]);
-		expect(requestRouteMock).toHaveBeenCalledWith({
-			shapes: [
-				{
-					closed: false,
-					vias: expect.any(Array)
-				}
-			]
-		});
+		expect(requestRouteMock).toHaveBeenCalledWith([
+			{
+				closed: false,
+				vias: expect.any(Array)
+			}
+		]);
 
 		resolveRoute(success);
 		await pending;

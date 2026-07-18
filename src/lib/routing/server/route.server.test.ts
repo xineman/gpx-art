@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import {
-	generateRoute,
-	parseOptimizedRouteRequest,
-	parseRouteApiRequest,
-	parseRouteRequest
-} from './generate';
+import { generateRoute, parseRouteRequest } from './route.server';
 
 function routeRequest(locations: Position[]) {
 	return { vias: locations.map((location) => ({ location })) };
@@ -107,64 +102,12 @@ describe('parseRouteRequest', () => {
 			}
 		});
 	});
-});
 
-describe('parseOptimizedRouteRequest', () => {
-	it('accepts grouped open and closed shapes', () => {
-		const request = {
-			shapes: [
-				{
-					closed: false,
-					vias: [
-						[21, 52],
-						[21.01, 52.01]
-					]
-				},
-				{
-					closed: true,
-					vias: [
-						[21.02, 52.02],
-						[21.03, 52.03],
-						[21.02, 52.02]
-					]
-				}
-			]
-		};
-		expect(parseOptimizedRouteRequest(request)).toEqual({ ok: true, request });
-		expect(parseRouteApiRequest(request)).toEqual({ ok: true, request });
-	});
-
-	it('requires closed shapes to repeat their first waypoint', () => {
-		const result = parseOptimizedRouteRequest({
-			shapes: [
-				{
-					closed: true,
-					vias: [
-						[21, 52],
-						[21.01, 52.01],
-						[21.02, 52.02]
-					]
-				}
-			]
+	it('rejects the former grouped-shapes payload', () => {
+		expect(parseRouteRequest({ shapes: [] })).toMatchObject({
+			ok: false,
+			error: expect.stringMatching(/vias array/i)
 		});
-		expect(result).toMatchObject({ ok: false });
-		if (result.ok) return;
-		expect(result.error).toMatch(/repeat its first waypoint/i);
-	});
-
-	it('enforces the route-wide waypoint cap', () => {
-		const result = parseOptimizedRouteRequest({
-			shapes: Array.from({ length: 31 }, (_, index) => ({
-				closed: false,
-				vias: [
-					[index, 0],
-					[index + 0.5, 0]
-				]
-			}))
-		});
-		expect(result).toMatchObject({ ok: false });
-		if (result.ok) return;
-		expect(result.error).toMatch(/max 60/i);
 	});
 });
 
@@ -290,157 +233,5 @@ describe('generateRoute', () => {
 			error: 'No bike route found near that sketch — try closer to roads.'
 		});
 		expect(fetchFn).toHaveBeenCalledTimes(1);
-	});
-
-	it('optimizes grouped shapes with Table before making one ordered Route request', async () => {
-		const requestedUrls: string[] = [];
-		const fetchFn = vi.fn((input: string | URL | Request) => {
-			const url = new URL(String(input));
-			requestedUrls.push(url.toString());
-			const coordinates = url.pathname
-				.split('/')
-				.at(-1)!
-				.split(';')
-				.map((coordinate) => coordinate.split(',').map(Number));
-			if (url.pathname.includes('/table/')) {
-				const distances = coordinates.map((from) =>
-					coordinates.map((to) => {
-						if (from[0] === to[0]) return 0;
-						return from[0] === 1 && to[0] === 10 ? 1 : 100;
-					})
-				);
-				return Promise.resolve(Response.json({ code: 'Ok', distances }));
-			}
-			return Promise.resolve(
-				Response.json({
-					code: 'Ok',
-					waypoints: coordinates.map((location) => ({ location })),
-					routes: [
-						{
-							distance: 500,
-							geometry: { type: 'LineString', coordinates }
-						}
-					]
-				})
-			);
-		});
-
-		const result = await generateRoute(
-			{
-				shapes: [
-					{
-						closed: false,
-						vias: [
-							[10, 0],
-							[11, 0]
-						]
-					},
-					{
-						closed: false,
-						vias: [
-							[0, 0],
-							[1, 0]
-						]
-					}
-				]
-			},
-			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
-					userAgent: 'test',
-					fetchFn: fetchFn as unknown as typeof fetch
-				}
-			}
-		);
-
-		expect(result.ok).toBe(true);
-		expect(fetchFn).toHaveBeenCalledTimes(2);
-		expect(new URL(requestedUrls[0]!).pathname).toContain('/table/v1/driving/');
-		expect(new URL(requestedUrls[1]!).pathname).toContain('/route/v1/driving/0,0;1,0;10,0;11,0');
-	});
-
-	it('does not call Route when shape-order Table fails', async () => {
-		const fetchFn = vi.fn(async () => Response.json({ code: 'NotImplemented' }));
-		const result = await generateRoute(
-			{
-				shapes: [
-					{
-						closed: false,
-						vias: [
-							[0, 0],
-							[1, 0]
-						]
-					},
-					{
-						closed: false,
-						vias: [
-							[10, 0],
-							[11, 0]
-						]
-					}
-				]
-			},
-			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
-					userAgent: 'test',
-					fetchFn: fetchFn as unknown as typeof fetch
-				}
-			}
-		);
-
-		expect(result).toEqual({
-			ok: false,
-			error: 'Couldn’t optimize shape order — no bike-distance table is available.'
-		});
-		expect(fetchFn).toHaveBeenCalledTimes(1);
-	});
-
-	it('skips Table for a single grouped shape', async () => {
-		let requestedUrl = '';
-		const fetchFn = vi.fn(async (input: string | URL | Request) => {
-			requestedUrl = String(input);
-			return Response.json({
-				code: 'Ok',
-				routes: [
-					{
-						distance: 100,
-						geometry: {
-							type: 'LineString',
-							coordinates: [
-								[0, 0],
-								[1, 0]
-							]
-						}
-					}
-				]
-			});
-		});
-		const result = await generateRoute(
-			{
-				shapes: [
-					{
-						closed: false,
-						vias: [
-							[0, 0],
-							[1, 0]
-						]
-					}
-				]
-			},
-			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
-					userAgent: 'test',
-					fetchFn: fetchFn as unknown as typeof fetch
-				}
-			}
-		);
-		expect(result.ok).toBe(true);
-		expect(fetchFn).toHaveBeenCalledTimes(1);
-		expect(requestedUrl).toContain('/route/v1/');
 	});
 });
