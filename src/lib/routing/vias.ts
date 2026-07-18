@@ -5,7 +5,7 @@ import {
 	VIA_SAMPLE_SPACING_M,
 	VIA_SIMPLIFY_TOLERANCE_M
 } from '$lib/config/routing';
-import { distanceBetween, pathLength } from '$lib/geometry/distance';
+import { distanceBetween } from '$lib/geometry/distance';
 import type { GuidePath } from './types';
 
 export type ViasResult = { ok: true; vias: Position[] } | { ok: false; error: string };
@@ -74,38 +74,69 @@ export function simplifyRdp(points: Position[], toleranceM: number): Position[] 
 	return out;
 }
 
-/** Uniform samples along the path every `spacingM` meters (always keeps ends). */
-export function sampleAlongPath(points: Position[], spacingM: number): Position[] {
-	if (points.length < 2) return [...points];
-	if (spacingM <= 0) return [...points];
+/**
+ * Add intermediate vias to long segments while retaining every input vertex.
+ * For closed paths, the closing segment is included and the repeated start
+ * counts toward `maxVias`.
+ */
+export function densifySegments(
+	points: Position[],
+	closed: boolean,
+	maxVias: number,
+	spacingM: number
+): Position[] {
+	if (points.length < 2 || maxVias < 2) return [...points].slice(0, maxVias);
 
-	const out: Position[] = [points[0]!];
-	let acc = 0;
-	let nextAt = spacingM;
-
-	for (let i = 1; i < points.length; i++) {
-		const prev = points[i - 1]!;
-		const curr = points[i]!;
-		const seg = distanceBetween(prev, curr);
-		if (seg === 0) continue;
-
-		let traveled = 0;
-		while (acc + (seg - traveled) >= nextAt) {
-			const need = nextAt - acc;
-			const t = (traveled + need) / seg;
-			const lng = prev[0]! + (curr[0]! - prev[0]!) * t;
-			const lat = prev[1]! + (curr[1]! - prev[1]!) * t;
-			out.push([lng, lat]);
-			traveled += need;
-			acc = nextAt;
-			nextAt += spacingM;
-		}
-		acc += seg - traveled;
+	const segmentCount = closed ? points.length : points.length - 1;
+	const baseViaCount = points.length + (closed ? 1 : 0);
+	if (spacingM <= 0 || baseViaCount >= maxVias) {
+		return closed ? [...points, points[0]!] : [...points];
 	}
 
-	const last = points[points.length - 1]!;
-	const tail = out[out.length - 1]!;
-	if (tail[0] !== last[0] || tail[1] !== last[1]) out.push(last);
+	const lengths = Array.from({ length: segmentCount }, (_, index) => {
+		const nextIndex = (index + 1) % points.length;
+		return distanceBetween(points[index]!, points[nextIndex]!);
+	});
+	const divisions = lengths.map(() => 1);
+	let remaining = maxVias - baseViaCount;
+
+	while (remaining > 0) {
+		let longestIndex = -1;
+		let longestInterval = spacingM;
+
+		for (let index = 0; index < segmentCount; index++) {
+			const interval = lengths[index]! / divisions[index]!;
+			if (interval > longestInterval) {
+				longestInterval = interval;
+				longestIndex = index;
+			}
+		}
+
+		if (longestIndex < 0) break;
+		divisions[longestIndex]! += 1;
+		remaining -= 1;
+	}
+
+	const out: Position[] = [points[0]!];
+	for (let index = 0; index < segmentCount; index++) {
+		const start = points[index]!;
+		const end = points[(index + 1) % points.length]!;
+		const divisionCount = divisions[index]!;
+
+		for (let step = 1; step <= divisionCount; step++) {
+			if (step === divisionCount) {
+				out.push(end);
+				continue;
+			}
+
+			const fraction = step / divisionCount;
+			out.push([
+				start[0]! + (end[0]! - start[0]!) * fraction,
+				start[1]! + (end[1]! - start[1]!) * fraction
+			]);
+		}
+	}
+
 	return out;
 }
 
@@ -160,32 +191,16 @@ export function guideToVias(
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	// Dense freehand: sample first so RDP works on a regular chain.
-	const lengthM = pathLength(points);
-	if (points.length > maxVias * 2 || lengthM > sampleSpacingM * maxVias) {
-		points = sampleAlongPath(points, sampleSpacingM);
-	}
-
 	points = simplifyRdp(points, toleranceM);
 	points = dedupeConsecutive(points);
 
-	if (points.length > maxVias) {
-		// Leave room to re-append close for loops.
-		const budget = guide.closed ? Math.max(MIN_VIAS, maxVias - 1) : maxVias;
-		points = strideToMax(points, budget);
+	const pointBudget = guide.closed ? maxVias - 1 : maxVias;
+	if (pointBudget < MIN_VIAS) {
+		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
+	if (points.length > pointBudget) points = strideToMax(points, pointBudget);
 
-	if (guide.closed && points.length >= 2) {
-		const first = points[0]!;
-		const last = points[points.length - 1]!;
-		if (first[0] !== last[0] || first[1] !== last[1]) {
-			if (points.length < maxVias) {
-				points = [...points, first];
-			}
-		}
-	}
-
-	points = dedupeConsecutive(points);
+	points = densifySegments(points, guide.closed, maxVias, sampleSpacingM);
 	// Closed path may legitimately start==end as two list entries — OSRM needs them.
 	// Only fail if fewer than 2 unique positions.
 	const uniqueEnough =

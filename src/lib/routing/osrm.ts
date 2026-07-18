@@ -1,8 +1,13 @@
 import type { LineString, Position } from 'geojson';
-import type { OsrmRouteResponse } from './types';
+import type { OsrmRouteResponse, RouteRequest } from './types';
 
 export type OsrmFetchResult =
-	| { ok: true; geometry: LineString; distanceM: number }
+	| {
+			ok: true;
+			geometry: LineString;
+			distanceM: number;
+			waypoints: Position[];
+	  }
 	| { ok: false; error: string; status?: number };
 
 export type OsrmConfig = {
@@ -18,31 +23,49 @@ function trimTrailingSlash(url: string) {
 	return url.replace(/\/+$/, '');
 }
 
-/**
- * Build OSRM Route URL.
- * FOSSGIS bike: base `…/routed-bike`, profile often `driving` (graph is bike).
- */
-export function buildOsrmRouteUrl(baseUrl: string, profile: string, vias: Position[]): string {
-	const coords = vias.map((p) => `${p[0]},${p[1]}`).join(';');
+function isFinitePosition(value: unknown): value is Position {
+	return (
+		Array.isArray(value) &&
+		value.length >= 2 &&
+		typeof value[0] === 'number' &&
+		typeof value[1] === 'number' &&
+		Number.isFinite(value[0]) &&
+		Number.isFinite(value[1])
+	);
+}
+
+/** Build an OSRM Route URL from an already validated request. */
+export function buildOsrmRouteUrl(baseUrl: string, profile: string, request: RouteRequest): string {
+	const { vias, continueStraight } = request;
+	const coords = vias.map(({ location }) => `${location[0]},${location[1]}`).join(';');
 	const base = trimTrailingSlash(baseUrl);
 	const params = new URLSearchParams({
 		overview: 'full',
 		geometries: 'geojson',
 		steps: 'false',
-		annotations: 'false'
+		annotations: 'false',
+		generate_hints: 'false'
 	});
+	const radiuses = vias.map(({ radiusM }) => (radiusM == null ? '' : String(radiusM))).join(';');
+	const bearings = vias
+		.map(({ bearing, bearingRange }) => (bearing == null ? '' : `${bearing},${bearingRange ?? 45}`))
+		.join(';');
+	if (vias.some(({ radiusM }) => radiusM != null)) params.set('radiuses', radiuses);
+	if (vias.some(({ bearing }) => bearing != null)) params.set('bearings', bearings);
+	if (continueStraight != null) params.set('continue_straight', String(continueStraight));
 	return `${base}/route/v1/${encodeURIComponent(profile)}/${coords}?${params}`;
 }
 
 export async function fetchOsrmRoute(
-	vias: Position[],
+	request: RouteRequest,
 	config: OsrmConfig
 ): Promise<OsrmFetchResult> {
+	const { vias } = request;
 	if (vias.length < 2) {
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	const url = buildOsrmRouteUrl(config.baseUrl, config.profile, vias);
+	const url = buildOsrmRouteUrl(config.baseUrl, config.profile, request);
 	const fetchFn = config.fetchFn ?? fetch;
 
 	let response: Response;
@@ -89,10 +112,16 @@ export async function fetchOsrmRoute(
 	if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length < 2) {
 		return { ok: false, error: 'Routing server returned an empty path.' };
 	}
+	const snappedWaypoints = body.waypoints?.map((waypoint) => waypoint.location) ?? [];
+	const waypoints =
+		snappedWaypoints.length === vias.length && snappedWaypoints.every(isFinitePosition)
+			? snappedWaypoints
+			: vias.map(({ location }) => location);
 
 	return {
 		ok: true,
 		geometry,
-		distanceM: typeof route?.distance === 'number' ? route.distance : 0
+		distanceM: typeof route?.distance === 'number' ? route.distance : 0,
+		waypoints
 	};
 }

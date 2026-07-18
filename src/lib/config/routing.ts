@@ -9,10 +9,7 @@ export const MAX_VIAS = 60;
 /** Douglas–Peucker epsilon in meters before the hard cap. */
 export const VIA_SIMPLIFY_TOLERANCE_M = 35;
 
-/**
- * After simplify, if still over MAX_VIAS, sample along the path every N meters
- * then stride — this is the fallback spacing target.
- */
+/** Preferred maximum interval between prepared vias after simplifying the guide path. */
 export const VIA_SAMPLE_SPACING_M = 120;
 
 /** Minimum distinct vias needed to call OSRM. */

@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with one ordered via array → FOSSGIS OSRM **Route** (bike) → road line + chevrons + optional GPX
+- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with one ordered via array → FOSSGIS OSRM **Route** (bike) → display-only detour detection → road line + chevrons + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
@@ -64,13 +64,13 @@ src/
     drawing/              # framework-agnostic MapLibre draw logic
       controller.ts       # pointer/keyboard interaction → draft/commit
       geo.ts              # LineString / Polygon helpers, sampling
-      layers.ts           # sketch + preview + route GeoJSON layers
+      layers.ts           # sketch + preview + route/detour GeoJSON layers
       io.ts               # GeoJSON sketch parse/serialize/download
       tap.ts              # double-tap / re-tap-last helpers (pure)
     routing/              # pure route pipeline + GPX serialize
       extract.ts          # features → guide paths
       vias.ts             # RDP / sample → OSRM via points
-      osrm.ts / generate.ts / client.ts / gpx.ts / postprocess.ts
+      osrm.ts / generate.ts / client.ts / gpx.ts / detours.ts
     geometry/             # haversine distance + sketch stats (pure)
     map/context.ts        # provideMap / useMap (Svelte context)
     state/
@@ -87,7 +87,7 @@ src/
     layout.css            # Tailwind + theme tokens + viewport reset
 ```
 
-**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host). Fair use on the public demo: ≤1 req/s, valid User-Agent.
+**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host).
 
 ## Architecture notes
 
@@ -118,6 +118,6 @@ src/
 
 - Prefer small, focused changes; extend the existing modules rather than forking parallel patterns.
 - After non-trivial TS/Svelte edits, run `pnpm check` and `pnpm lint` (and `pnpm test` when touching logic with tests).
-- **Verify UI / map / drawing changes with the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
+- **Verify UI / map / drawing changes with Codex's in-app Browser when available, otherwise the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
 - Do not commit secrets; env files follow `.gitignore` (`.env` ignored, `.env.example` ok).
 - Keep this file short and actionable; update it when architecture or commands change on this branch.

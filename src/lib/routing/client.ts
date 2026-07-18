@@ -1,11 +1,10 @@
-import type { Position } from 'geojson';
-import type { RouteResponse } from './types';
+import type { RouteRequest, RouteResponse } from './types';
 
 /**
  * Browser client for the app's route API (proxies OSRM server-side).
  * Vias must already be prepared on the client (`prepareRouteVias`).
  */
-export async function requestRoute(vias: Position[]): Promise<RouteResponse> {
+export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
 	let response: Response;
 	try {
 		response = await fetch('/api/route', {
@@ -14,7 +13,7 @@ export async function requestRoute(vias: Position[]): Promise<RouteResponse> {
 				'Content-Type': 'application/json',
 				Accept: 'application/json'
 			},
-			body: JSON.stringify({ vias })
+			body: JSON.stringify(request)
 		});
 	} catch {
 		return { ok: false, error: 'Network error — couldn’t start routing.' };
