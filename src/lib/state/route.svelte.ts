@@ -17,13 +17,13 @@ import {
 	getWaypointRefinementAction,
 	hasWaypointDetourCandidate,
 	improvesDetourScore,
-	routeWaypointHash,
+	routeRequestHash,
 	scoreRouteDetours,
 	selectedWaypointDetourCandidate,
 	type RefinementPlan,
 	type WaypointRefinementAction
 } from '$lib/routing/refinement';
-import type { RouteFailure, RouteRequest, RouteResponse, RouteSuccess } from '$lib/routing/types';
+import type { RouteRequest, RouteResponse, RouteSuccess } from '$lib/routing/types';
 
 export type { WaypointRefinementAction } from '$lib/routing/refinement';
 
@@ -258,9 +258,8 @@ function restoreSnapshot(snapshot: RouteSnapshot, revision: number) {
 	);
 }
 
-async function refineAutomatically(revision: number, automaticAction: 'generate' | 'refine') {
+async function refineAutomatically(revision: number) {
 	const startedAt = Date.now();
-	let failure: RouteFailure | null = null;
 	// Local loop bookkeeping is intentionally not part of Svelte's reactive state.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const seen = new Set<string>();
@@ -277,29 +276,19 @@ async function refineAutomatically(revision: number, automaticAction: 'generate'
 			if (!before) break;
 			const beforeScore = scoreRouteDetours(detourAnalysis, distanceM);
 			if (beforeScore.candidateCount === 0) break;
-			const beforeHash = routeWaypointHash(waypoints);
-			if (seen.has(beforeHash)) break;
-			seen.add(beforeHash);
+			const plan = refinementPlan();
+			const requestHash = routeRequestHash(plan.request);
+			if (seen.has(requestHash)) break;
+			seen.add(requestHash);
 
-			const result = await requestPreparedRoute(
-				refinementPlan().request,
-				revision,
-				automaticAction,
-				{
-					preserveCurrent: true,
-					refined: true,
-					// Keep one operation-level loading state across the automatic request loop.
-					keepLoadingAfterSuccess: true
-				}
-			);
-			if (!result.ok) {
-				failure = result;
-				break;
-			}
-			if (
-				seen.has(routeWaypointHash(waypoints)) ||
-				!improvesDetourScore(scoreRouteDetours(detourAnalysis, distanceM), beforeScore)
-			) {
+			const result = await requestPreparedRoute(plan.request, revision, 'generate', {
+				preserveCurrent: true,
+				refined: true,
+				// Keep one operation-level loading state across the automatic request loop.
+				keepLoadingAfterSuccess: true
+			});
+			if (!result.ok) break;
+			if (!improvesDetourScore(scoreRouteDetours(detourAnalysis, distanceM), beforeScore)) {
 				restoreSnapshot(before, revision);
 				break;
 			}
@@ -309,13 +298,12 @@ async function refineAutomatically(revision: number, automaticAction: 'generate'
 			status === 'loading' &&
 			geometry != null &&
 			sourceRevision === revision &&
-			loadingAction === automaticAction
+			loadingAction === 'generate'
 		) {
 			status = 'ready';
 			loadingAction = null;
 		}
 	}
-	if (automaticAction === 'refine' && failure) return failure;
 	return geometry
 		? ({ ok: true, geometry, waypoints, distanceM } satisfies RouteSuccess)
 		: ({ ok: false, error: 'No route found.' } as const);
@@ -463,8 +451,6 @@ export const route = {
 		}
 
 		const plan = refinementPlan();
-		const hasManualOverrides = Object.keys(waypointActionOverrides).length > 0;
-		if (!hasManualOverrides) return refineAutomatically(sourceRevision, 'refine');
 		if (plan.request.vias.length < MIN_VIAS) {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
@@ -514,7 +500,7 @@ export const route = {
 			}
 		);
 		if (!result.ok || !options.autoRefine) return result;
-		return refineAutomatically(revision, 'generate');
+		return refineAutomatically(revision);
 	},
 	/** Download GPX for the current route (no-op when not ready). */
 	downloadGpx() {

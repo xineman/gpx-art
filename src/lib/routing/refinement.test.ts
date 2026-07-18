@@ -4,7 +4,7 @@ import type { WaypointDetourAnalysis } from './detours';
 import {
 	buildRefinementPlan,
 	improvesDetourScore,
-	routeWaypointHash,
+	routeRequestHash,
 	scoreRouteDetours
 } from './refinement';
 
@@ -82,12 +82,25 @@ describe('automatic refinement policy', () => {
 		).toBe(false);
 	});
 
-	it('hashes waypoint coordinates at routing precision', () => {
-		expect(
-			routeWaypointHash([
-				[21.1234564, 52.1],
-				[21.2, 52.6543214]
-			])
-		).toBe('21.123456,52.100000;21.200000,52.654321');
+	it('hashes locations and snapping constraints from the outgoing request', () => {
+		const request = {
+			vias: [
+				{ location: [21.1234564, 52.1] },
+				{
+					location: [21.2, 52.6543214],
+					radiusM: 20,
+					bearing: 45,
+					bearingRange: 30
+				}
+			],
+			continueStraight: true
+		};
+
+		expect(routeRequestHash(request)).not.toBe(
+			routeRequestHash({
+				...request,
+				vias: [request.vias[0]!, { ...request.vias[1]!, bearing: 90 }]
+			})
+		);
 	});
 });

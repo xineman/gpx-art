@@ -113,7 +113,7 @@ describe('route state', () => {
 		expect(route.hasRefinedRoute).toBe(true);
 	});
 
-	it('keeps one loading state while automatic refinement settles', async () => {
+	it('keeps explicit refinement loading until its single request settles', async () => {
 		let resolveRefinement!: (result: typeof straightSuccess) => void;
 		const refinementResponse = new Promise<typeof straightSuccess>((resolve) => {
 			resolveRefinement = resolve;
@@ -126,17 +126,12 @@ describe('route state', () => {
 		expect(route.loadingAction).toBe('refine');
 
 		resolveRefinement(straightSuccess);
-		// Observe the completed internal request before the outer refinement loop settles.
-		await Promise.resolve();
-		expect(route.status).toBe('loading');
-		expect(route.loadingAction).toBe('refine');
-
 		await refinement;
 		expect(route.status).toBe('ready');
 		expect(route.loadingAction).toBeNull();
 	});
 
-	it('reports a failed explicit automatic refinement instead of the preserved route', async () => {
+	it('reports a failed explicit refinement and preserves the current route', async () => {
 		requestRouteMock
 			.mockResolvedValueOnce(ordinarySuccess)
 			.mockResolvedValueOnce({ ok: false, error: 'No route found.' });
@@ -149,6 +144,26 @@ describe('route state', () => {
 		expect(route.geometry).toEqual(ordinarySuccess.geometry);
 		expect(route.hasRefinedRoute).toBe(false);
 		expect(route.errorMessage).toBe('No route found.');
+	});
+
+	it('keeps an explicit successful result even when it is longer and snaps to the same vias', async () => {
+		const longerSameViaSuccess = {
+			...success,
+			waypoints: ordinarySuccess.waypoints
+		};
+		requestRouteMock
+			.mockResolvedValueOnce(ordinarySuccess)
+			.mockResolvedValueOnce(longerSameViaSuccess);
+
+		await route.generate([line], 18);
+		const result = await route.refineRoute();
+
+		expect(result).toEqual(longerSameViaSuccess);
+		expect(requestRouteMock).toHaveBeenCalledTimes(2);
+		expect(route.geometry).toEqual(longerSameViaSuccess.geometry);
+		expect(route.waypoints).toEqual(ordinarySuccess.waypoints);
+		expect(route.distanceM).toBe(longerSameViaSuccess.distanceM);
+		expect(route.hasRefinedRoute).toBe(true);
 	});
 
 	it('restores the prior route when automatic refinement makes it much longer', async () => {

@@ -141,6 +141,16 @@ export function improvesDetourScore(next: DetourScore, previous: DetourScore): b
 	return next.distanceM < previous.distanceM;
 }
 
-export function routeWaypointHash(waypoints: Position[]): string {
-	return waypoints.map(([lng, lat]) => `${lng.toFixed(6)},${lat.toFixed(6)}`).join(';');
+/** Hash every field that can change the OSRM request used by automatic refinement. */
+export function routeRequestHash(request: RouteRequest): string {
+	return JSON.stringify({
+		vias: request.vias.map(({ location, radiusM, bearing, bearingRange }) => [
+			location[0],
+			location[1],
+			radiusM ?? null,
+			bearing ?? null,
+			bearingRange ?? null
+		]),
+		continueStraight: request.continueStraight ?? null
+	});
 }
