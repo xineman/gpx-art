@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
 	import { drawings } from '$lib/state/drawings.svelte';
 	import { status } from '$lib/state/status.svelte';
+	import { dismissibleLayer } from '$lib/util/dismissible-layer';
 	import { pointer } from '$lib/util/pointer.svelte';
 
 	let open = $state(false);
-	let rootEl = $state<HTMLDivElement | null>(null);
+	let triggerBtn = $state<HTMLButtonElement | null>(null);
 	let confirmBtn = $state<HTMLButtonElement | null>(null);
 
 	const showHoverTip = $derived(pointer.ready && pointer.fineHover && !open);
@@ -28,42 +28,12 @@
 		status.flash('Sketch cleared.');
 		close();
 	}
-
-	function onDocumentPointerDown(event: PointerEvent) {
-		if (!open || !rootEl) return;
-		const target = event.target;
-		if (target instanceof Node && rootEl.contains(target)) return;
-		close();
-	}
-
-	function onDocumentKeyDown(event: KeyboardEvent) {
-		if (!open) return;
-		if (event.key === 'Escape') {
-			// Capture + stop so DrawingController does not cancel an active draft.
-			event.preventDefault();
-			event.stopPropagation();
-			close();
-		}
-	}
-
-	$effect(() => {
-		if (!open) return;
-		document.addEventListener('pointerdown', onDocumentPointerDown, true);
-		document.addEventListener('keydown', onDocumentKeyDown, true);
-		// Focus the confirm action so Enter works without hunting the button.
-		queueMicrotask(() => confirmBtn?.focus());
-		return () => {
-			document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-			document.removeEventListener('keydown', onDocumentKeyDown, true);
-		};
-	});
-
-	onDestroy(close);
 </script>
 
-<div class="relative flex items-center justify-center" bind:this={rootEl}>
+<div class="relative flex items-center justify-center">
 	<div class="group/tooltip relative flex items-center justify-center">
 		<button
+			bind:this={triggerBtn}
 			type="button"
 			class={[
 				'inline-flex size-9.5 shrink-0 items-center justify-center rounded-md border-0',
@@ -98,6 +68,7 @@
 
 	{#if open}
 		<div
+			use:dismissibleLayer={{ onDismiss: close, trigger: triggerBtn, initialFocus: confirmBtn }}
 			role="dialog"
 			aria-label="Clear sketch"
 			class="absolute bottom-full left-1/2 z-20 mb-4 w-max min-w-40 -translate-x-1/2 rounded-md border border-panel-edge/15 bg-panel-lift p-1 shadow-tooltip"

@@ -11,13 +11,26 @@ import {
 } from '$lib/routing/detours';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
 import { prepareRouteVias } from '$lib/routing/prepare';
-import type { RouteResponse, RouteSuccess } from '$lib/routing/types';
+import {
+	buildRefinementPlan,
+	defaultWaypointRefinementAction,
+	getWaypointRefinementAction,
+	hasWaypointDetourCandidate,
+	improvesDetourScore,
+	routeWaypointHash,
+	scoreRouteDetours,
+	selectedWaypointDetourCandidate,
+	type RefinementPlan,
+	type WaypointRefinementAction
+} from '$lib/routing/refinement';
+import type { RouteFailure, RouteRequest, RouteResponse, RouteSuccess } from '$lib/routing/types';
+
+export type { WaypointRefinementAction } from '$lib/routing/refinement';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
 
 export type WaypointRole = 'start' | 'via' | 'end';
-export type WaypointRefinementAction = 'keep' | 'move' | 'remove';
 
 let status = $state<RouteStatus>('idle');
 let geometry = $state<LineString | null>(null);
@@ -68,15 +81,15 @@ function showError(revision: number, message: string) {
 }
 
 function hasDetourCandidate(index: number): boolean {
-	return detourAnalysis[index]?.candidate != null;
+	return hasWaypointDetourCandidate(detourAnalysis, index);
 }
 
 function defaultWaypointAction(index: number): WaypointRefinementAction {
-	return hasDetourCandidate(index) ? 'move' : 'keep';
+	return defaultWaypointRefinementAction(detourAnalysis, index);
 }
 
 function waypointAction(index: number): WaypointRefinementAction {
-	return waypointActionOverrides[index] ?? defaultWaypointAction(index);
+	return getWaypointRefinementAction(detourAnalysis, waypointActionOverrides, index);
 }
 
 function actionCount(action: Exclude<WaypointRefinementAction, 'keep'>): number {
@@ -87,9 +100,16 @@ function pendingWaypointCount(): number {
 	return actionCount('move') + actionCount('remove');
 }
 
-function selectedDetourCandidate(index: number): RouteDetour | null {
-	if (waypointAction(index) !== 'move') return null;
-	return detourAnalysis[index]?.candidate ?? null;
+function canRefine(): boolean {
+	return status === 'ready' && canRefineCurrentResult();
+}
+
+function canRefineCurrentResult(): boolean {
+	return (
+		geometry != null &&
+		pendingWaypointCount() > 0 &&
+		refinementPlan().request.vias.length >= MIN_VIAS
+	);
 }
 
 function rebuildDetours() {
@@ -99,68 +119,39 @@ function rebuildDetours() {
 	}
 
 	const candidates = detourAnalysis.flatMap((analysis) => {
-		const candidate = selectedDetourCandidate(analysis.waypointIndex);
+		const candidate = selectedWaypointDetourCandidate(
+			detourAnalysis,
+			waypointActionOverrides,
+			analysis.waypointIndex
+		);
 		return candidate ? [candidate] : [];
 	});
 	detours = mergeRouteDetourCandidates(geometry, candidates);
 }
 
-function dedupeConsecutivePositions(points: Position[]): Position[] {
-	const distinct: Position[] = [];
-	for (const point of points) {
-		const previous = distinct.at(-1);
-		if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) {
-			distinct.push(point);
-		}
-	}
-	return distinct;
+function refinementPlan(): RefinementPlan {
+	return buildRefinementPlan(geometry, waypoints, detourAnalysis, waypointActionOverrides);
 }
 
-function refinementWaypoints(): Position[] {
-	if (!geometry) return dedupeConsecutivePositions(waypoints);
+function requestFromPositions(points: Position[]): RouteRequest {
+	return { vias: points.map((location) => ({ location })) };
+}
 
-	const routePoints = geometry.coordinates;
-	return dedupeConsecutivePositions(
-		waypoints.flatMap((waypoint, index) => {
-			const action = waypointAction(index);
-			if (action === 'remove') return [];
-			if (action === 'keep') return [waypoint];
-
-			const candidate = selectedDetourCandidate(index);
-			if (!candidate) return [waypoint];
-
-			const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
-			return [routePoints[routeIndex] ?? waypoint];
-		})
+function hasAutoPending(): boolean {
+	return waypoints.some(
+		(_, index) => waypointAction(index) === 'move' && hasDetourCandidate(index)
 	);
-}
-
-/**
- * A user can explicitly keep a waypoint that detour analysis suggested moving.
- * Preserve that choice when its waypoint survives a refinement request, so a
- * newly detected detour does not immediately turn it back into a move action.
- */
-function refinementOverrides(): Record<number, WaypointRefinementAction> {
-	const overrides: Record<number, WaypointRefinementAction> = {};
-	let refinedIndex = 0;
-
-	for (let index = 0; index < waypoints.length; index++) {
-		if (waypointAction(index) === 'remove') continue;
-		if (waypointActionOverrides[index] === 'keep') overrides[refinedIndex] = 'keep';
-		refinedIndex += 1;
-	}
-
-	return overrides;
 }
 
 function applyReadyResult(
 	result: RouteSuccess,
 	revision: number,
 	refined: boolean,
-	preservedOverrides: Record<number, WaypointRefinementAction> = {}
+	preservedOverrides: Record<number, WaypointRefinementAction> = {},
+	continuedLoadingAction: RouteLoadingAction = null
 ) {
-	status = 'ready';
-	loadingAction = null;
+	status = continuedLoadingAction ? 'loading' : 'ready';
+	loadingAction = continuedLoadingAction;
 	geometry = result.geometry;
 	waypoints = result.waypoints;
 	detourAnalysis = analyzeRouteDetours(result.geometry, result.waypoints);
@@ -173,15 +164,17 @@ function applyReadyResult(
 }
 
 async function requestPreparedRoute(
-	vias: Position[],
+	request: RouteRequest,
 	revision: number,
 	action: Exclude<RouteLoadingAction, null>,
 	options: {
 		preserveCurrent: boolean;
 		refined: boolean;
 		preservedOverrides?: Record<number, WaypointRefinementAction>;
+		keepLoadingAfterSuccess?: boolean;
 	}
 ): Promise<RouteResponse> {
+	const previewVias = request.vias.map(({ location }) => location);
 	const id = ++requestId;
 	status = 'loading';
 	loadingAction = action;
@@ -190,7 +183,7 @@ async function requestPreparedRoute(
 
 	if (!options.preserveCurrent) {
 		// Show prepared vias immediately while the first OSRM request runs.
-		waypoints = vias;
+		waypoints = previewVias;
 		geometry = null;
 		detours = [];
 		detourAnalysis = [];
@@ -199,7 +192,7 @@ async function requestPreparedRoute(
 		hasRefinedRoute = false;
 	}
 
-	const result = await requestRoute(vias);
+	const result = await requestRoute(request);
 	if (id !== requestId) {
 		return { ok: false, error: 'Superseded.' };
 	}
@@ -222,8 +215,110 @@ async function requestPreparedRoute(
 		return result;
 	}
 
-	applyReadyResult(result, revision, options.refined, options.preservedOverrides);
+	applyReadyResult(
+		result,
+		revision,
+		options.refined,
+		options.preservedOverrides,
+		options.keepLoadingAfterSuccess ? action : null
+	);
 	return result;
+}
+
+type RouteSnapshot = {
+	geometry: LineString;
+	waypoints: Position[];
+	distanceM: number;
+	overrides: Record<number, WaypointRefinementAction>;
+	refined: boolean;
+};
+
+function snapshotRoute(): RouteSnapshot | null {
+	if (!geometry) return null;
+	return {
+		geometry,
+		waypoints: [...waypoints],
+		distanceM,
+		overrides: { ...waypointActionOverrides },
+		refined: hasRefinedRoute
+	};
+}
+
+function restoreSnapshot(snapshot: RouteSnapshot, revision: number) {
+	applyReadyResult(
+		{
+			ok: true,
+			geometry: snapshot.geometry,
+			waypoints: snapshot.waypoints,
+			distanceM: snapshot.distanceM
+		},
+		revision,
+		snapshot.refined,
+		snapshot.overrides
+	);
+}
+
+async function refineAutomatically(revision: number, automaticAction: 'generate' | 'refine') {
+	const startedAt = Date.now();
+	let failure: RouteFailure | null = null;
+	// Local loop bookkeeping is intentionally not part of Svelte's reactive state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const seen = new Set<string>();
+	try {
+		for (let iteration = 0; iteration < 5 && Date.now() - startedAt < 5_000; iteration++) {
+			if (
+				!canRefineCurrentResult() ||
+				!hasAutoPending() ||
+				Object.keys(waypointActionOverrides).length > 0
+			) {
+				break;
+			}
+			const before = snapshotRoute();
+			if (!before) break;
+			const beforeScore = scoreRouteDetours(detourAnalysis, distanceM);
+			if (beforeScore.candidateCount === 0) break;
+			const beforeHash = routeWaypointHash(waypoints);
+			if (seen.has(beforeHash)) break;
+			seen.add(beforeHash);
+
+			const result = await requestPreparedRoute(
+				refinementPlan().request,
+				revision,
+				automaticAction,
+				{
+					preserveCurrent: true,
+					refined: true,
+					// Keep one operation-level loading state across the automatic request loop.
+					keepLoadingAfterSuccess: true
+				}
+			);
+			if (!result.ok) {
+				failure = result;
+				break;
+			}
+			if (
+				seen.has(routeWaypointHash(waypoints)) ||
+				!improvesDetourScore(scoreRouteDetours(detourAnalysis, distanceM), beforeScore)
+			) {
+				restoreSnapshot(before, revision);
+				break;
+			}
+		}
+	} finally {
+		if (
+			status === 'loading' &&
+			geometry != null &&
+			sourceRevision === revision &&
+			loadingAction === automaticAction
+		) {
+			status = 'ready';
+			loadingAction = null;
+		}
+	}
+	if (automaticAction === 'refine' && failure) return failure;
+	return geometry
+		? ({ ok: true, geometry, waypoints, distanceM } satisfies RouteSuccess)
+		: ({ ok: false, error: 'No route found.' } as const);
 }
 
 function waypointFeatures(points: Position[], interactive: boolean): Feature[] {
@@ -265,15 +360,10 @@ export const route = {
 		return pendingWaypointCount();
 	},
 	get remainingWaypointCount() {
-		return refinementWaypoints().length;
+		return refinementPlan().request.vias.length;
 	},
 	get canRefineRoute() {
-		return (
-			status === 'ready' &&
-			geometry != null &&
-			pendingWaypointCount() > 0 &&
-			refinementWaypoints().length >= MIN_VIAS
-		);
+		return canRefine();
 	},
 	get hasRefinedRoute() {
 		return hasRefinedRoute;
@@ -372,16 +462,17 @@ export const route = {
 			return { ok: false, error: 'Choose at least one waypoint action to refine the route.' };
 		}
 
-		const vias = refinementWaypoints();
-		const preservedOverrides = refinementOverrides();
-		if (vias.length < MIN_VIAS) {
+		const plan = refinementPlan();
+		const hasManualOverrides = Object.keys(waypointActionOverrides).length > 0;
+		if (!hasManualOverrides) return refineAutomatically(sourceRevision, 'refine');
+		if (plan.request.vias.length < MIN_VIAS) {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
-		return requestPreparedRoute(vias, sourceRevision, 'refine', {
+		return requestPreparedRoute(plan.request, sourceRevision, 'refine', {
 			preserveCurrent: true,
 			refined: true,
-			preservedOverrides
+			preservedOverrides: plan.preservedOverrides
 		});
 	},
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
@@ -395,12 +486,12 @@ export const route = {
 			return prepared;
 		}
 
-		return requestPreparedRoute(prepared.vias, revision, 'reset', {
+		return requestPreparedRoute(requestFromPositions(prepared.vias), revision, 'reset', {
 			preserveCurrent: true,
 			refined: false
 		});
 	},
-	async generate(features: Feature[], revision: number) {
+	async generate(features: Feature[], revision: number, options: { autoRefine?: boolean } = {}) {
 		if (features.length === 0) {
 			const error = 'Sketch a shape first.';
 			showError(revision, error);
@@ -413,10 +504,17 @@ export const route = {
 			return prepared;
 		}
 
-		return requestPreparedRoute(prepared.vias, revision, 'generate', {
-			preserveCurrent: false,
-			refined: false
-		});
+		const result = await requestPreparedRoute(
+			requestFromPositions(prepared.vias),
+			revision,
+			'generate',
+			{
+				preserveCurrent: false,
+				refined: false
+			}
+		);
+		if (!result.ok || !options.autoRefine) return result;
+		return refineAutomatically(revision, 'generate');
 	},
 	/** Download GPX for the current route (no-op when not ready). */
 	downloadGpx() {

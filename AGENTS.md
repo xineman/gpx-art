@@ -87,7 +87,7 @@ src/
     layout.css            # Tailwind + theme tokens + viewport reset
 ```
 
-**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host). Fair use on the public demo: ≤1 req/s, valid User-Agent.
+**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host).
 
 ## Architecture notes
 

@@ -3,14 +3,38 @@ import { buildOsrmRouteUrl, fetchOsrmRoute } from './osrm';
 
 describe('buildOsrmRouteUrl', () => {
 	it('encodes vias and query flags', () => {
-		const url = buildOsrmRouteUrl('https://routing.openstreetmap.de/routed-bike/', 'driving', [
-			[21.0, 52.2],
-			[21.01, 52.21]
-		]);
+		const url = buildOsrmRouteUrl('https://routing.openstreetmap.de/routed-bike/', 'driving', {
+			vias: [{ location: [21.0, 52.2] }, { location: [21.01, 52.21] }]
+		});
 		expect(url).toContain('https://routing.openstreetmap.de/routed-bike/route/v1/driving/');
 		expect(url).toContain('21,52.2;21.01,52.21');
 		expect(url).toContain('geometries=geojson');
 		expect(url).toContain('overview=full');
+		expect(new URL(url).searchParams.get('generate_hints')).toBe('false');
+	});
+
+	it('encodes optional snapping constraints for a refinement request', () => {
+		const url = buildOsrmRouteUrl('https://example.test', 'driving', {
+			vias: [
+				{ location: [21, 52] },
+				{ location: [21.01, 52.01], radiusM: 20, bearing: 45, bearingRange: 30 }
+			],
+			continueStraight: true
+		});
+		const params = new URL(url).searchParams;
+		expect(params.has('hints')).toBe(false);
+		expect(params.get('generate_hints')).toBe('false');
+		expect(params.get('radiuses')).toBe(';20');
+		expect(params.get('bearings')).toBe(';45,30');
+		expect(params.get('continue_straight')).toBe('true');
+	});
+
+	it('preserves an explicit false continue-straight option', () => {
+		const url = buildOsrmRouteUrl('https://example.test', 'driving', {
+			vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }],
+			continueStraight: false
+		});
+		expect(new URL(url).searchParams.get('continue_straight')).toBe('false');
 	});
 });
 
@@ -36,10 +60,9 @@ describe('fetchOsrmRoute', () => {
 		);
 
 		const result = await fetchOsrmRoute(
-			[
-				[21, 52],
-				[21.01, 52.01]
-			],
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
 			{
 				baseUrl: 'https://example.test/routed-bike',
 				profile: 'driving',
@@ -74,12 +97,15 @@ describe('fetchOsrmRoute', () => {
 			})
 		);
 
-		const result = await fetchOsrmRoute(vias, {
-			baseUrl: 'https://example.test/routed-bike',
-			profile: 'driving',
-			userAgent: 'test',
-			fetchFn: fetchFn as unknown as typeof fetch
-		});
+		const result = await fetchOsrmRoute(
+			{ vias: vias.map((location) => ({ location })) },
+			{
+				baseUrl: 'https://example.test/routed-bike',
+				profile: 'driving',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
 
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
@@ -92,10 +118,9 @@ describe('fetchOsrmRoute', () => {
 		);
 
 		const result = await fetchOsrmRoute(
-			[
-				[21, 52],
-				[21.01, 52.01]
-			],
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
 			{
 				baseUrl: 'https://example.test/routed-bike',
 				profile: 'driving',
@@ -115,10 +140,9 @@ describe('fetchOsrmRoute', () => {
 		});
 
 		const result = await fetchOsrmRoute(
-			[
-				[21, 52],
-				[21.01, 52.01]
-			],
+			{
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
+			},
 			{
 				baseUrl: 'https://example.test/routed-bike',
 				profile: 'driving',

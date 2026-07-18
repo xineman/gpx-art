@@ -1,8 +1,13 @@
 import type { LineString, Position } from 'geojson';
-import type { OsrmRouteResponse } from './types';
+import type { OsrmRouteResponse, RouteRequest } from './types';
 
 export type OsrmFetchResult =
-	| { ok: true; geometry: LineString; distanceM: number; waypoints: Position[] }
+	| {
+			ok: true;
+			geometry: LineString;
+			distanceM: number;
+			waypoints: Position[];
+	  }
 	| { ok: false; error: string; status?: number };
 
 export type OsrmConfig = {
@@ -29,31 +34,38 @@ function isFinitePosition(value: unknown): value is Position {
 	);
 }
 
-/**
- * Build OSRM Route URL.
- * FOSSGIS bike: base `…/routed-bike`, profile often `driving` (graph is bike).
- */
-export function buildOsrmRouteUrl(baseUrl: string, profile: string, vias: Position[]): string {
-	const coords = vias.map((p) => `${p[0]},${p[1]}`).join(';');
+/** Build an OSRM Route URL from an already validated request. */
+export function buildOsrmRouteUrl(baseUrl: string, profile: string, request: RouteRequest): string {
+	const { vias, continueStraight } = request;
+	const coords = vias.map(({ location }) => `${location[0]},${location[1]}`).join(';');
 	const base = trimTrailingSlash(baseUrl);
 	const params = new URLSearchParams({
 		overview: 'full',
 		geometries: 'geojson',
 		steps: 'false',
-		annotations: 'false'
+		annotations: 'false',
+		generate_hints: 'false'
 	});
+	const radiuses = vias.map(({ radiusM }) => (radiusM == null ? '' : String(radiusM))).join(';');
+	const bearings = vias
+		.map(({ bearing, bearingRange }) => (bearing == null ? '' : `${bearing},${bearingRange ?? 45}`))
+		.join(';');
+	if (vias.some(({ radiusM }) => radiusM != null)) params.set('radiuses', radiuses);
+	if (vias.some(({ bearing }) => bearing != null)) params.set('bearings', bearings);
+	if (continueStraight != null) params.set('continue_straight', String(continueStraight));
 	return `${base}/route/v1/${encodeURIComponent(profile)}/${coords}?${params}`;
 }
 
 export async function fetchOsrmRoute(
-	vias: Position[],
+	request: RouteRequest,
 	config: OsrmConfig
 ): Promise<OsrmFetchResult> {
+	const { vias } = request;
 	if (vias.length < 2) {
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	const url = buildOsrmRouteUrl(config.baseUrl, config.profile, vias);
+	const url = buildOsrmRouteUrl(config.baseUrl, config.profile, request);
 	const fetchFn = config.fetchFn ?? fetch;
 
 	let response: Response;
@@ -104,7 +116,7 @@ export async function fetchOsrmRoute(
 	const waypoints =
 		snappedWaypoints.length === vias.length && snappedWaypoints.every(isFinitePosition)
 			? snappedWaypoints
-			: vias;
+			: vias.map(({ location }) => location);
 
 	return {
 		ok: true,

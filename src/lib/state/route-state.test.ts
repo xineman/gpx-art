@@ -103,6 +103,65 @@ afterEach(() => {
 });
 
 describe('route state', () => {
+	it('automatically refines a freshly generated route when requested', async () => {
+		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(straightSuccess);
+
+		await route.generate([line], 2, { autoRefine: true });
+
+		expect(requestRouteMock).toHaveBeenCalledTimes(2);
+		expect(route.geometry).toEqual(straightSuccess.geometry);
+		expect(route.hasRefinedRoute).toBe(true);
+	});
+
+	it('keeps one loading state while automatic refinement settles', async () => {
+		let resolveRefinement!: (result: typeof straightSuccess) => void;
+		const refinementResponse = new Promise<typeof straightSuccess>((resolve) => {
+			resolveRefinement = resolve;
+		});
+		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockReturnValueOnce(refinementResponse);
+
+		await route.generate([line], 16);
+		const refinement = route.refineRoute();
+		expect(route.status).toBe('loading');
+		expect(route.loadingAction).toBe('refine');
+
+		resolveRefinement(straightSuccess);
+		// Observe the completed internal request before the outer refinement loop settles.
+		await Promise.resolve();
+		expect(route.status).toBe('loading');
+		expect(route.loadingAction).toBe('refine');
+
+		await refinement;
+		expect(route.status).toBe('ready');
+		expect(route.loadingAction).toBeNull();
+	});
+
+	it('reports a failed explicit automatic refinement instead of the preserved route', async () => {
+		requestRouteMock
+			.mockResolvedValueOnce(ordinarySuccess)
+			.mockResolvedValueOnce({ ok: false, error: 'No route found.' });
+
+		await route.generate([line], 17);
+		const result = await route.refineRoute();
+
+		expect(result).toEqual({ ok: false, error: 'No route found.' });
+		expect(route.status).toBe('ready');
+		expect(route.geometry).toEqual(ordinarySuccess.geometry);
+		expect(route.hasRefinedRoute).toBe(false);
+		expect(route.errorMessage).toBe('No route found.');
+	});
+
+	it('restores the prior route when automatic refinement makes it much longer', async () => {
+		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(success);
+
+		await route.generate([line], 2, { autoRefine: true });
+
+		expect(requestRouteMock).toHaveBeenCalledTimes(2);
+		expect(route.geometry).toEqual(ordinarySuccess.geometry);
+		expect(route.distanceM).toBe(ordinarySuccess.distanceM);
+		expect(route.hasRefinedRoute).toBe(false);
+	});
+
 	it('marks a detected candidate as a move suggestion without changing route geometry', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 
@@ -160,10 +219,16 @@ describe('route state', () => {
 		expect(route.remainingWaypointCount).toBe(2);
 		expect(route.canRefineRoute).toBe(true);
 		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
-			straightSuccess.waypoints[0],
-			straightSuccess.waypoints[2]
-		]);
+		expect(requestRouteMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				continueStraight: true,
+				vias: [
+					expect.objectContaining({ location: straightSuccess.waypoints[0] }),
+					expect.objectContaining({ location: straightSuccess.waypoints[2] })
+				]
+			})
+		);
 	});
 
 	it('moves a candidate to its detected detour entry during refinement', async () => {
@@ -172,11 +237,17 @@ describe('route state', () => {
 
 		expect(route.canRefineRoute).toBe(true);
 		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
-			ordinarySuccess.waypoints[0],
-			[21.001, 52],
-			ordinarySuccess.waypoints[2]
-		]);
+		expect(requestRouteMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				continueStraight: true,
+				vias: expect.arrayContaining([
+					expect.objectContaining({ location: ordinarySuccess.waypoints[0] }),
+					expect.objectContaining({ location: [21.001, 52], radiusM: 20 }),
+					expect.objectContaining({ location: ordinarySuccess.waypoints[2] })
+				])
+			})
+		);
 	});
 
 	it('combines a move candidate with a removed ordinary waypoint', async () => {
@@ -189,11 +260,17 @@ describe('route state', () => {
 		expect(route.moveWaypointCount).toBe(1);
 		expect(route.removeWaypointCount).toBe(1);
 		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, [
-			mixedSuccess.waypoints[0],
-			[21.002, 52],
-			mixedSuccess.waypoints[3]
-		]);
+		expect(requestRouteMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				continueStraight: true,
+				vias: [
+					expect.objectContaining({ location: mixedSuccess.waypoints[0] }),
+					expect.objectContaining({ location: [21.002, 52], radiusM: 20 }),
+					expect.objectContaining({ location: mixedSuccess.waypoints[3] })
+				]
+			})
+		);
 	});
 
 	it('keeps an explicit detour override after another waypoint is refined', async () => {
@@ -260,7 +337,7 @@ describe('route state', () => {
 	it('resets selected actions when restoring the route from the sketch', async () => {
 		requestRouteMock
 			.mockResolvedValueOnce(ordinarySuccess)
-			.mockResolvedValueOnce(success)
+			.mockResolvedValueOnce(straightSuccess)
 			.mockResolvedValueOnce(ordinarySuccess);
 		await route.generate([line], 15);
 		await route.refineRoute();
