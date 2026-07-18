@@ -196,6 +196,22 @@ describe('route state', () => {
 		]);
 	});
 
+	it('keeps an explicit detour override after another waypoint is refined', async () => {
+		requestRouteMock.mockResolvedValueOnce(mixedSuccess).mockResolvedValueOnce(ordinarySuccess);
+		await route.generate([line], 7);
+
+		// A candidate starts as move; cycling twice explicitly opts it out of refinement.
+		expect(route.cycleWaypointAction(1)).toBe('remove');
+		expect(route.cycleWaypointAction(1)).toBe('keep');
+		expect(route.cycleWaypointAction(2)).toBe('remove');
+
+		await route.refineRoute();
+
+		expect(route.isWaypointDetourCandidate(1)).toBe(true);
+		expect(route.getWaypointAction(1)).toBe('keep');
+		expect(route.moveWaypointCount).toBe(0);
+	});
+
 	it('rejects refinement with no selected action or too few remaining waypoints', async () => {
 		requestRouteMock.mockResolvedValue(straightSuccess);
 		await route.generate([line], 8);

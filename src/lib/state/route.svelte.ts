@@ -135,13 +135,36 @@ function refinementWaypoints(): Position[] {
 	);
 }
 
-function applyReadyResult(result: RouteSuccess, revision: number, refined: boolean) {
+/**
+ * A user can explicitly keep a waypoint that detour analysis suggested moving.
+ * Preserve that choice when its waypoint survives a refinement request, so a
+ * newly detected detour does not immediately turn it back into a move action.
+ */
+function refinementOverrides(): Record<number, WaypointRefinementAction> {
+	const overrides: Record<number, WaypointRefinementAction> = {};
+	let refinedIndex = 0;
+
+	for (let index = 0; index < waypoints.length; index++) {
+		if (waypointAction(index) === 'remove') continue;
+		if (waypointActionOverrides[index] === 'keep') overrides[refinedIndex] = 'keep';
+		refinedIndex += 1;
+	}
+
+	return overrides;
+}
+
+function applyReadyResult(
+	result: RouteSuccess,
+	revision: number,
+	refined: boolean,
+	preservedOverrides: Record<number, WaypointRefinementAction> = {}
+) {
 	status = 'ready';
 	loadingAction = null;
 	geometry = result.geometry;
 	waypoints = result.waypoints;
 	detourAnalysis = analyzeRouteDetours(result.geometry, result.waypoints);
-	waypointActionOverrides = {};
+	waypointActionOverrides = preservedOverrides;
 	rebuildDetours();
 	distanceM = result.distanceM;
 	errorMessage = null;
@@ -153,7 +176,11 @@ async function requestPreparedRoute(
 	vias: Position[],
 	revision: number,
 	action: Exclude<RouteLoadingAction, null>,
-	options: { preserveCurrent: boolean; refined: boolean }
+	options: {
+		preserveCurrent: boolean;
+		refined: boolean;
+		preservedOverrides?: Record<number, WaypointRefinementAction>;
+	}
 ): Promise<RouteResponse> {
 	const id = ++requestId;
 	status = 'loading';
@@ -195,7 +222,7 @@ async function requestPreparedRoute(
 		return result;
 	}
 
-	applyReadyResult(result, revision, options.refined);
+	applyReadyResult(result, revision, options.refined, options.preservedOverrides);
 	return result;
 }
 
@@ -346,13 +373,15 @@ export const route = {
 		}
 
 		const vias = refinementWaypoints();
+		const preservedOverrides = refinementOverrides();
 		if (vias.length < MIN_VIAS) {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
 		return requestPreparedRoute(vias, sourceRevision, 'refine', {
 			preserveCurrent: true,
-			refined: true
+			refined: true,
+			preservedOverrides
 		});
 	},
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
