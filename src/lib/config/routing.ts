@@ -14,3 +14,6 @@ export const VIA_SAMPLE_SPACING_M = 120;
 
 /** Minimum distinct vias needed to call OSRM. */
 export const MIN_VIAS = 2;
+
+/** Maximum time spent automatically refining a generated route. */
+export const AUTO_REFINE_TIMEOUT_MS = 5_000;
