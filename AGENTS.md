@@ -118,6 +118,6 @@ src/
 
 - Prefer small, focused changes; extend the existing modules rather than forking parallel patterns.
 - After non-trivial TS/Svelte edits, run `pnpm check` and `pnpm lint` (and `pnpm test` when touching logic with tests).
-- **Verify UI / map / drawing changes with the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
+- **Verify UI / map / drawing changes with Codex's in-app Browser when available, otherwise the `/agent-browser` skill** — start `pnpm dev` if needed, exercise the flow in a real browser (load, draw tools, shortcuts), and screenshot or assert the result before calling the work done.
 - Do not commit secrets; env files follow `.gitignore` (`.env` ignored, `.env.example` ok).
 - Keep this file short and actionable; update it when architecture or commands change on this branch.
