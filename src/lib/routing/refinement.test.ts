@@ -39,7 +39,7 @@ const analysis: WaypointDetourAnalysis[] = [
 ];
 
 describe('buildRefinementPlan', () => {
-	it('moves detour candidates with OSRM constraints and removes selected vias', () => {
+	it('moves detour candidates with road-snapping constraints and removes selected vias', () => {
 		const result = buildRefinementPlan(
 			geometry,
 			[

@@ -1,6 +1,6 @@
 import type { LineString, Position } from 'geojson';
 
-/** Optional OSRM snapping constraints for one input coordinate. */
+/** Optional road-snapping constraints for one input coordinate. */
 export type RouteVia = {
 	location: Position;
 	radiusM?: number;
@@ -25,7 +25,7 @@ export type RouteSuccess = {
 	ok: true;
 	geometry: LineString;
 	distanceM: number;
-	/** OSRM-snapped input positions, in route order. */
+	/** Map-matched input positions, in route order. */
 	waypoints: Position[];
 };
 
@@ -35,16 +35,3 @@ export type RouteFailure = {
 };
 
 export type RouteResponse = RouteSuccess | RouteFailure;
-
-/** OSRM route service success body (subset we read). */
-export type OsrmRouteResponse = {
-	code: string;
-	message?: string;
-	waypoints?: Array<{
-		location?: Position;
-	}>;
-	routes?: Array<{
-		distance?: number;
-		geometry?: LineString | string;
-	}>;
-};

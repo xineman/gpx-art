@@ -105,22 +105,14 @@ describe('parseRouteRequest', () => {
 });
 
 describe('generateRoute', () => {
-	it('returns an OSRM success as a LineString', async () => {
+	it('returns a Valhalla map match as a LineString', async () => {
 		const fetchFn = vi.fn(async () =>
 			Response.json({
-				code: 'Ok',
-				routes: [
-					{
-						distance: 500,
-						geometry: {
-							type: 'LineString',
-							coordinates: [
-								[21, 52],
-								[21.005, 52.005],
-								[21.01, 52.01]
-							]
-						}
-					}
+				shape: '????',
+				edges: [{ length: 0.5 }],
+				matched_points: [
+					{ lon: 21, lat: 52, type: 'matched' },
+					{ lon: 21.01, lat: 52.01, type: 'matched' }
 				]
 			})
 		);
@@ -131,9 +123,8 @@ describe('generateRoute', () => {
 				[21.01, 52.01]
 			]),
 			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
+				valhalla: {
+					baseUrl: 'https://example.test',
 					userAgent: 'test',
 					fetchFn: fetchFn as unknown as typeof fetch
 				}
@@ -151,27 +142,14 @@ describe('generateRoute', () => {
 		]);
 	});
 
-	it('routes multiple shapes in one ordered OSRM request', async () => {
-		let requestedUrl = '';
-		const fetchFn = vi.fn((url: string | URL | Request) => {
-			requestedUrl = String(url);
+	it('matches multiple shapes in one ordered Valhalla request', async () => {
+		let requestedBody = '';
+		const fetchFn = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+			requestedBody = String(init?.body);
 			return Promise.resolve(
 				Response.json({
-					code: 'Ok',
-					routes: [
-						{
-							distance: 1_500,
-							geometry: {
-								type: 'LineString',
-								coordinates: [
-									[21, 52],
-									[21.01, 52.01],
-									[21.02, 52.02],
-									[21.03, 52.03]
-								]
-							}
-						}
-					]
+					shape: '????',
+					edges: [{ length: 1.5 }]
 				})
 			);
 		});
@@ -184,9 +162,8 @@ describe('generateRoute', () => {
 				[21.03, 52.03]
 			]),
 			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
+				valhalla: {
+					baseUrl: 'https://example.test',
 					userAgent: 'test',
 					fetchFn: fetchFn as unknown as typeof fetch
 				}
@@ -195,14 +172,20 @@ describe('generateRoute', () => {
 
 		expect(result.ok).toBe(true);
 		expect(fetchFn).toHaveBeenCalledTimes(1);
-		const requestUrl = new URL(requestedUrl);
-		expect(requestUrl.pathname).toContain('21,52;21.01,52.01;21.02,52.02;21.03,52.03');
+		expect(JSON.parse(requestedBody).shape).toEqual([
+			{ lat: 52, lon: 21 },
+			{ lat: 52.01, lon: 21.01 },
+			{ lat: 52.02, lon: 21.02 },
+			{ lat: 52.03, lon: 21.03 }
+		]);
 		if (!result.ok) return;
 		expect(result.distanceM).toBe(1_500);
 	});
 
-	it('fails the complete route when OSRM cannot route the combined vias', async () => {
-		const fetchFn = vi.fn(async () => Response.json({ code: 'NoRoute', message: 'No route' }));
+	it('fails the complete route when Valhalla cannot match the combined trace', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({ error: 'No path could be found for input' }, { status: 400 })
+		);
 
 		const result = await generateRoute(
 			routeRequest([
@@ -212,9 +195,8 @@ describe('generateRoute', () => {
 				[21.03, 52.03]
 			]),
 			{
-				osrm: {
-					baseUrl: 'https://example.test/routed-bike',
-					profile: 'driving',
+				valhalla: {
+					baseUrl: 'https://example.test',
 					userAgent: 'test',
 					fetchFn: fetchFn as unknown as typeof fetch
 				}
@@ -223,7 +205,8 @@ describe('generateRoute', () => {
 
 		expect(result).toEqual({
 			ok: false,
-			error: 'No bike route found near that sketch — try closer to roads.'
+			error: 'No bike route found near that sketch — try closer to roads.',
+			status: 400
 		});
 		expect(fetchFn).toHaveBeenCalledTimes(1);
 	});

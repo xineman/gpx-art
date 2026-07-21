@@ -47,7 +47,7 @@ function bearingAtRouteIndex(points: Position[], index: number): number | undefi
 
 /**
  * Build the request and remap explicit keep choices in one pass so waypoint
- * counts, deduplication, and the actual OSRM payload cannot drift apart.
+ * counts, deduplication, and the actual map-matching payload cannot drift apart.
  */
 export function buildRefinementPlan(
 	geometry: LineString | null,
@@ -123,7 +123,7 @@ export function improvesDetourScore(next: DetourScore, previous: DetourScore): b
 	return next.distanceM < previous.distanceM;
 }
 
-/** Hash every field that can change the OSRM request used by automatic refinement. */
+/** Hash every field that can change the map-matching request used by automatic refinement. */
 export function routeRequestHash(request: RouteRequest): string {
 	return JSON.stringify({
 		vias: request.vias.map(({ location, radiusM, bearing, bearingRange }) => [

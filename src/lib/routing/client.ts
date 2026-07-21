@@ -1,7 +1,7 @@
 import type { RouteRequest, RouteResponse } from './types';
 
 /**
- * Browser client for the app's route API (proxies OSRM server-side).
+ * Browser client for the app's route API (proxies Valhalla server-side).
  * Vias must already be prepared on the client (`featuresToVias`).
  */
 export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
