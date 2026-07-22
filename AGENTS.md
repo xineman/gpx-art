@@ -4,7 +4,7 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are GeoJSON; **Route** snaps them to a bike road network (OSRM) and can export GPX.
+**GPX Art** — a SvelteKit web app for sketching shapes on a MapLibre map. Sketches are GeoJSON; **Route** map-matches them to a bike road network (Valhalla) and can export GPX.
 
 ## Current state
 
@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify vias (shown as map waypoints) → `POST /api/route` with one ordered via array → FOSSGIS OSRM **Route** (bike) → display-only detour detection → road line + chevrons + optional GPX
+- **Route pipeline:** client extract/simplify trace points (shown as map waypoints) → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
@@ -69,8 +69,8 @@ src/
       tap.ts              # double-tap / re-tap-last helpers (pure)
     routing/              # pure route pipeline + GPX serialize
       extract.ts          # features → guide paths
-      vias.ts             # RDP / sample → OSRM via points
-      osrm.ts / generate.ts / client.ts / gpx.ts / detours.ts
+      vias.ts             # RDP / sample → Valhalla trace points
+      valhalla.ts / generate.ts / client.ts / gpx.ts / detours.ts
     geometry/             # haversine distance + sketch stats (pure)
     map/context.ts        # provideMap / useMap (Svelte context)
     state/
@@ -83,11 +83,11 @@ src/
   routes/
     +layout.svelte
     +page.svelte          # FullscreenMap only
-    api/route/+server.ts  # OSRM proxy (FOSSGIS bike by default)
+    api/route/+server.ts  # Valhalla map-matching proxy (bicycle by default)
     layout.css            # Tailwind + theme tokens + viewport reset
 ```
 
-**Routing env** (see `.env.example`): `OSRM_BASE_URL` (default FOSSGIS `…/routed-bike`), `OSRM_PROFILE` (default `driving` path segment on that host).
+**Routing env** (see `.env.example`): `VALHALLA_BASE_URL` (default `https://valhalla1.openstreetmap.de`).
 
 ## Architecture notes
 

@@ -39,7 +39,7 @@ const analysis: WaypointDetourAnalysis[] = [
 ];
 
 describe('buildRefinementPlan', () => {
-	it('moves detour candidates with OSRM constraints and removes selected vias', () => {
+	it('moves detour candidates with road-snapping constraints and removes selected vias', () => {
 		const result = buildRefinementPlan(
 			geometry,
 			[
@@ -56,8 +56,7 @@ describe('buildRefinementPlan', () => {
 				vias: [
 					{ location: [21, 52] },
 					{ location: [21.001, 52], radiusM: 20, bearing: 90, bearingRange: 45 }
-				],
-				continueStraight: true
+				]
 			},
 			preservedOverrides: {}
 		});
@@ -100,8 +99,7 @@ describe('automatic refinement policy', () => {
 					bearing: 45,
 					bearingRange: 30
 				}
-			],
-			continueStraight: true
+			]
 		};
 
 		expect(routeRequestHash(request)).not.toBe(

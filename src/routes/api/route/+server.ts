@@ -2,10 +2,17 @@ import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { generateRoute, parseRouteRequest } from '$lib/routing/generate';
+import type { RouteFailure } from '$lib/routing/types';
 
-const DEFAULT_OSRM_BASE = 'https://routing.openstreetmap.de/routed-bike';
-const DEFAULT_OSRM_PROFILE = 'driving';
-const USER_AGENT = 'gpx-art/0.0.1 (sketch-to-bike-route; fair-use OSRM client)';
+const DEFAULT_VALHALLA_BASE = 'https://valhalla1.openstreetmap.de';
+const USER_AGENT = 'gpx-art/0.0.1 (sketch-to-bike-map-match; fair-use Valhalla client)';
+
+function routeFailureHttpStatus(failure: RouteFailure): number {
+	if (failure.status === 400) return 400;
+	if (failure.status === 429) return 429;
+	if (failure.status != null) return 502;
+	return 400;
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: unknown;
@@ -20,30 +27,24 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(parsed, { status: 400 });
 	}
 
-	const baseUrl = (env.OSRM_BASE_URL ?? DEFAULT_OSRM_BASE).trim();
-	const profile = (env.OSRM_PROFILE ?? DEFAULT_OSRM_PROFILE).trim();
+	const baseUrl = (env.VALHALLA_BASE_URL ?? DEFAULT_VALHALLA_BASE).trim();
 
 	if (!baseUrl) {
 		return json(
-			{ ok: false, error: 'Routing isn’t configured (missing OSRM_BASE_URL).' },
+			{ ok: false, error: 'Routing isn’t configured (missing VALHALLA_BASE_URL).' },
 			{ status: 503 }
 		);
 	}
 
 	const result = await generateRoute(parsed.request, {
-		osrm: {
+		valhalla: {
 			baseUrl,
-			profile: profile || DEFAULT_OSRM_PROFILE,
 			userAgent: USER_AGENT
 		}
 	});
 
 	if (!result.ok) {
-		const status =
-			result.error.includes('reach the routing') || result.error.includes('server error')
-				? 502
-				: 400;
-		return json(result, { status });
+		return json(result, { status: routeFailureHttpStatus(result) });
 	}
 
 	return json(result);

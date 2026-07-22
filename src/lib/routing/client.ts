@@ -1,7 +1,7 @@
 import type { RouteRequest, RouteResponse } from './types';
 
 /**
- * Browser client for the app's route API (proxies OSRM server-side).
+ * Browser client for the app's route API (proxies Valhalla server-side).
  * Vias must already be prepared on the client (`featuresToVias`).
  */
 export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
@@ -34,7 +34,12 @@ export async function requestRoute(request: RouteRequest): Promise<RouteResponse
 		'error' in parsed &&
 		typeof (parsed as { error: unknown }).error === 'string'
 	) {
-		return { ok: false, error: (parsed as { error: string }).error };
+		const failure = parsed as { error: string; status?: unknown };
+		return {
+			ok: false,
+			error: failure.error,
+			...(typeof failure.status === 'number' ? { status: failure.status } : {})
+		};
 	}
 
 	if (

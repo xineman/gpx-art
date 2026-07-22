@@ -259,7 +259,6 @@ describe('route state', () => {
 		expect(requestRouteMock).toHaveBeenNthCalledWith(
 			2,
 			expect.objectContaining({
-				continueStraight: true,
 				vias: [
 					expect.objectContaining({ location: straightSuccess.waypoints[0] }),
 					expect.objectContaining({ location: straightSuccess.waypoints[2] })
@@ -277,7 +276,6 @@ describe('route state', () => {
 		expect(requestRouteMock).toHaveBeenNthCalledWith(
 			2,
 			expect.objectContaining({
-				continueStraight: true,
 				vias: expect.arrayContaining([
 					expect.objectContaining({ location: ordinarySuccess.waypoints[0] }),
 					expect.objectContaining({ location: [21.001, 52], radiusM: 20 }),
@@ -300,7 +298,6 @@ describe('route state', () => {
 		expect(requestRouteMock).toHaveBeenNthCalledWith(
 			2,
 			expect.objectContaining({
-				continueStraight: true,
 				vias: [
 					expect.objectContaining({ location: mixedSuccess.waypoints[0] }),
 					expect.objectContaining({ location: [21.002, 52], radiusM: 20 }),
