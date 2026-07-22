@@ -76,29 +76,14 @@ describe('parseRouteRequest', () => {
 		expect(result.error).toMatch(expectedError as RegExp);
 	});
 
-	it('rejects a non-boolean continueStraight option', () => {
+	it('deduplicates consecutive vias', () => {
 		const result = parseRouteRequest({
-			...routeRequest([
-				[21, 52],
-				[21.01, 52.01]
-			]),
-			continueStraight: 'true'
-		});
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toMatch(/boolean/i);
-	});
-
-	it('deduplicates consecutive vias and preserves an explicit false option', () => {
-		const result = parseRouteRequest({
-			vias: [{ location: [21, 52] }, { location: [21, 52] }, { location: [21.01, 52.01] }],
-			continueStraight: false
+			vias: [{ location: [21, 52] }, { location: [21, 52] }, { location: [21.01, 52.01] }]
 		});
 		expect(result).toEqual({
 			ok: true,
 			request: {
-				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }],
-				continueStraight: false
+				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
 			}
 		});
 	});

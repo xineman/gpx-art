@@ -102,10 +102,6 @@ export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 		parsedVias.push(via);
 	}
 
-	if ('continueStraight' in value && typeof value.continueStraight !== 'boolean') {
-		return { ok: false, error: 'continueStraight must be a boolean.' };
-	}
-
 	const distinctVias = dedupeConsecutiveVias(parsedVias);
 	if (distinctVias.length < MIN_VIAS) {
 		return { ok: false, error: 'Need at least two distinct waypoints.' };
@@ -113,12 +109,7 @@ export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 
 	return {
 		ok: true,
-		request: {
-			vias: distinctVias,
-			...(typeof value.continueStraight === 'boolean'
-				? { continueStraight: value.continueStraight }
-				: {})
-		}
+		request: { vias: distinctVias }
 	};
 }
 

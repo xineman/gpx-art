@@ -10,7 +10,6 @@ export type RouteVia = {
 
 export type RouteRequest = {
 	vias: RouteVia[];
-	continueStraight?: boolean;
 };
 
 /** Continuous sketch path extracted from one feature. */
@@ -32,6 +31,8 @@ export type RouteSuccess = {
 export type RouteFailure = {
 	ok: false;
 	error: string;
+	/** HTTP status associated with the failure, when available. */
+	status?: number;
 };
 
 export type RouteResponse = RouteSuccess | RouteFailure;

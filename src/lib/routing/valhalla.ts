@@ -71,6 +71,24 @@ function isNoMatchError(message: string) {
 	return /no path|no suitable edges|unreachable|discontinu/i.test(message);
 }
 
+async function readJsonBody<T>(response: Response): Promise<T | null> {
+	try {
+		return (await response.json()) as T;
+	} catch {
+		return null;
+	}
+}
+
+function unreadableResponse(response: Response): Extract<ValhallaFetchResult, { ok: false }> {
+	return response.ok
+		? { ok: false, error: 'Routing server returned invalid JSON.', status: 502 }
+		: {
+				ok: false,
+				error: `Routing server error (${response.status}).`,
+				status: response.status
+			};
+}
+
 function decodeValue(encoded: string, start: number): { value: number; next: number } | null {
 	let result = 0;
 	let shift = 0;
@@ -202,15 +220,11 @@ async function fetchGapRoute(
 			})
 		});
 	} catch {
-		return { ok: false, error: 'Couldn’t reach the routing server.' };
+		return { ok: false, error: 'Couldn’t reach the routing server.', status: 502 };
 	}
 
-	let body: ValhallaRouteResponse;
-	try {
-		body = (await response.json()) as ValhallaRouteResponse;
-	} catch {
-		return { ok: false, error: 'Routing server returned invalid JSON.' };
-	}
+	const body = await readJsonBody<ValhallaRouteResponse>(response);
+	if (!body) return unreadableResponse(response);
 
 	const route = body.routes?.[0];
 	const geometry = route?.geometry;
@@ -298,24 +312,22 @@ export async function fetchValhallaTrace(
 				body: JSON.stringify(buildValhallaTraceBody(activeRequest))
 			});
 		} catch {
-			return { ok: false, error: 'Couldn’t reach the routing server.' };
+			return { ok: false, error: 'Couldn’t reach the routing server.', status: 502 };
 		}
 
-		let body: ValhallaTraceResponse;
-		try {
-			body = (await response.json()) as ValhallaTraceResponse;
-		} catch {
-			return { ok: false, error: 'Routing server returned invalid JSON.' };
-		}
+		const body = await readJsonBody<ValhallaTraceResponse>(response);
+		if (!body) return unreadableResponse(response);
 
 		if (!response.ok || body.error) {
 			const message = body.error?.trim() ?? '';
+			const status =
+				response.ok && isFiniteNumber(body.status_code) ? body.status_code : response.status;
 			return {
 				ok: false,
 				error: isNoMatchError(message)
 					? 'No bike route found near that sketch — try closer to roads.'
 					: message || `Routing server error (${response.status}).`,
-				status: response.status
+				status
 			};
 		}
 

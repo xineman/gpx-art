@@ -90,7 +90,7 @@ export function buildRefinementPlan(
 	}
 
 	return {
-		request: { vias, continueStraight: true },
+		request: { vias },
 		preservedOverrides
 	};
 }
@@ -132,7 +132,6 @@ export function routeRequestHash(request: RouteRequest): string {
 			radiusM ?? null,
 			bearing ?? null,
 			bearingRange ?? null
-		]),
-		continueStraight: request.continueStraight ?? null
+		])
 	});
 }

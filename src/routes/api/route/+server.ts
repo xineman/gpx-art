@@ -2,9 +2,17 @@ import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { generateRoute, parseRouteRequest } from '$lib/routing/generate';
+import type { RouteFailure } from '$lib/routing/types';
 
 const DEFAULT_VALHALLA_BASE = 'https://valhalla1.openstreetmap.de';
 const USER_AGENT = 'gpx-art/0.0.1 (sketch-to-bike-map-match; fair-use Valhalla client)';
+
+function routeFailureHttpStatus(failure: RouteFailure): number {
+	if (failure.status === 400) return 400;
+	if (failure.status === 429) return 429;
+	if (failure.status != null) return 502;
+	return 400;
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: unknown;
@@ -36,11 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	});
 
 	if (!result.ok) {
-		const status =
-			result.error.includes('reach the routing') || result.error.includes('server error')
-				? 502
-				: 400;
-		return json(result, { status });
+		return json(result, { status: routeFailureHttpStatus(result) });
 	}
 
 	return json(result);

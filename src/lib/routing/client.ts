@@ -34,7 +34,12 @@ export async function requestRoute(request: RouteRequest): Promise<RouteResponse
 		'error' in parsed &&
 		typeof (parsed as { error: unknown }).error === 'string'
 	) {
-		return { ok: false, error: (parsed as { error: string }).error };
+		const failure = parsed as { error: string; status?: unknown };
+		return {
+			ok: false,
+			error: failure.error,
+			...(typeof failure.status === 'number' ? { status: failure.status } : {})
+		};
 	}
 
 	if (

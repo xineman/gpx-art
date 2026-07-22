@@ -27,8 +27,7 @@ describe('Valhalla trace request', () => {
 			vias: [
 				{ location: [21, 52] },
 				{ location: [21.01, 52.01], radiusM: 20, bearing: 45, bearingRange: 30 }
-			],
-			continueStraight: true
+			]
 		});
 
 		expect(body).toMatchObject({
@@ -207,6 +206,48 @@ describe('fetchValhallaTrace', () => {
 			ok: false,
 			error: 'Rate limit exceeded',
 			status: 429
+		});
+	});
+
+	it('preserves the status of a non-JSON upstream failure', async () => {
+		const fetchFn = vi.fn(
+			async () =>
+				new Response('<html>rate limited</html>', {
+					status: 429,
+					headers: { 'Content-Type': 'text/html' }
+				})
+		);
+		const result = await fetchValhallaTrace(
+			{ vias },
+			{
+				baseUrl: 'https://valhalla.example',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'Routing server error (429).',
+			status: 429
+		});
+	});
+
+	it('classifies an unreadable success response as a gateway failure', async () => {
+		const fetchFn = vi.fn(async () => new Response('not json'));
+		const result = await fetchValhallaTrace(
+			{ vias },
+			{
+				baseUrl: 'https://valhalla.example',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'Routing server returned invalid JSON.',
+			status: 502
 		});
 	});
 
