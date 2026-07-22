@@ -2,7 +2,7 @@ import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '$lib/config/routing';
 import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
-import { requestRoute } from '$lib/routing/client';
+import { requestOptimizedRoute, requestRoute } from '$lib/routing/client';
 import {
 	analyzeRouteDetours,
 	mergeRouteDetourCandidates,
@@ -10,7 +10,7 @@ import {
 	type WaypointDetourAnalysis
 } from '$lib/routing/detours';
 import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { featuresToVias } from '$lib/routing/features-to-vias';
+import { featuresToRouteShapes } from '$lib/routing/features-to-route-shapes';
 import {
 	buildRefinementPlan,
 	defaultWaypointRefinementAction,
@@ -21,7 +21,7 @@ import {
 	type RefinementPlan,
 	type WaypointRefinementAction
 } from '$lib/routing/refinement';
-import type { RouteRequest, RouteResponse, RouteSuccess } from '$lib/routing/types';
+import type { RouteResponse, RouteSuccess } from '$lib/routing/types';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
@@ -123,12 +123,9 @@ function applyReadyResult(
 	hasRefinedRoute = refined;
 }
 
-function requestFromPositions(points: Position[]): RouteRequest {
-	return { vias: points.map((location) => ({ location })) };
-}
-
 async function runPreparedRouteRequest(
-	request: RouteRequest,
+	request: () => Promise<RouteResponse>,
+	previewVias: Position[],
 	revision: number,
 	action: Exclude<RouteLoadingAction, null>,
 	options: {
@@ -138,14 +135,13 @@ async function runPreparedRouteRequest(
 		keepLoadingAfterSuccess?: boolean;
 	}
 ): Promise<RouteResponse> {
-	const previewVias = request.vias.map(({ location }) => location);
 	const id = ++requestId;
 	status = 'loading';
 	loadingAction = action;
 	sourceRevision = revision;
 
 	if (!options.preserveCurrent) {
-		// Show prepared vias immediately while the map-matching request runs.
+		// Show ordered vias immediately when the operation already knows their roles.
 		waypoints = previewVias;
 		geometry = null;
 		detourAnalysis = [];
@@ -154,7 +150,7 @@ async function runPreparedRouteRequest(
 		hasRefinedRoute = false;
 	}
 
-	const result = await requestRoute(request);
+	const result = await request();
 	if (id !== requestId) {
 		return { ok: false, error: 'Superseded.' };
 	}
@@ -239,12 +235,19 @@ async function refineAutomatically(revision: number) {
 			if (seen.has(requestHash)) break;
 			seen.add(requestHash);
 
-			const result = await runPreparedRouteRequest(refinementPlan.request, revision, 'generate', {
-				preserveCurrent: true,
-				refined: true,
-				// Keep one operation-level loading state across the automatic request loop.
-				keepLoadingAfterSuccess: true
-			});
+			const request = refinementPlan.request;
+			const result = await runPreparedRouteRequest(
+				() => requestRoute(request),
+				request.vias.map(({ location }) => location),
+				revision,
+				'generate',
+				{
+					preserveCurrent: true,
+					refined: true,
+					// Keep one operation-level loading state across the automatic request loop.
+					keepLoadingAfterSuccess: true
+				}
+			);
 			if (!result.ok) return result;
 			if (!improvesDetourScore(scoreRouteDetours(detourAnalysis, distanceM), beforeScore)) {
 				restoreSnapshot(before, revision);
@@ -361,14 +364,15 @@ export const route = {
 			return { ok: false as const, error };
 		}
 
-		const prepared = featuresToVias(features);
+		const prepared = featuresToRouteShapes(features);
 		if (!prepared.ok) {
 			resetRoute('error', revision);
 			return prepared;
 		}
 
 		const result = await runPreparedRouteRequest(
-			requestFromPositions(prepared.vias),
+			() => requestOptimizedRoute(prepared.shapes),
+			[],
 			revision,
 			'generate',
 			{
@@ -392,26 +396,38 @@ export const route = {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
-		return runPreparedRouteRequest(plan.request, sourceRevision, 'refine', {
-			preserveCurrent: true,
-			refined: true,
-			preservedOverrides: plan.preservedOverrides
-		});
+		return runPreparedRouteRequest(
+			() => requestRoute(plan.request),
+			plan.request.vias.map(({ location }) => location),
+			sourceRevision,
+			'refine',
+			{
+				preserveCurrent: true,
+				refined: true,
+				preservedOverrides: plan.preservedOverrides
+			}
+		);
 	},
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
 		if (status !== 'ready' || geometry == null || !hasRefinedRoute) {
 			return { ok: false, error: 'Refine the route first.' };
 		}
 
-		const prepared = featuresToVias(features);
+		const prepared = featuresToRouteShapes(features);
 		if (!prepared.ok) {
 			return prepared;
 		}
 
-		return runPreparedRouteRequest(requestFromPositions(prepared.vias), revision, 'reset', {
-			preserveCurrent: true,
-			refined: false
-		});
+		return runPreparedRouteRequest(
+			() => requestOptimizedRoute(prepared.shapes),
+			[],
+			revision,
+			'reset',
+			{
+				preserveCurrent: true,
+				refined: false
+			}
+		);
 	},
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {

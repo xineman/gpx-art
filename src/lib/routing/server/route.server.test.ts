@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import { generateRoute, parseRouteRequest } from './generate';
+import { generateRoute, parseRouteRequest } from './route.server';
 
 function routeRequest(locations: Position[]) {
 	return { vias: locations.map((location) => ({ location })) };
@@ -85,6 +85,13 @@ describe('parseRouteRequest', () => {
 			request: {
 				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
 			}
+		});
+	});
+
+	it('rejects the former grouped-shapes payload', () => {
+		expect(parseRouteRequest({ shapes: [] })).toMatchObject({
+			ok: false,
+			error: expect.stringMatching(/vias array/i)
 		});
 	});
 });

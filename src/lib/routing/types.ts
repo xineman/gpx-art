@@ -12,6 +12,16 @@ export type RouteRequest = {
 	vias: RouteVia[];
 };
 
+/** Prepared waypoints for one sketch feature, kept together for route optimization. */
+export type PreparedRouteShape = {
+	vias: Position[];
+	closed: boolean;
+};
+
+export type TableRequest = {
+	coordinates: Position[];
+};
+
 /** Continuous sketch path extracted from one feature. */
 export type GuidePath = {
 	/** Open ring for polygons (no duplicate close vertex). */
@@ -36,3 +46,10 @@ export type RouteFailure = {
 };
 
 export type RouteResponse = RouteSuccess | RouteFailure;
+
+export type TableSuccess = {
+	ok: true;
+	distances: (number | null)[][];
+};
+
+export type TableResponse = TableSuccess | RouteFailure;

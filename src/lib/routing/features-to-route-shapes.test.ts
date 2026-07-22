@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Feature } from 'geojson';
-import { featuresToVias } from './features-to-vias';
+import { featuresToRouteShapes } from './features-to-route-shapes';
 
-describe('featuresToVias', () => {
+describe('featuresToRouteShapes', () => {
 	it('builds vias from a polyline', () => {
 		const features: Feature[] = [
 			{
@@ -18,10 +18,11 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.vias.length).toBeGreaterThanOrEqual(2);
+		expect(result.shapes).toHaveLength(1);
+		expect(result.shapes[0]!.vias.length).toBeGreaterThanOrEqual(2);
 	});
 
 	it('re-appends the start for polygon vias', () => {
@@ -43,10 +44,10 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		const vias = result.vias;
+		const vias = result.shapes[0]!.vias;
 		const first = vias[0]!;
 		const last = vias[vias.length - 1]!;
 		expect(first[0]).toBe(last[0]);
@@ -54,11 +55,11 @@ describe('featuresToVias', () => {
 	});
 
 	it('rejects empty sketch', () => {
-		const result = featuresToVias([]);
+		const result = featuresToRouteShapes([]);
 		expect(result.ok).toBe(false);
 	});
 
-	it('combines multi-feature vias in order and removes boundary duplicates', () => {
+	it('retains boundaries between multiple features', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
@@ -83,13 +84,24 @@ describe('featuresToVias', () => {
 				}
 			}
 		];
-		const result = featuresToVias(features, { maxVias: 4 });
+		const result = featuresToRouteShapes(features, { maxVias: 4 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.vias).toEqual([
-			[0, 0],
-			[1, 1],
-			[2, 2]
+		expect(result.shapes).toEqual([
+			{
+				closed: false,
+				vias: [
+					[0, 0],
+					[1, 1]
+				]
+			},
+			{
+				closed: false,
+				vias: [
+					[1, 1],
+					[2, 2]
+				]
+			}
 		]);
 	});
 
@@ -125,13 +137,31 @@ describe('featuresToVias', () => {
 			}
 		];
 
-		const result = featuresToVias(features, { maxVias: 5 });
+		const result = featuresToRouteShapes(features, { maxVias: 5 });
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.vias).toHaveLength(5);
-		const closed = result.vias.slice(2);
+		expect(result.shapes.flatMap((shape) => shape.vias)).toHaveLength(5);
+		const closed = result.shapes.find((shape) => shape.closed)!.vias;
 		expect(closed).toHaveLength(3);
 		expect(closed[0]).toEqual(closed[closed.length - 1]);
+	});
+
+	it('allocates tied sampling budgets independently of feature order', () => {
+		const features: Feature[] = [0, 1, 2].map((index) => ({
+			type: 'Feature',
+			properties: { id: String(index) },
+			geometry: {
+				type: 'LineString',
+				coordinates: [
+					[index, 0],
+					[index + 0.01, 0]
+				]
+			}
+		}));
+
+		const forward = featuresToRouteShapes(features, { maxVias: 7 });
+		const reversed = featuresToRouteShapes([...features].reverse(), { maxVias: 7 });
+		expect(reversed).toEqual(forward);
 	});
 
 	it('rejects sketches whose route-wide minimum exceeds the via cap', () => {
@@ -151,7 +181,7 @@ describe('featuresToVias', () => {
 			}
 		}));
 
-		const result = featuresToVias(features);
+		const result = featuresToRouteShapes(features);
 		expect(result).toEqual({
 			ok: false,
 			error: 'Too many shapes to route at once (max 60 waypoints).'

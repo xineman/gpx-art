@@ -1,28 +1,13 @@
-import type { Position } from 'geojson';
 import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
-import { fetchValhallaTrace, type ValhallaConfig } from './valhalla';
-import type { RouteRequest, RouteResponse, RouteVia } from './types';
+import type { RouteRequest, RouteResponse, RouteVia } from '../types';
+import { fetchValhallaTrace, type ValhallaConfig } from '../valhalla';
+import { inCoordinateRange, isFinitePosition, isRecord } from './validation.server';
 
 export type GenerateRouteOptions = {
 	valhalla: ValhallaConfig;
 };
 
 export type ParsedRouteRequest = { ok: true; request: RouteRequest } | { ok: false; error: string };
-
-function isFinitePosition(p: unknown): p is Position {
-	return (
-		Array.isArray(p) &&
-		p.length >= 2 &&
-		typeof p[0] === 'number' &&
-		typeof p[1] === 'number' &&
-		Number.isFinite(p[0]) &&
-		Number.isFinite(p[1])
-	);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return value != null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function sameLocation(a: RouteVia, b: RouteVia): boolean {
 	return a.location[0] === b.location[0] && a.location[1] === b.location[1];
@@ -61,7 +46,7 @@ export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 		}
 
 		const [lng, lat] = rawVia.location;
-		if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+		if (!inCoordinateRange([lng, lat])) {
 			return { ok: false, error: `Waypoint ${index} is out of range.` };
 		}
 
