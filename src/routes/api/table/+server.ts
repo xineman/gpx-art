@@ -1,8 +1,15 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { resolveOsrmConfig } from '$lib/routing/server/config.server';
-import { fetchOsrmDistanceTable } from '$lib/routing/server/osrm.server';
+import { resolveValhallaConfig } from '$lib/routing/server/config.server';
 import { parseTableRequest } from '$lib/routing/server/table.server';
+import { fetchValhallaDistanceMatrix } from '$lib/routing/server/valhalla-matrix.server';
+import type { RouteFailure } from '$lib/routing/types';
+
+function tableFailureHttpStatus(failure: RouteFailure): number {
+	if (failure.status === 400) return 400;
+	if (failure.status === 429) return 429;
+	return 502;
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: unknown;
@@ -17,14 +24,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(parsed, { status: 400 });
 	}
 
-	const osrm = resolveOsrmConfig();
-	if (!osrm.ok) {
-		return json(osrm, { status: 503 });
+	const valhalla = resolveValhallaConfig();
+	if (!valhalla.ok) {
+		return json(valhalla, { status: 503 });
 	}
 
-	const result = await fetchOsrmDistanceTable(parsed.request.coordinates, osrm.config);
+	const result = await fetchValhallaDistanceMatrix(parsed.request.coordinates, valhalla.config);
 	if (!result.ok) {
-		return json({ ok: false, error: result.error }, { status: 502 });
+		return json(result, { status: tableFailureHttpStatus(result) });
 	}
 
 	return json(result);

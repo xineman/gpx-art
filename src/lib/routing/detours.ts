@@ -56,7 +56,7 @@ function cumulativeDistances(points: Position[]): number[] {
 }
 
 /**
- * Match ordered, OSRM-snapped waypoints back onto the route overview.
+ * Match ordered, road-snapped waypoints back onto the route overview.
  * Route responses preserve waypoint order, so each search starts where the
  * previous match ended. The final waypoint searches backward to prefer the
  * route's final visit when a closed route returns to its start.

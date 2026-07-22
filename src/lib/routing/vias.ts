@@ -171,7 +171,7 @@ function dedupeConsecutive(points: Position[]): Position[] {
 }
 
 /**
- * Build OSRM via points from a guide path.
+ * Build map-matching trace points from a guide path.
  * Closed guides get the start re-appended so the route returns to the origin.
  */
 export function guideToVias(
@@ -201,7 +201,7 @@ export function guideToVias(
 	if (points.length > pointBudget) points = strideToMax(points, pointBudget);
 
 	points = densifySegments(points, guide.closed, maxVias, sampleSpacingM);
-	// Closed path may legitimately start==end as two list entries — OSRM needs them.
+	// Closed path may legitimately start==end as two list entries to complete the trace.
 	// Only fail if fewer than 2 unique positions.
 	const uniqueEnough =
 		points.length >= MIN_VIAS &&

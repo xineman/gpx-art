@@ -33,7 +33,7 @@ let loadingAction = $state<RouteLoadingAction>(null);
 let requestId = 0;
 
 let geometry = $state<LineString | null>(null);
-/** Prepared OSRM input while loading; OSRM-snapped positions once ready. */
+/** Prepared trace input while loading; map-matched positions once ready. */
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let hasRefinedRoute = $state(false);

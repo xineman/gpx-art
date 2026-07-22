@@ -31,7 +31,7 @@ async function postJson(path: string, body: unknown, networkError: string): Prom
 	}
 }
 
-function apiFailure(value: unknown): { ok: false; error: string } | null {
+function apiFailure(value: unknown): Extract<RouteResponse, { ok: false }> | null {
 	if (
 		typeof value === 'object' &&
 		value !== null &&
@@ -40,11 +40,17 @@ function apiFailure(value: unknown): { ok: false; error: string } | null {
 		'error' in value &&
 		typeof (value as { error: unknown }).error === 'string'
 	) {
-		return { ok: false, error: (value as { error: string }).error };
+		const failure = value as { error: string; status?: unknown };
+		return {
+			ok: false,
+			error: failure.error,
+			...(typeof failure.status === 'number' ? { status: failure.status } : {})
+		};
 	}
 	return null;
 }
 
+/** Request one ordered Valhalla map-matching trace. */
 export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
 	const parsed = await postJson('/api/route', request, 'Network error — couldn’t start routing.');
 	const failure = apiFailure(parsed);

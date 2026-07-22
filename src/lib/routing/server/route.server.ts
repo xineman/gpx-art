@@ -1,10 +1,10 @@
 import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
 import type { RouteRequest, RouteResponse, RouteVia } from '../types';
-import { fetchOsrmRoute, type OsrmConfig } from './osrm.server';
+import { fetchValhallaTrace, type ValhallaConfig } from '../valhalla';
 import { inCoordinateRange, isFinitePosition, isRecord } from './validation.server';
 
 export type GenerateRouteOptions = {
-	osrm: OsrmConfig;
+	valhalla: ValhallaConfig;
 };
 
 export type ParsedRouteRequest = { ok: true; request: RouteRequest } | { ok: false; error: string };
@@ -23,7 +23,7 @@ function dedupeConsecutiveVias(vias: RouteVia[]): RouteVia[] {
 }
 
 /**
- * Parse and sanitize the public route API payload before it reaches OSRM.
+ * Parse and sanitize the public route API payload before it reaches Valhalla.
  */
 export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 	if (!isRecord(value) || !Array.isArray(value.vias)) {
@@ -87,10 +87,6 @@ export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 		parsedVias.push(via);
 	}
 
-	if ('continueStraight' in value && typeof value.continueStraight !== 'boolean') {
-		return { ok: false, error: 'continueStraight must be a boolean.' };
-	}
-
 	const distinctVias = dedupeConsecutiveVias(parsedVias);
 	if (distinctVias.length < MIN_VIAS) {
 		return { ok: false, error: 'Need at least two distinct waypoints.' };
@@ -98,26 +94,24 @@ export function parseRouteRequest(value: unknown): ParsedRouteRequest {
 
 	return {
 		ok: true,
-		request: {
-			vias: distinctVias,
-			...(typeof value.continueStraight === 'boolean'
-				? { continueStraight: value.continueStraight }
-				: {})
-		}
+		request: { vias: distinctVias }
 	};
 }
 
+/**
+ * Server pipeline: ordered prepared vias → one continuous Valhalla map match.
+ */
 export async function generateRoute(
 	request: RouteRequest,
 	options: GenerateRouteOptions
 ): Promise<RouteResponse> {
-	const osrm = await fetchOsrmRoute(request, options.osrm);
-	if (!osrm.ok) return osrm;
+	const matched = await fetchValhallaTrace(request, options.valhalla);
+	if (!matched.ok) return matched;
 
 	return {
 		ok: true,
-		geometry: osrm.geometry,
-		distanceM: osrm.distanceM,
-		waypoints: osrm.waypoints
+		geometry: matched.geometry,
+		distanceM: matched.distanceM,
+		waypoints: matched.waypoints
 	};
 }

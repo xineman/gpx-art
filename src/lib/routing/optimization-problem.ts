@@ -72,7 +72,7 @@ function candidateDrafts(shape: PreparedRouteShape): CandidateDraft[] {
 
 /**
  * Build deterministic traversal candidates and the unique coordinates needed
- * by OSRM Table. Canonical shape ordering makes equal-cost results independent
+ * by the Valhalla matrix endpoint. Canonical shape ordering makes equal-cost results independent
  * of the FeatureCollection order.
  */
 export function buildShapeOptimizationProblem(

@@ -328,7 +328,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 		});
 	}
 
-	// Client-prepared OSRM vias — above line/chevrons so direction anchors stay readable.
+	// Client-prepared trace points — above line/chevrons so direction anchors stay readable.
 	if (!map.getLayer(ROUTE_WAYPOINTS)) {
 		const vertex = themeColor('trail-vertex');
 		map.addLayer({

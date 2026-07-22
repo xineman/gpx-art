@@ -23,7 +23,7 @@ function guideKey(guide: GuidePath): string {
 }
 
 /**
- * Distribute a single OSRM request's via budget across all guides. Every guide
+ * Distribute a single map-matching request's point budget across all guides. Every guide
  * receives enough points to remain routable; remaining capacity follows length.
  */
 function allocateViaBudgets(guides: GuidePath[], maxVias: number): number[] | null {

@@ -1,7 +1,15 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { resolveOsrmConfig } from '$lib/routing/server/config.server';
+import { resolveValhallaConfig } from '$lib/routing/server/config.server';
 import { generateRoute, parseRouteRequest } from '$lib/routing/server/route.server';
+import type { RouteFailure } from '$lib/routing/types';
+
+function routeFailureHttpStatus(failure: RouteFailure): number {
+	if (failure.status === 400) return 400;
+	if (failure.status === 429) return 429;
+	if (failure.status != null) return 502;
+	return 400;
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: unknown;
@@ -16,23 +24,17 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(parsed, { status: 400 });
 	}
 
-	const osrm = resolveOsrmConfig();
-	if (!osrm.ok) {
-		return json(osrm, { status: 503 });
+	const valhalla = resolveValhallaConfig();
+	if (!valhalla.ok) {
+		return json(valhalla, { status: 503 });
 	}
 
 	const result = await generateRoute(parsed.request, {
-		osrm: osrm.config
+		valhalla: valhalla.config
 	});
 
 	if (!result.ok) {
-		const status =
-			result.error.includes('reach the routing') ||
-			result.error.includes('server error') ||
-			result.error.includes('returned')
-				? 502
-				: 400;
-		return json({ ok: false, error: result.error }, { status });
+		return json(result, { status: routeFailureHttpStatus(result) });
 	}
 
 	return json(result);
