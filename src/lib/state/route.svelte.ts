@@ -11,20 +11,20 @@ import type { RouteResponse, RouteSuccess } from '$lib/routing/matching/types';
 import { prepareRouteShapes } from '$lib/routing/preparation/prepare-shapes';
 import {
 	analyzeRouteDetours,
+	getWaypointDetourAnalysis,
 	mergeRouteDetourCandidates,
 	type RouteDetour,
 	type WaypointDetourAnalysis
 } from '$lib/routing/refinement/detours';
 import {
 	buildRefinementPlan,
-	defaultWaypointRefinementAction,
 	getWaypointRefinementAction,
 	improvesDetourScore,
 	routeRequestHash,
 	scoreRouteDetours,
-	type RefinementPlan,
-	type WaypointRefinementAction
+	type RefinementPlan
 } from '$lib/routing/refinement/plan';
+import type { WaypointRefinementAction } from '$lib/routing/refinement/types';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
@@ -53,12 +53,16 @@ function detourCandidate(index: number): RouteDetour | null {
 	return detourAnalysis[index]?.candidate ?? null;
 }
 
+function waypointAnalysis(index: number): WaypointDetourAnalysis {
+	return getWaypointDetourAnalysis(detourAnalysis, index);
+}
+
 function hasDetourCandidate(index: number): boolean {
 	return detourCandidate(index) != null;
 }
 
 function waypointAction(index: number): WaypointRefinementAction {
-	return getWaypointRefinementAction(detourCandidate(index), waypointActionOverrides[index]);
+	return getWaypointRefinementAction(waypointAnalysis(index), waypointActionOverrides[index]);
 }
 
 const waypointActionCounts = $derived.by(() => {
@@ -529,7 +533,7 @@ export const route = {
 			: ['keep', 'remove'];
 		const current = waypointAction(index);
 		const next = actions[(actions.indexOf(current) + 1) % actions.length]!;
-		if (next === defaultWaypointRefinementAction(detourCandidate(index))) {
+		if (next === waypointAnalysis(index).recommendedAction) {
 			delete waypointActionOverrides[index];
 		} else waypointActionOverrides[index] = next;
 		return next;

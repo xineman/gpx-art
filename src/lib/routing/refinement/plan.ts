@@ -1,8 +1,7 @@
 import type { LineString, Position } from 'geojson';
-import type { RouteDetour, WaypointDetourAnalysis } from './detours';
+import { getWaypointDetourAnalysis, type WaypointDetourAnalysis } from './detours';
+import type { WaypointRefinementAction } from './types';
 import type { RouteRequest, RouteVia } from '../matching/types';
-
-export type WaypointRefinementAction = 'keep' | 'move' | 'remove';
 
 export type RefinementPlan = {
 	request: RouteRequest;
@@ -17,17 +16,11 @@ export type DetourScore = {
 
 const MAX_AUTOMATIC_DISTANCE_INCREASE_RATIO = 1.1;
 
-export function defaultWaypointRefinementAction(
-	candidate: RouteDetour | null
-): WaypointRefinementAction {
-	return candidate ? 'move' : 'keep';
-}
-
 export function getWaypointRefinementAction(
-	candidate: RouteDetour | null,
+	analysis: WaypointDetourAnalysis,
 	override: WaypointRefinementAction | undefined
 ): WaypointRefinementAction {
-	return override ?? defaultWaypointRefinementAction(candidate);
+	return override ?? analysis.recommendedAction;
 }
 
 function samePosition(a: Position, b: Position): boolean {
@@ -61,8 +54,9 @@ export function buildRefinementPlan(
 
 	for (let index = 0; index < waypoints.length; index++) {
 		const waypoint = waypoints[index]!;
-		const candidate = analysis[index]?.candidate ?? null;
-		const action = getWaypointRefinementAction(candidate, overrides[index]);
+		const waypointAnalysis = getWaypointDetourAnalysis(analysis, index);
+		const candidate = waypointAnalysis.candidate;
+		const action = getWaypointRefinementAction(waypointAnalysis, overrides[index]);
 		if (action === 'remove') continue;
 
 		let via: RouteVia = { location: waypoint };

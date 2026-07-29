@@ -104,6 +104,30 @@ const mixedSuccess = {
 	]
 };
 
+const clusteredSuccess = {
+	ok: true as const,
+	geometry: {
+		type: 'LineString' as const,
+		coordinates: [
+			[21, 52],
+			[21.001, 52],
+			[21.002, 52],
+			[21.003, 52],
+			[21.002, 52],
+			[21.001, 52],
+			[21.004, 52],
+			[21.005, 52]
+		]
+	},
+	distanceM: 900,
+	waypoints: [
+		[21, 52],
+		[21.003, 52],
+		[21.004, 52],
+		[21.005, 52]
+	]
+};
+
 const attributedSuccess = {
 	ok: true as const,
 	geometry: straightSuccess.geometry,
@@ -334,6 +358,37 @@ describe('route state', () => {
 		expect(featuresOfKind('detour')).toHaveLength(1);
 		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
 		expect(featuresOfKind('detour')[0]?.geometry).toBeDefined();
+	});
+
+	it('moves one overlapping candidate and removes the redundant waypoint in one refinement', async () => {
+		requestRouteMock.mockResolvedValueOnce(clusteredSuccess).mockResolvedValueOnce(success);
+
+		await route.generate([line], 19);
+
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
+		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'remove' });
+		expect(route.moveWaypointCount).toBe(1);
+		expect(route.removeWaypointCount).toBe(1);
+		expect(featuresOfKind('detour')).toHaveLength(1);
+
+		expect(route.cycleWaypointAction(2)).toBe('keep');
+		expect(route.cycleWaypointAction(2)).toBe('move');
+		expect(route.cycleWaypointAction(2)).toBe('remove');
+
+		await route.refineRoute();
+
+		expect(requestRouteMock).toHaveBeenNthCalledWith(2, {
+			vias: [
+				{ location: [21, 52] },
+				{
+					location: [21.001, 52],
+					radiusM: 20,
+					bearing: 90,
+					bearingRange: 45
+				},
+				{ location: [21.005, 52] }
+			]
+		});
 	});
 
 	it('cycles a detected candidate through move, remove, and keep', async () => {

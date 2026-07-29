@@ -20,7 +20,7 @@ const geometry: LineString = {
 };
 
 const analysis: WaypointDetourAnalysis[] = [
-	{ waypointIndex: 0, candidate: null },
+	{ waypointIndex: 0, candidate: null, recommendedAction: 'keep' },
 	{
 		waypointIndex: 1,
 		candidate: {
@@ -33,9 +33,10 @@ const analysis: WaypointDetourAnalysis[] = [
 			routeDistanceM: 150,
 			returnDistanceM: 100,
 			excessDistanceM: 50
-		}
+		},
+		recommendedAction: 'move'
 	},
-	{ waypointIndex: 2, candidate: null }
+	{ waypointIndex: 2, candidate: null, recommendedAction: 'keep' }
 ];
 
 describe('buildRefinementPlan', () => {
@@ -61,14 +62,59 @@ describe('buildRefinementPlan', () => {
 			preservedOverrides: {}
 		});
 	});
+
+	it('moves one cluster anchor and omits its redundant candidate', () => {
+		const clusteredAnalysis: WaypointDetourAnalysis[] = [
+			{ waypointIndex: 0, candidate: null, recommendedAction: 'keep' },
+			analysis[1]!,
+			{
+				waypointIndex: 2,
+				candidate: {
+					geometry: {
+						type: 'LineString',
+						coordinates: geometry.coordinates.slice(2, 4)
+					},
+					startIndex: 2,
+					endIndex: 3,
+					routeDistanceM: 130,
+					returnDistanceM: 100,
+					excessDistanceM: 30
+				},
+				recommendedAction: 'remove'
+			},
+			{ waypointIndex: 3, candidate: null, recommendedAction: 'keep' }
+		];
+
+		const result = buildRefinementPlan(
+			geometry,
+			[
+				[21, 52],
+				[21.002, 52],
+				[21.0025, 52],
+				[21.003, 52]
+			],
+			clusteredAnalysis,
+			{}
+		);
+
+		expect(result.request.vias).toEqual([
+			{ location: [21, 52] },
+			{
+				location: [21.001, 52],
+				radiusM: 20,
+				bearing: 90,
+				bearingRange: 45
+			},
+			{ location: [21.003, 52] }
+		]);
+	});
 });
 
 describe('automatic refinement policy', () => {
 	it('defaults to moving candidates while honoring an explicit override', () => {
-		const candidate = analysis[1]!.candidate;
-		expect(getWaypointRefinementAction(candidate, undefined)).toBe('move');
-		expect(getWaypointRefinementAction(null, undefined)).toBe('keep');
-		expect(getWaypointRefinementAction(candidate, 'remove')).toBe('remove');
+		expect(getWaypointRefinementAction(analysis[1]!, undefined)).toBe('move');
+		expect(getWaypointRefinementAction(analysis[0]!, undefined)).toBe('keep');
+		expect(getWaypointRefinementAction(analysis[1]!, 'remove')).toBe('remove');
 	});
 
 	it('scores candidate count and excess distance', () => {

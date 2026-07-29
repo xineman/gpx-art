@@ -1,5 +1,6 @@
 import type { LineString, Position } from 'geojson';
 import { distanceBetween } from '$lib/geometry/distance';
+import type { WaypointRefinementAction } from './types';
 
 export type DetourDetectionOptions = {
 	/** Minimum routed distance from the waypoint to either side of the excursion. */
@@ -20,7 +21,21 @@ export type RouteDetour = {
 export type WaypointDetourAnalysis = {
 	waypointIndex: number;
 	candidate: RouteDetour | null;
+	recommendedAction: WaypointRefinementAction;
 };
+
+export function getWaypointDetourAnalysis(
+	analysis: WaypointDetourAnalysis[],
+	index: number
+): WaypointDetourAnalysis {
+	return (
+		analysis[index] ?? {
+			waypointIndex: index,
+			candidate: null,
+			recommendedAction: 'keep'
+		}
+	);
+}
 
 const MIN_MEANINGFUL_EXCESS_DISTANCE_M = 10;
 const MIN_MEANINGFUL_STRETCH = 1.05;
@@ -222,31 +237,120 @@ export function analyzeRouteDetours(
 	const cumulative = cumulativeDistances(points);
 	const waypointRouteIndexes = locateWaypoints(points, waypoints);
 
-	return waypoints.map((_, waypointIndex) => {
+	const analysis = waypoints.map((_, waypointIndex): WaypointDetourAnalysis => {
+		let candidate: RouteDetour | null;
 		if (waypointIndex === 0 || waypointIndex === waypoints.length - 1) {
-			return {
-				waypointIndex,
-				candidate: analyzeEndpointWaypoint(
-					points,
-					cumulative,
-					waypointRouteIndexes,
-					waypointIndex,
-					options
-				)
-			};
-		}
-
-		return {
-			waypointIndex,
-			candidate: analyzeIntermediateWaypoint(
+			candidate = analyzeEndpointWaypoint(
 				points,
 				cumulative,
 				waypointRouteIndexes,
 				waypointIndex,
 				options
-			)
+			);
+		} else {
+			candidate = analyzeIntermediateWaypoint(
+				points,
+				cumulative,
+				waypointRouteIndexes,
+				waypointIndex,
+				options
+			);
+		}
+
+		return {
+			waypointIndex,
+			candidate,
+			recommendedAction: candidate ? 'move' : 'keep'
 		};
 	});
+
+	return consolidateOverlappingCandidates(points, cumulative, analysis);
+}
+
+type CandidateMember = {
+	analysisIndex: number;
+	waypointIndex: number;
+	candidate: RouteDetour;
+};
+
+type CandidateCluster = {
+	startIndex: number;
+	endIndex: number;
+	members: CandidateMember[];
+};
+
+function consolidateOverlappingCandidates(
+	points: Position[],
+	cumulative: number[],
+	analysis: WaypointDetourAnalysis[]
+): WaypointDetourAnalysis[] {
+	const result = analysis.map((item) => ({ ...item }));
+	const members = analysis.flatMap((item, analysisIndex): CandidateMember[] =>
+		item.candidate
+			? [{ analysisIndex, waypointIndex: item.waypointIndex, candidate: item.candidate }]
+			: []
+	);
+	members.sort(
+		(a, b) =>
+			a.candidate.startIndex - b.candidate.startIndex ||
+			a.candidate.endIndex - b.candidate.endIndex ||
+			a.waypointIndex - b.waypointIndex
+	);
+
+	const clusters: CandidateCluster[] = [];
+	for (const member of members) {
+		const previous = clusters.at(-1);
+		if (!previous || member.candidate.startIndex > previous.endIndex) {
+			clusters.push({
+				startIndex: member.candidate.startIndex,
+				endIndex: member.candidate.endIndex,
+				members: [member]
+			});
+			continue;
+		}
+
+		previous.endIndex = Math.max(previous.endIndex, member.candidate.endIndex);
+		previous.members.push(member);
+	}
+
+	const finalWaypointIndex = analysis.length - 1;
+	for (const cluster of clusters) {
+		if (cluster.members.length < 2) continue;
+
+		const startMember = cluster.members.find(({ waypointIndex }) => waypointIndex === 0);
+		const endMember = cluster.members.find(
+			({ waypointIndex }) => waypointIndex === finalWaypointIndex
+		);
+		// Preserve both termini when a route-wide excursion makes their intervals overlap.
+		if (startMember && endMember) continue;
+
+		const anchor =
+			startMember ??
+			endMember ??
+			[...cluster.members].sort((a, b) => a.waypointIndex - b.waypointIndex)[0]!;
+		const mergedInterval = intervalForRange(
+			points,
+			cumulative,
+			cluster.startIndex,
+			cluster.endIndex
+		);
+		if (!mergedInterval) continue;
+
+		result[anchor.analysisIndex] = {
+			...result[anchor.analysisIndex]!,
+			candidate: withGeometry(points, mergedInterval),
+			recommendedAction: 'move'
+		};
+		for (const member of cluster.members) {
+			if (member.analysisIndex === anchor.analysisIndex) continue;
+			result[member.analysisIndex] = {
+				...result[member.analysisIndex]!,
+				recommendedAction: 'remove'
+			};
+		}
+	}
+
+	return result;
 }
 
 function mergeIntervals(

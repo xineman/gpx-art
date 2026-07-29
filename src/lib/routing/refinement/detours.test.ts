@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LineString, Position } from 'geojson';
 import {
 	analyzeRouteDetours,
+	getWaypointDetourAnalysis,
 	isMeaningfulDetourCandidate,
 	mergeRouteDetourCandidates
 } from './detours';
@@ -11,6 +12,14 @@ function line(coordinates: Position[]): LineString {
 }
 
 describe('analyzeRouteDetours', () => {
+	it('uses a keep recommendation before analysis is available', () => {
+		expect(getWaypointDetourAnalysis([], 2)).toEqual({
+			waypointIndex: 2,
+			candidate: null,
+			recommendedAction: 'keep'
+		});
+	});
+
 	it('retains a candidate when an ordinary bend is not a tight hairpin', () => {
 		const route = line([
 			[21, 52],
@@ -85,6 +94,77 @@ describe('analyzeRouteDetours', () => {
 		]);
 
 		expect(analysis[1]!.candidate).toBeNull();
+	});
+
+	it('consolidates overlapping candidates into one move and redundant removals', () => {
+		const route = line([
+			[21, 52],
+			[21.001, 52],
+			[21.002, 52],
+			[21.003, 52],
+			[21.002, 52],
+			[21.001, 52],
+			[21.004, 52],
+			[21.005, 52]
+		]);
+		const analysis = analyzeRouteDetours(route, [
+			[21, 52],
+			[21.003, 52],
+			[21.004, 52],
+			[21.005, 52]
+		]);
+
+		expect(analysis.map(({ recommendedAction }) => recommendedAction)).toEqual([
+			'keep',
+			'move',
+			'remove',
+			'keep'
+		]);
+		expect(analysis[1]!.candidate).toMatchObject({
+			startIndex: 1,
+			endIndex: 7
+		});
+		expect(analysis[2]!.candidate).not.toBeNull();
+	});
+
+	it('keeps an endpoint as the anchor of an overlapping candidate cluster', () => {
+		const route = line([
+			[21, 52],
+			[21.001, 52],
+			[21.0001, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]);
+		const analysis = analyzeRouteDetours(route, [
+			[21, 52],
+			[21.002, 52],
+			[21.003, 52]
+		]);
+
+		expect(analysis.map(({ recommendedAction }) => recommendedAction)).toEqual([
+			'move',
+			'remove',
+			'keep'
+		]);
+		expect(analysis[0]!.candidate).toMatchObject({
+			startIndex: 0,
+			endIndex: 4
+		});
+	});
+
+	it('does not consolidate a candidate cluster spanning both route endpoints', () => {
+		const route = line([
+			[21, 52],
+			[21.005, 52],
+			[21.005, 52.005],
+			[21.0001, 52]
+		]);
+		const analysis = analyzeRouteDetours(route, [
+			[21, 52],
+			[21.0001, 52]
+		]);
+
+		expect(analysis.map(({ recommendedAction }) => recommendedAction)).toEqual(['move', 'move']);
 	});
 
 	it('re-merges only the supplied waypoint candidates', () => {
