@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { resolveValhallaConfig } from '$lib/routing/server/config.server';
-import { generateRoute, parseRouteRequest } from '$lib/routing/server/route.server';
-import type { RouteFailure } from '$lib/routing/types';
+import { generateRoute, parseRouteRequest } from '$lib/routing/matching/route.server';
+import { resolveValhallaConfig } from '$lib/routing/providers/valhalla/config.server';
+import type { RouteFailure } from '$lib/routing/shared/failure';
 
 function routeFailureHttpStatus(failure: RouteFailure): number {
 	if (failure.status === 400) return 400;

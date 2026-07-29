@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feature } from 'geojson';
 
-const { requestRouteMock } = vi.hoisted(() => ({ requestRouteMock: vi.fn() }));
+const { requestRouteMock, requestRouteAttributesMock } = vi.hoisted(() => ({
+	requestRouteMock: vi.fn(),
+	requestRouteAttributesMock: vi.fn()
+}));
 
-vi.mock('$lib/routing/client', () => ({
-	requestOptimizedRoute: requestRouteMock,
-	requestRoute: requestRouteMock
+vi.mock('$lib/routing/generate-route', () => ({ requestOptimizedRoute: requestRouteMock }));
+vi.mock('$lib/routing/matching/client', () => ({ requestRoute: requestRouteMock }));
+vi.mock('$lib/routing/attribution/client', () => ({
+	requestRouteAttributes: requestRouteAttributesMock
 }));
 
 import { route } from './route.svelte';
@@ -100,6 +104,40 @@ const mixedSuccess = {
 	]
 };
 
+const attributedSuccess = {
+	ok: true as const,
+	geometry: straightSuccess.geometry,
+	distanceM: straightSuccess.distanceM,
+	roadEdges: [],
+	roadSpans: [
+		{
+			wayId: 123,
+			wayIds: [123],
+			refs: ['DK10'],
+			ref: 'DK10',
+			displayLabel: 'DK10',
+			name: 'Toruńska',
+			roadKind: 'national' as const,
+			roadClass: 'primary',
+			use: 'road',
+			surface: 'paved',
+			cycleLane: null,
+			bicycleNetwork: 2,
+			weightedGrade: 1,
+			maxUpwardGrade: 2,
+			maxDownwardGrade: -1,
+			meanElevationM: 100,
+			start: [21.001, 52],
+			end: [21.003, 52],
+			startM: 80,
+			endM: 205,
+			distanceM: 125,
+			startShapeIndex: 1,
+			endShapeIndex: 3
+		}
+	]
+};
+
 function featuresOfKind(kind: string) {
 	return route.collection.features.filter((feature) => feature.properties?.kind === kind);
 }
@@ -120,12 +158,59 @@ function waypointProperties(index: number) {
 		?.properties;
 }
 
+beforeEach(() => {
+	requestRouteAttributesMock.mockImplementation(async (geometry) => {
+		const points = geometry.coordinates;
+		const attributedDistanceM =
+			points.length === 2 ? 1300 : points.length === 8 ? 900 : points[2]?.[1] === 52 ? 205 : 350;
+		return {
+			ok: true,
+			geometry,
+			distanceM: attributedDistanceM,
+			roadEdges: [],
+			roadSpans: []
+		};
+	});
+});
+
 afterEach(() => {
 	route.syncSketch(Number.MIN_SAFE_INTEGER);
 	requestRouteMock.mockReset();
+	requestRouteAttributesMock.mockReset();
 });
 
 describe('route state', () => {
+	it('retains road spans and slices the attributed geometry for active map highlighting', async () => {
+		requestRouteMock.mockResolvedValueOnce(straightSuccess);
+		requestRouteAttributesMock.mockResolvedValueOnce(attributedSuccess);
+
+		await route.generate([line], 1);
+		expect(route.roadSpans[0]).toMatchObject({
+			ref: 'DK10',
+			wayId: 123,
+			start: [21.001, 52],
+			end: [21.003, 52],
+			startM: 80,
+			endM: 205
+		});
+
+		route.inspectRoadSpan(0);
+		expect(featuresOfKind('road-highlight')).toEqual([
+			expect.objectContaining({
+				properties: { kind: 'road-highlight', roadKind: 'national' },
+				geometry: {
+					type: 'LineString',
+					coordinates: attributedSuccess.geometry.coordinates.slice(1, 4)
+				}
+			})
+		]);
+
+		route.inspectRoadSpan(null);
+		expect(featuresOfKind('road-highlight')).toHaveLength(0);
+		route.syncSketch(2);
+		expect(route.roadSpans).toHaveLength(0);
+	});
+
 	it('sends grouped shapes and hides provisional endpoint roles while optimizing', async () => {
 		let resolveRoute!: (result: typeof success) => void;
 		const response = new Promise<typeof success>((resolve) => {
@@ -154,6 +239,8 @@ describe('route state', () => {
 		await route.generate([line], 2, { autoRefine: true });
 
 		expect(requestRouteMock).toHaveBeenCalledTimes(2);
+		expect(requestRouteAttributesMock).toHaveBeenCalledTimes(1);
+		expect(requestRouteAttributesMock).toHaveBeenCalledWith(straightSuccess.geometry);
 		expect(routeGeometry()).toEqual(straightSuccess.geometry);
 		expect(route.hasRefinedRoute).toBe(true);
 	});

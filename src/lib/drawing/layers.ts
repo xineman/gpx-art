@@ -12,6 +12,8 @@ const PREVIEW_FILL = 'gpx-preview-fill';
 const PREVIEW_POINTS = 'gpx-preview-points';
 const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
+const ROUTE_ROAD_HIGHLIGHT_CASING = 'gpx-route-road-highlight-casing';
+const ROUTE_ROAD_HIGHLIGHT = 'gpx-route-road-highlight';
 const ROUTE_DETOURS = 'gpx-route-detours';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
 export const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
@@ -239,6 +241,11 @@ export function ensureRouteLayers(map: MaplibreMap) {
 	const route = themeColor('blaze');
 	const routeDeep = themeColor('ink-dark');
 	const detour = themeColor('ember');
+	const roadNational = themeColor('road-national');
+	const roadVoivodeship = themeColor('road-voivodeship');
+	const roadCounty = themeColor('road-county');
+	const roadMunicipal = themeColor('road-municipal');
+	const roadOther = themeColor('road-other');
 
 	if (!map.getSource(ROUTE_SOURCE)) {
 		map.addSource(ROUTE_SOURCE, { type: 'geojson', data: empty });
@@ -279,6 +286,48 @@ export function ensureRouteLayers(map: MaplibreMap) {
 				'line-color': route,
 				'line-width': 3.25,
 				'line-opacity': 0.95
+			}
+		});
+	}
+
+	if (!map.getLayer(ROUTE_ROAD_HIGHLIGHT_CASING)) {
+		map.addLayer({
+			id: ROUTE_ROAD_HIGHLIGHT_CASING,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'road-highlight'],
+			layout: { 'line-cap': 'round', 'line-join': 'round' },
+			paint: {
+				'line-color': themeColor('panel-edge'),
+				'line-width': 9,
+				'line-opacity': 0.92
+			}
+		});
+	}
+
+	if (!map.getLayer(ROUTE_ROAD_HIGHLIGHT)) {
+		map.addLayer({
+			id: ROUTE_ROAD_HIGHLIGHT,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'road-highlight'],
+			layout: { 'line-cap': 'round', 'line-join': 'round' },
+			paint: {
+				'line-color': [
+					'match',
+					['get', 'roadKind'],
+					'national',
+					roadNational,
+					'voivodeship',
+					roadVoivodeship,
+					'county',
+					roadCounty,
+					'municipal',
+					roadMunicipal,
+					roadOther
+				],
+				'line-width': 6,
+				'line-opacity': 1
 			}
 		});
 	}

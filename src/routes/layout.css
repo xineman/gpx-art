@@ -20,6 +20,11 @@
 	--color-trail: #14b8a6;
 	--color-trail-deep: #0d9488;
 	--color-trail-vertex: #f4f0e8;
+	--color-road-national: #d96a4a;
+	--color-road-voivodeship: #e6b84a;
+	--color-road-county: #5f8fcf;
+	--color-road-municipal: #14b8a6;
+	--color-road-other: #67604f;
 
 	--shadow-panel: 0 18px 50px color-mix(in srgb, var(--color-panel-lift) 28%, transparent);
 	--shadow-tooltip: 0 18px 40px -8px color-mix(in srgb, var(--color-panel-lift) 55%, transparent);

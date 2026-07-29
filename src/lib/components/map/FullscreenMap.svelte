@@ -4,6 +4,7 @@
 	import DrawingLayer from './DrawingLayer.svelte';
 	import RouteLayer from './RouteLayer.svelte';
 	import HistoryPanel from '$lib/components/history/HistoryPanel.svelte';
+	import RouteRoadRibbon from '$lib/components/route/RouteRoadRibbon.svelte';
 	import StatusBar from '$lib/components/status/StatusBar.svelte';
 	import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
 	import ToolShortcuts from '$lib/components/tools/ToolShortcuts.svelte';
@@ -74,6 +75,14 @@
 		>
 			<div class="pointer-events-auto">
 				<HistoryPanel />
+			</div>
+		</div>
+
+		<div
+			class="pointer-events-none absolute right-[max(1.125rem,env(safe-area-inset-right))] bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+5.5rem))] left-[max(1.125rem,env(safe-area-inset-left))] z-2 flex justify-center max-[620px]:right-[max(0.75rem,env(safe-area-inset-right))] max-[620px]:bottom-[max(9.75rem,calc(env(safe-area-inset-bottom)+9.75rem))] max-[620px]:left-[max(0.75rem,env(safe-area-inset-left))]"
+		>
+			<div class="pointer-events-auto w-full max-w-3xl">
+				<RouteRoadRibbon />
 			</div>
 		</div>
 	{:else}
