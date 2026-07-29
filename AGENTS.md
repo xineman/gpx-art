@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify grouped shape traces → `POST /api/table` for a Valhalla bicycle distance matrix → client-side shape-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + optional GPX
+- **Route pipeline:** client extract/simplify grouped shape traces → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side shape-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + road-attribution ribbon + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
@@ -54,8 +54,9 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 ```
 src/
   lib/
-    components/
-      map/            # Map.svelte, FullscreenMap.svelte, DrawingLayer.svelte
+	components/
+	  map/            # Map.svelte, FullscreenMap.svelte, DrawingLayer.svelte
+	  route/          # RouteRoadRibbon.svelte
       tools/          # ToolsPanel.svelte, ToolButton.svelte, ToolShortcuts.svelte
       history/        # HistoryPanel shell + HistoryButtons + DrawingIOMenu
       status/         # StatusBar.svelte
@@ -67,12 +68,16 @@ src/
       layers.ts           # sketch + preview + route/detour GeoJSON layers
       io.ts               # GeoJSON sketch parse/serialize/download
       tap.ts              # double-tap / re-tap-last helpers (pure)
-    routing/              # pure route pipeline + GPX serialize
-      extract.ts          # features → guide paths
-      vias.ts             # RDP / sample → Valhalla trace points
-      optimization-problem.ts / optimize.ts
-      valhalla.ts / client.ts / gpx.ts / detours.ts
-      server/             # validation + Valhalla matrix/map-matching adapters
+    routing/              # feature-oriented route pipeline
+      preparation/        # features → guide paths → bounded trace vias
+      optimization/       # shape traversal candidates, matrix API, route ordering
+      matching/           # route contracts, client, request validation/orchestration
+      attribution/        # road-edge/span contracts, client, geometry validation
+      refinement/         # detour analysis + waypoint refinement plans
+      export/             # GPX serialization
+      providers/valhalla/ # shared config + Valhalla trace/matrix/attribute adapters
+      shared/             # failure, HTTP client, server validation primitives
+      generate-route.ts   # browser orchestration across optimization + matching
     geometry/             # haversine distance + sketch stats (pure)
     map/context.ts        # provideMap / useMap (Svelte context)
     state/
@@ -85,8 +90,9 @@ src/
   routes/
     +layout.svelte
     +page.svelte          # FullscreenMap only
-    api/route/+server.ts  # Valhalla map-matching proxy (bicycle by default)
-    api/table/+server.ts  # Valhalla matrix proxy for client-side optimization
+	api/route/+server.ts  # Valhalla map-matching proxy (bicycle by default)
+	api/attributes/+server.ts # Valhalla road-attribution proxy for the accepted route
+    api/matrix/+server.ts # Valhalla matrix proxy for client-side optimization
     layout.css            # Tailwind + theme tokens + viewport reset
 ```
 

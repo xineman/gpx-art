@@ -2,15 +2,19 @@ import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '$lib/config/routing';
 import { downloadTextFile } from '$lib/drawing/io';
 import { formatDistance } from '$lib/geometry/distance';
-import { requestOptimizedRoute, requestRoute } from '$lib/routing/client';
+import { requestRouteAttributes } from '$lib/routing/attribution/client';
+import type { AttributedRouteEdge, RouteRoadSpan } from '$lib/routing/attribution/types';
+import { lineStringToGpx, routeGpxFilename } from '$lib/routing/export/gpx';
+import { requestOptimizedRoute } from '$lib/routing/generate-route';
+import { requestRoute } from '$lib/routing/matching/client';
+import type { RouteResponse, RouteSuccess } from '$lib/routing/matching/types';
+import { prepareRouteShapes } from '$lib/routing/preparation/prepare-shapes';
 import {
 	analyzeRouteDetours,
 	mergeRouteDetourCandidates,
 	type RouteDetour,
 	type WaypointDetourAnalysis
-} from '$lib/routing/detours';
-import { lineStringToGpx, routeGpxFilename } from '$lib/routing/gpx';
-import { featuresToRouteShapes } from '$lib/routing/features-to-route-shapes';
+} from '$lib/routing/refinement/detours';
 import {
 	buildRefinementPlan,
 	defaultWaypointRefinementAction,
@@ -20,8 +24,7 @@ import {
 	scoreRouteDetours,
 	type RefinementPlan,
 	type WaypointRefinementAction
-} from '$lib/routing/refinement';
-import type { RouteResponse, RouteSuccess } from '$lib/routing/types';
+} from '$lib/routing/refinement/plan';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
@@ -37,6 +40,9 @@ let geometry = $state<LineString | null>(null);
 let waypoints = $state<Position[]>([]);
 let distanceM = $state(0);
 let hasRefinedRoute = $state(false);
+let roadEdges = $state<AttributedRouteEdge[]>([]);
+let roadSpans = $state<RouteRoadSpan[]>([]);
+let activeRoadSpanIndex = $state<number | null>(null);
 
 let detourAnalysis = $state<WaypointDetourAnalysis[]>([]);
 let waypointActionOverrides = $state<Record<number, WaypointRefinementAction>>({});
@@ -100,6 +106,9 @@ function resetRoute(
 	waypointActionOverrides = {};
 	if (!options.preserveWaypoints) waypoints = [];
 	distanceM = 0;
+	roadEdges = [];
+	roadSpans = [];
+	activeRoadSpanIndex = null;
 	sourceRevision = revision;
 	loadingAction = null;
 	hasRefinedRoute = false;
@@ -119,6 +128,9 @@ function applyReadyResult(
 	detourAnalysis = analyzeRouteDetours(result.geometry, result.waypoints);
 	waypointActionOverrides = preservedOverrides;
 	distanceM = result.distanceM;
+	roadEdges = [];
+	roadSpans = [];
+	activeRoadSpanIndex = null;
 	sourceRevision = revision;
 	hasRefinedRoute = refined;
 }
@@ -147,6 +159,9 @@ async function runPreparedRouteRequest(
 		detourAnalysis = [];
 		waypointActionOverrides = {};
 		distanceM = 0;
+		roadEdges = [];
+		roadSpans = [];
+		activeRoadSpanIndex = null;
 		hasRefinedRoute = false;
 	}
 
@@ -173,6 +188,39 @@ async function runPreparedRouteRequest(
 		options.preservedOverrides,
 		options.keepLoadingAfterSuccess ? action : null
 	);
+	return result;
+}
+
+async function attributeReadyRoute(
+	revision: number,
+	action: Exclude<RouteLoadingAction, null>
+): Promise<RouteResponse> {
+	if (!geometry) return { ok: false, error: 'No route found.' };
+	const geometryToAttribute = geometry;
+	const routedWaypoints = [...waypoints];
+	const refined = hasRefinedRoute;
+	const overrides = { ...waypointActionOverrides };
+	const id = ++requestId;
+	status = 'loading';
+	loadingAction = action;
+
+	const attributed = await requestRouteAttributes(geometryToAttribute);
+	if (id !== requestId) return { ok: false, error: 'Superseded.' };
+	if (!attributed.ok) {
+		status = 'ready';
+		loadingAction = null;
+		return attributed;
+	}
+
+	const result: RouteSuccess = {
+		ok: true,
+		geometry: attributed.geometry,
+		distanceM: attributed.distanceM,
+		waypoints: routedWaypoints
+	};
+	applyReadyResult(result, revision, refined, overrides);
+	roadEdges = attributed.roadEdges;
+	roadSpans = attributed.roadSpans;
 	return result;
 }
 
@@ -301,6 +349,26 @@ const collection: FeatureCollection = $derived.by(() => {
 			geometry
 		});
 	}
+	const activeSpan = activeRoadSpanIndex === null ? null : roadSpans[activeRoadSpanIndex];
+	if (
+		geometry &&
+		activeSpan &&
+		activeSpan.startShapeIndex >= 0 &&
+		activeSpan.endShapeIndex < geometry.coordinates.length &&
+		activeSpan.endShapeIndex >= activeSpan.startShapeIndex
+	) {
+		features.push({
+			type: 'Feature',
+			properties: { kind: 'road-highlight', roadKind: activeSpan.roadKind },
+			geometry: {
+				type: 'LineString',
+				coordinates: geometry.coordinates.slice(
+					activeSpan.startShapeIndex,
+					activeSpan.endShapeIndex + 1
+				)
+			}
+		});
+	}
 	for (const detour of detours) {
 		features.push({
 			type: 'Feature',
@@ -348,6 +416,21 @@ export const route = {
 	get canRefineRoute() {
 		return canRefineRoute;
 	},
+	get roadEdges(): AttributedRouteEdge[] {
+		return roadEdges;
+	},
+	get roadSpans(): RouteRoadSpan[] {
+		return roadSpans;
+	},
+	get activeRoadSpanIndex() {
+		return activeRoadSpanIndex;
+	},
+	inspectRoadSpan(index: number | null) {
+		activeRoadSpanIndex =
+			index !== null && Number.isInteger(index) && index >= 0 && index < roadSpans.length
+				? index
+				: null;
+	},
 	/**
 	 * Map source data: base route, display-only detour overlays, and via points.
 	 */
@@ -364,7 +447,7 @@ export const route = {
 			return { ok: false as const, error };
 		}
 
-		const prepared = featuresToRouteShapes(features);
+		const prepared = prepareRouteShapes(features);
 		if (!prepared.ok) {
 			resetRoute('error', revision);
 			return prepared;
@@ -380,8 +463,12 @@ export const route = {
 				refined: false
 			}
 		);
-		if (!result.ok || !options.autoRefine) return result;
-		return refineAutomatically(revision);
+		if (!result.ok) return result;
+		if (options.autoRefine) {
+			const refined = await refineAutomatically(revision);
+			if (!refined.ok) return refined;
+		}
+		return attributeReadyRoute(revision, 'generate');
 	},
 	async refineRoute(): Promise<RouteResponse> {
 		if (status !== 'ready' || geometry == null || sourceRevision == null) {
@@ -396,10 +483,11 @@ export const route = {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
-		return runPreparedRouteRequest(
+		const revision = sourceRevision;
+		const result = await runPreparedRouteRequest(
 			() => requestRoute(plan.request),
 			plan.request.vias.map(({ location }) => location),
-			sourceRevision,
+			revision,
 			'refine',
 			{
 				preserveCurrent: true,
@@ -407,18 +495,19 @@ export const route = {
 				preservedOverrides: plan.preservedOverrides
 			}
 		);
+		return result.ok ? attributeReadyRoute(revision, 'refine') : result;
 	},
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
 		if (status !== 'ready' || geometry == null || !hasRefinedRoute) {
 			return { ok: false, error: 'Refine the route first.' };
 		}
 
-		const prepared = featuresToRouteShapes(features);
+		const prepared = prepareRouteShapes(features);
 		if (!prepared.ok) {
 			return prepared;
 		}
 
-		return runPreparedRouteRequest(
+		const result = await runPreparedRouteRequest(
 			() => requestOptimizedRoute(prepared.shapes),
 			[],
 			revision,
@@ -428,6 +517,7 @@ export const route = {
 				refined: false
 			}
 		);
+		return result.ok ? attributeReadyRoute(revision, 'reset') : result;
 	},
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {
