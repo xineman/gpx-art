@@ -1,15 +1,17 @@
 import type { LineString } from 'geojson';
-import { parseApiFailure, postJson } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
 import type { RouteAttributionResponse } from './types';
 
 /** Attribute an accepted route geometry for the road ribbon and map inspection. */
 export async function requestRouteAttributes(
-	geometry: LineString
+	geometry: LineString,
+	options: RoutingRequestOptions = {}
 ): Promise<RouteAttributionResponse> {
 	const parsed = await postJson(
 		'/api/attributes',
 		{ geometry },
-		'Network error — couldn’t load road details.'
+		'Network error — couldn’t load road details.',
+		options
 	);
 	const failure = parseApiFailure(parsed);
 	if (failure) return failure;

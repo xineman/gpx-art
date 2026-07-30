@@ -1,13 +1,17 @@
 import type { Position } from 'geojson';
-import { parseApiFailure, postJson } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
 import type { MatrixRequest, MatrixResponse } from './types';
 
-export async function requestMatrix(coordinates: Position[]): Promise<MatrixResponse> {
+export async function requestMatrix(
+	coordinates: Position[],
+	options: RoutingRequestOptions = {}
+): Promise<MatrixResponse> {
 	const request: MatrixRequest = { coordinates };
 	const parsed = await postJson(
 		'/api/matrix',
 		request,
-		'Network error — couldn’t load bike distances.'
+		'Network error — couldn’t load bike distances.',
+		options
 	);
 	const failure = parseApiFailure(parsed);
 	if (failure) return failure;

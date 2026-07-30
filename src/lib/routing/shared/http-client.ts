@@ -1,9 +1,14 @@
-import type { RouteFailure } from './failure';
+import { supersededFailure, type RouteFailure } from './failure';
+
+export type RoutingRequestOptions = {
+	signal?: AbortSignal;
+};
 
 export async function postJson(
 	path: string,
 	body: unknown,
-	networkError: string
+	networkError: string,
+	options: RoutingRequestOptions = {}
 ): Promise<unknown> {
 	let response: Response;
 	try {
@@ -13,15 +18,18 @@ export async function postJson(
 				'Content-Type': 'application/json',
 				Accept: 'application/json'
 			},
-			body: JSON.stringify(body)
+			body: JSON.stringify(body),
+			signal: options.signal
 		});
 	} catch {
+		if (options.signal?.aborted) return supersededFailure();
 		return { ok: false, error: networkError };
 	}
 
 	try {
 		return await response.json();
 	} catch {
+		if (options.signal?.aborted) return supersededFailure();
 		return { ok: false, error: 'Routing response was unreadable.' };
 	}
 }
@@ -38,10 +46,11 @@ export function parseApiFailure(value: unknown): RouteFailure | null {
 		return null;
 	}
 
-	const failure = value as { error: string; status?: unknown };
+	const failure = value as { error: string; code?: unknown; status?: unknown };
 	return {
 		ok: false,
 		error: failure.error,
+		...(failure.code === 'superseded' ? { code: 'superseded' as const } : {}),
 		...(typeof failure.status === 'number' ? { status: failure.status } : {})
 	};
 }

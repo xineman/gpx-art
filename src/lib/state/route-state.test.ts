@@ -235,6 +235,45 @@ describe('route state', () => {
 		expect(route.roadSpans).toHaveLength(0);
 	});
 
+	it('keeps the matched route ready when road attribution fails', async () => {
+		requestRouteMock.mockResolvedValueOnce(success);
+		requestRouteAttributesMock.mockResolvedValueOnce({
+			ok: false,
+			error: 'Road details unavailable.'
+		});
+
+		await expect(route.generate([line], 1)).resolves.toEqual({
+			ok: false,
+			error: 'Road details unavailable.'
+		});
+		expect(route.status).toBe('ready');
+		expect(routeGeometry()).toEqual(success.geometry);
+		expect(waypointCoordinates()).toEqual(success.waypoints);
+		expect(route.distanceLabel).toBe('1.3 km');
+		expect(route.roadEdges).toEqual([]);
+		expect(route.roadSpans).toEqual([]);
+	});
+
+	it('preserves attributed road data when a refinement request fails', async () => {
+		requestRouteMock
+			.mockResolvedValueOnce(ordinarySuccess)
+			.mockResolvedValueOnce({ ok: false, error: 'No route found.' });
+		requestRouteAttributesMock.mockResolvedValueOnce({
+			...attributedSuccess,
+			geometry: ordinarySuccess.geometry,
+			distanceM: ordinarySuccess.distanceM
+		});
+
+		await route.generate([line], 1);
+		await expect(route.refineRoute()).resolves.toEqual({
+			ok: false,
+			error: 'No route found.'
+		});
+		expect(route.status).toBe('ready');
+		expect(routeGeometry()).toEqual(ordinarySuccess.geometry);
+		expect(route.roadSpans).toEqual(attributedSuccess.roadSpans);
+	});
+
 	it('sends grouped shapes and hides provisional endpoint roles while optimizing', async () => {
 		let resolveRoute!: (result: typeof success) => void;
 		const response = new Promise<typeof success>((resolve) => {
@@ -245,16 +284,45 @@ describe('route state', () => {
 		const pending = route.generate([line], 1);
 		expect(route.status).toBe('loading');
 		expect(waypointCoordinates()).toEqual([]);
-		expect(requestRouteMock).toHaveBeenCalledWith([
-			{
-				closed: false,
-				vias: expect.any(Array)
-			}
-		]);
+		expect(requestRouteMock).toHaveBeenCalledWith(
+			[
+				{
+					closed: false,
+					vias: expect.any(Array)
+				}
+			],
+			expect.objectContaining({ signal: expect.anything() })
+		);
 
 		resolveRoute(success);
 		await pending;
 		expect(waypointCoordinates()).toEqual(success.waypoints);
+	});
+
+	it('aborts a superseded command and keeps the newer route result', async () => {
+		let resolveFirst!: (result: typeof success) => void;
+		const firstResponse = new Promise<typeof success>((resolve) => {
+			resolveFirst = resolve;
+		});
+		requestRouteMock.mockReturnValueOnce(firstResponse).mockResolvedValueOnce(straightSuccess);
+
+		const first = route.generate([line], 20);
+		const firstSignal = requestRouteMock.mock.calls[0]?.[1]?.signal as AbortSignal;
+		const second = route.generate([line], 21);
+		const secondSignal = requestRouteMock.mock.calls[1]?.[1]?.signal as AbortSignal;
+
+		expect(firstSignal.aborted).toBe(true);
+		expect(secondSignal.aborted).toBe(false);
+		await second;
+		expect(requestRouteAttributesMock.mock.calls[0]?.[1]?.signal).toBe(secondSignal);
+
+		resolveFirst(success);
+		await expect(first).resolves.toEqual({
+			ok: false,
+			code: 'superseded',
+			error: 'Superseded.'
+		});
+		expect(routeGeometry()).toEqual(straightSuccess.geometry);
 	});
 
 	it('automatically refines a freshly generated route when requested', async () => {
@@ -264,7 +332,10 @@ describe('route state', () => {
 
 		expect(requestRouteMock).toHaveBeenCalledTimes(2);
 		expect(requestRouteAttributesMock).toHaveBeenCalledTimes(1);
-		expect(requestRouteAttributesMock).toHaveBeenCalledWith(straightSuccess.geometry);
+		expect(requestRouteAttributesMock).toHaveBeenCalledWith(
+			straightSuccess.geometry,
+			expect.objectContaining({ signal: expect.anything() })
+		);
 		expect(routeGeometry()).toEqual(straightSuccess.geometry);
 		expect(route.hasRefinedRoute).toBe(true);
 	});
@@ -377,18 +448,22 @@ describe('route state', () => {
 
 		await route.refineRoute();
 
-		expect(requestRouteMock).toHaveBeenNthCalledWith(2, {
-			vias: [
-				{ location: [21, 52] },
-				{
-					location: [21.001, 52],
-					radiusM: 20,
-					bearing: 90,
-					bearingRange: 45
-				},
-				{ location: [21.005, 52] }
-			]
-		});
+		expect(requestRouteMock).toHaveBeenNthCalledWith(
+			2,
+			{
+				vias: [
+					{ location: [21, 52] },
+					{
+						location: [21.001, 52],
+						radiusM: 20,
+						bearing: 90,
+						bearingRange: 45
+					},
+					{ location: [21.005, 52] }
+				]
+			},
+			expect.objectContaining({ signal: expect.anything() })
+		);
 	});
 
 	it('cycles a detected candidate through move, remove, and keep', async () => {
@@ -430,7 +505,8 @@ describe('route state', () => {
 					expect.objectContaining({ location: straightSuccess.waypoints[0] }),
 					expect.objectContaining({ location: straightSuccess.waypoints[2] })
 				]
-			})
+			}),
+			expect.objectContaining({ signal: expect.anything() })
 		);
 	});
 
@@ -448,7 +524,8 @@ describe('route state', () => {
 					expect.objectContaining({ location: [21.001, 52], radiusM: 20 }),
 					expect.objectContaining({ location: ordinarySuccess.waypoints[2] })
 				])
-			})
+			}),
+			expect.objectContaining({ signal: expect.anything() })
 		);
 	});
 
@@ -470,7 +547,8 @@ describe('route state', () => {
 					expect.objectContaining({ location: [21.002, 52], radiusM: 20 }),
 					expect.objectContaining({ location: mixedSuccess.waypoints[3] })
 				]
-			})
+			}),
+			expect.objectContaining({ signal: expect.anything() })
 		);
 	});
 
