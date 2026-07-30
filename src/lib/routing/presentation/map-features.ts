@@ -12,7 +12,7 @@ export type RouteMapWaypoint = {
 };
 
 export type RouteMapData = {
-	geometry: LineString | null;
+	routeGeometry: LineString | null;
 	waypoints: RouteMapWaypoint[];
 	detours: RouteDetour[];
 	activeRoadSpan: Pick<RouteRoadSpan, 'roadKind' | 'startShapeIndex' | 'endShapeIndex'> | null;
@@ -42,26 +42,26 @@ function waypointFeatures(waypoints: RouteMapWaypoint[], interactive: boolean): 
 }
 
 export function buildRouteMapFeatures({
-	geometry,
+	routeGeometry,
 	waypoints,
 	detours,
 	activeRoadSpan,
 	interactive
 }: RouteMapData): FeatureCollection {
 	const features: Feature[] = [];
-	if (geometry) {
+	if (routeGeometry) {
 		features.push({
 			type: 'Feature',
 			properties: { kind: 'route' },
-			geometry
+			geometry: routeGeometry
 		});
 	}
 
 	if (
-		geometry &&
+		routeGeometry &&
 		activeRoadSpan &&
 		activeRoadSpan.startShapeIndex >= 0 &&
-		activeRoadSpan.endShapeIndex < geometry.coordinates.length &&
+		activeRoadSpan.endShapeIndex < routeGeometry.coordinates.length &&
 		activeRoadSpan.endShapeIndex >= activeRoadSpan.startShapeIndex
 	) {
 		features.push({
@@ -69,7 +69,7 @@ export function buildRouteMapFeatures({
 			properties: { kind: 'road-highlight', roadKind: activeRoadSpan.roadKind },
 			geometry: {
 				type: 'LineString',
-				coordinates: geometry.coordinates.slice(
+				coordinates: routeGeometry.coordinates.slice(
 					activeRoadSpan.startShapeIndex,
 					activeRoadSpan.endShapeIndex + 1
 				)

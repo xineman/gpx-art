@@ -41,7 +41,7 @@ const routeOperations = createLatestOperation();
 /** Sketch revision bound to the current route or in-flight route attempt. */
 let routeSketchRevision: number | null = null;
 
-const geometry: LineString | null = $derived(
+const routeGeometry: LineString | null = $derived(
 	attribution?.geometry ?? acceptedRoute?.geometry ?? null
 );
 /** Map-matched positions for the current or preserved route. */
@@ -58,7 +58,7 @@ const isReady = $derived(phase.status === 'ready' && acceptedRoute != null);
 const distanceLabel = $derived(formatDistance(distanceM));
 
 const refinement = createRouteRefinementState({
-	getGeometry: () => geometry,
+	getRouteGeometry: () => routeGeometry,
 	getWaypoints: () => waypoints
 });
 
@@ -95,13 +95,13 @@ async function attributeReadyRoute(
 	operation: LatestOperationScope,
 	action: ActiveRouteLoadingAction
 ): Promise<RouteResponse> {
-	if (!acceptedRoute || !geometry) return { ok: false, error: 'No route found.' };
-	const geometryToAttribute = geometry;
+	if (!acceptedRoute || !routeGeometry) return { ok: false, error: 'No route found.' };
+	const routeGeometryToAttribute = routeGeometry;
 	const routedWaypoints = [...waypoints];
 	phase = { status: 'loading', action };
 
 	const attributed = await operation.guard(
-		requestRouteAttributes(geometryToAttribute, {
+		requestRouteAttributes(routeGeometryToAttribute, {
 			signal: operation.signal
 		})
 	);
@@ -137,7 +137,7 @@ async function refineAutomatically(operation: LatestOperationScope, initialRoute
 
 const collection: FeatureCollection = $derived.by(() =>
 	buildRouteMapFeatures({
-		geometry,
+		routeGeometry,
 		waypoints: waypoints.map((coordinates, index) => ({
 			coordinates,
 			candidate: refinement.hasCandidate(index),
@@ -311,8 +311,8 @@ export const route = {
 	},
 	/** Download GPX for the current route (no-op when not ready). */
 	downloadGpx() {
-		if (!geometry) return;
-		const text = lineStringToGpx(geometry);
+		if (!routeGeometry) return;
+		const text = lineStringToGpx(routeGeometry);
 		downloadTextFile(routeGpxFilename(), text, 'application/gpx+xml');
 	}
 };

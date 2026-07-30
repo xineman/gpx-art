@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Position } from 'geojson';
-import { EXACT_SHAPE_LIMIT, optimizeShapeOrder } from './optimize';
+import { EXACT_SHAPE_LIMIT, optimizeShapeTraversal } from './shape-optimizer';
 import { buildShapeOptimizationProblem, type ShapeOptimizationProblem } from './build-problem';
 import type { PreparedRouteShape } from '../preparation/types';
 
@@ -24,10 +24,10 @@ function optimize(
 	distance: (from: Position, to: Position) => number | null
 ) {
 	const problem = buildShapeOptimizationProblem(shapes);
-	return optimizeShapeOrder(problem, distanceMatrix(problem, distance));
+	return optimizeShapeTraversal(problem, distanceMatrix(problem, distance));
 }
 
-describe('optimizeShapeOrder', () => {
+describe('optimizeShapeTraversal', () => {
 	it('is independent of feature order and reverses open shapes when beneficial', () => {
 		const a = open(0, 1);
 		const b = open(10, 11);
@@ -135,7 +135,7 @@ describe('optimizeShapeOrder', () => {
 
 	it('rejects malformed matrices', () => {
 		const problem = buildShapeOptimizationProblem([open(0, 1), open(10, 11)]);
-		expect(optimizeShapeOrder(problem, [[0]])).toEqual({
+		expect(optimizeShapeTraversal(problem, [[0]])).toEqual({
 			ok: false,
 			error: 'Couldn’t optimize shape order — invalid bike-distance matrix.'
 		});

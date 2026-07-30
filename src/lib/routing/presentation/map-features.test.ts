@@ -3,7 +3,7 @@ import type { LineString } from 'geojson';
 import type { RouteDetour } from '../refinement/detours';
 import { buildRouteMapFeatures } from './map-features';
 
-const geometry: LineString = {
+const routeGeometry: LineString = {
 	type: 'LineString',
 	coordinates: [
 		[21, 52],
@@ -16,7 +16,7 @@ const geometry: LineString = {
 const detour: RouteDetour = {
 	geometry: {
 		type: 'LineString',
-		coordinates: geometry.coordinates.slice(1, 3)
+		coordinates: routeGeometry.coordinates.slice(1, 3)
 	},
 	startIndex: 1,
 	endIndex: 2,
@@ -28,7 +28,7 @@ const detour: RouteDetour = {
 describe('route map features', () => {
 	it('projects route state into map-ready route, detour, and waypoint features', () => {
 		const collection = buildRouteMapFeatures({
-			geometry,
+			routeGeometry,
 			waypoints: [
 				{ coordinates: [21, 52], candidate: false, action: 'keep' },
 				{ coordinates: [21.002, 52], candidate: true, action: 'move' },
@@ -80,7 +80,7 @@ describe('route map features', () => {
 
 	it('slices a valid active road span and ignores an invalid one', () => {
 		const input = {
-			geometry,
+			routeGeometry,
 			waypoints: [],
 			detours: [],
 			interactive: false
@@ -98,7 +98,7 @@ describe('route map features', () => {
 			properties: { kind: 'road-highlight', roadKind: 'national' },
 			geometry: {
 				type: 'LineString',
-				coordinates: geometry.coordinates.slice(1, 3)
+				coordinates: routeGeometry.coordinates.slice(1, 3)
 			}
 		});
 

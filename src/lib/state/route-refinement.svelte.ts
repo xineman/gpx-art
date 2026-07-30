@@ -15,16 +15,19 @@ import {
 import type { WaypointRefinementAction } from '$lib/routing/refinement/types';
 
 type RouteRefinementSources = {
-	getGeometry: () => LineString | null;
+	getRouteGeometry: () => LineString | null;
 	getWaypoints: () => Position[];
 };
 
-export function createRouteRefinementState({ getGeometry, getWaypoints }: RouteRefinementSources) {
+export function createRouteRefinementState({
+	getRouteGeometry,
+	getWaypoints
+}: RouteRefinementSources) {
 	let actionOverrides = $state<Record<number, WaypointRefinementAction>>({});
 
 	const analysis: WaypointDetourAnalysis[] = $derived.by(() => {
-		const geometry = getGeometry();
-		return geometry ? analyzeRouteDetours(geometry, getWaypoints()) : [];
+		const routeGeometry = getRouteGeometry();
+		return routeGeometry ? analyzeRouteDetours(routeGeometry, getWaypoints()) : [];
 	});
 
 	function waypointAnalysis(index: number): WaypointDetourAnalysis {
@@ -53,21 +56,21 @@ export function createRouteRefinementState({ getGeometry, getWaypoints }: RouteR
 	});
 
 	const plan: RefinementPlan = $derived.by(() =>
-		buildRefinementPlan(getGeometry(), getWaypoints(), analysis, actionOverrides)
+		buildRefinementPlan(getRouteGeometry(), getWaypoints(), analysis, actionOverrides)
 	);
 
 	const detours: RouteDetour[] = $derived.by(() => {
-		const geometry = getGeometry();
-		if (!geometry) return [];
+		const routeGeometry = getRouteGeometry();
+		if (!routeGeometry) return [];
 
 		const candidates = analysis.flatMap(({ waypointIndex, candidate }) =>
 			action(waypointIndex) === 'move' && candidate ? [candidate] : []
 		);
-		return mergeRouteDetourCandidates(geometry, candidates);
+		return mergeRouteDetourCandidates(routeGeometry, candidates);
 	});
 
 	const canRefineCurrentResult = $derived(
-		getGeometry() != null && actionCounts.pending > 0 && plan.request.vias.length >= MIN_VIAS
+		getRouteGeometry() != null && actionCounts.pending > 0 && plan.request.vias.length >= MIN_VIAS
 	);
 
 	function reset() {
