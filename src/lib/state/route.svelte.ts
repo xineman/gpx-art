@@ -15,7 +15,10 @@ import type { RouteResponse, RouteSuccess } from '$lib/routing/matching/types';
 import { prepareRouteShapes } from '$lib/routing/preparation/prepare-shapes';
 import { buildRouteMapFeatures } from '$lib/routing/presentation/map-features';
 import { refineRouteAutomatically } from '$lib/routing/refinement/auto-refine';
-import type { WaypointRefinementAction } from '$lib/routing/refinement/types';
+import type {
+	WaypointActionSelection,
+	WaypointRefinementAction
+} from '$lib/routing/refinement/types';
 import { supersededFailure } from '$lib/routing/shared/failure';
 import {
 	createLatestOperation,
@@ -81,12 +84,12 @@ function acceptRoute(
 	result: RouteSuccess,
 	options: {
 		refined: boolean;
-		preservedOverrides?: Record<number, WaypointRefinementAction>;
+		selections?: WaypointActionSelection[];
 	}
 ) {
 	acceptedRoute = { ...result, refined: options.refined };
 	attribution = null;
-	refinement.replaceOverrides(options.preservedOverrides ?? {});
+	refinement.replaceSelections(options.selections ?? []);
 	activeRoadSpanIndex = null;
 	phase = { status: 'ready', action: null };
 }
@@ -263,7 +266,7 @@ export const route = {
 
 			acceptRoute(result, {
 				refined: true,
-				preservedOverrides: plan.preservedOverrides
+				selections: plan.nextSelections
 			});
 			return attributeReadyRoute(operation, 'refine');
 		}, supersededFailure);

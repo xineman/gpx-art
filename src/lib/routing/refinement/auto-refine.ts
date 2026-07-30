@@ -1,6 +1,7 @@
 import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '$lib/config/routing';
 import type { RouteRequest, RouteResponse, RouteSuccess } from '../matching/types';
 import { analyzeRouteDetours } from './detours';
+import { applySelectionsToWaypointAnalysis } from './detour-coverage';
 import {
 	buildRefinementPlan,
 	improvesDetourScore,
@@ -39,7 +40,8 @@ export async function refineRouteAutomatically(
 		const analysis = analyzeRouteDetours(route.geometry, route.waypoints);
 		if (!analysis.some(({ candidate }) => candidate != null)) break;
 
-		const plan = buildRefinementPlan(route.geometry, route.waypoints, analysis, {});
+		const analysisWithSelections = applySelectionsToWaypointAnalysis(analysis);
+		const plan = buildRefinementPlan(route.geometry, route.waypoints, analysisWithSelections);
 		if (plan.request.vias.length < MIN_VIAS) break;
 
 		const previousScore = scoreRouteDetours(analysis, route.distanceM);

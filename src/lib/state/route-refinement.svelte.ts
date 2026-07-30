@@ -3,16 +3,18 @@ import { MIN_VIAS } from '$lib/config/routing';
 import {
 	analyzeRouteDetours,
 	getWaypointDetourAnalysis,
-	mergeRouteDetourCandidates,
 	type RouteDetour,
 	type WaypointDetourAnalysis
 } from '$lib/routing/refinement/detours';
 import {
-	buildRefinementPlan,
-	getWaypointRefinementAction,
-	type RefinementPlan
-} from '$lib/routing/refinement/plan';
-import type { WaypointRefinementAction } from '$lib/routing/refinement/types';
+	applyWaypointSelection,
+	applySelectionsToWaypointAnalysis
+} from '$lib/routing/refinement/detour-coverage';
+import { buildRefinementPlan, type RefinementPlan } from '$lib/routing/refinement/plan';
+import type {
+	WaypointActionSelection,
+	WaypointRefinementAction
+} from '$lib/routing/refinement/types';
 
 type RouteRefinementSources = {
 	getRouteGeometry: () => LineString | null;
@@ -23,8 +25,6 @@ export function createRouteRefinementState({
 	getRouteGeometry,
 	getWaypoints
 }: RouteRefinementSources) {
-	let actionOverrides = $state<Record<number, WaypointRefinementAction>>({});
-
 	const analysis: WaypointDetourAnalysis[] = $derived.by(() => {
 		const routeGeometry = getRouteGeometry();
 		return routeGeometry ? analyzeRouteDetours(routeGeometry, getWaypoints()) : [];
@@ -38,35 +38,35 @@ export function createRouteRefinementState({
 		return waypointAnalysis(index).candidate != null;
 	}
 
+	let selections = $state<WaypointActionSelection[]>([]);
+	const analysisWithSelections: WaypointDetourAnalysis[] = $derived.by(() =>
+		applySelectionsToWaypointAnalysis(analysis, selections)
+	);
+
 	function action(index: number): WaypointRefinementAction {
-		return getWaypointRefinementAction(waypointAnalysis(index), actionOverrides[index]);
+		return analysisWithSelections[index]?.action ?? 'keep';
 	}
+
+	const plan: RefinementPlan = $derived.by(() =>
+		buildRefinementPlan(getRouteGeometry(), getWaypoints(), analysisWithSelections, selections)
+	);
+
+	const detours: RouteDetour[] = $derived.by(() =>
+		analysisWithSelections.flatMap(({ action, candidate }) =>
+			action === 'move' && candidate ? [candidate] : []
+		)
+	);
 
 	const actionCounts = $derived.by(() => {
 		let move = 0;
 		let remove = 0;
 
-		for (let index = 0; index < getWaypoints().length; index++) {
-			const waypointAction = action(index);
-			if (waypointAction === 'move') move += 1;
-			if (waypointAction === 'remove') remove += 1;
+		for (const waypointAnalysis of analysisWithSelections) {
+			if (waypointAnalysis.action === 'move') move += 1;
+			if (waypointAnalysis.action === 'remove') remove += 1;
 		}
 
 		return { move, remove, pending: move + remove };
-	});
-
-	const plan: RefinementPlan = $derived.by(() =>
-		buildRefinementPlan(getRouteGeometry(), getWaypoints(), analysis, actionOverrides)
-	);
-
-	const detours: RouteDetour[] = $derived.by(() => {
-		const routeGeometry = getRouteGeometry();
-		if (!routeGeometry) return [];
-
-		const candidates = analysis.flatMap(({ waypointIndex, candidate }) =>
-			action(waypointIndex) === 'move' && candidate ? [candidate] : []
-		);
-		return mergeRouteDetourCandidates(routeGeometry, candidates);
 	});
 
 	const canRefineCurrentResult = $derived(
@@ -74,11 +74,11 @@ export function createRouteRefinementState({
 	);
 
 	function reset() {
-		actionOverrides = {};
+		selections = [];
 	}
 
-	function replaceOverrides(preservedOverrides: Record<number, WaypointRefinementAction> = {}) {
-		actionOverrides = { ...preservedOverrides };
+	function replaceSelections(nextSelections: WaypointActionSelection[] = []) {
+		selections = [...nextSelections];
 	}
 
 	function cycle(index: number): WaypointRefinementAction | null {
@@ -89,11 +89,11 @@ export function createRouteRefinementState({
 			: ['keep', 'remove'];
 		const current = action(index);
 		const next = actions[(actions.indexOf(current) + 1) % actions.length]!;
-		if (next === waypointAnalysis(index).recommendedAction) {
-			delete actionOverrides[index];
-		} else {
-			actionOverrides[index] = next;
-		}
+
+		selections = applyWaypointSelection(analysis, selections, {
+			waypointIndex: index,
+			action: next
+		});
 		return next;
 	}
 
@@ -113,7 +113,7 @@ export function createRouteRefinementState({
 		hasCandidate,
 		action,
 		reset,
-		replaceOverrides,
+		replaceSelections,
 		cycle
 	};
 }

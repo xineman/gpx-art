@@ -1,5 +1,6 @@
 import type { LineString, Position } from 'geojson';
 import { distanceBetween } from '$lib/geometry/distance';
+import { applyCandidateCoverage } from './detour-coverage';
 import type { WaypointRefinementAction } from './types';
 
 export type DetourDetectionOptions = {
@@ -21,7 +22,8 @@ export type RouteDetour = {
 export type WaypointDetourAnalysis = {
 	waypointIndex: number;
 	candidate: RouteDetour | null;
-	recommendedAction: WaypointRefinementAction;
+	coveredByWaypointIndexes: number[];
+	action: WaypointRefinementAction;
 };
 
 export function getWaypointDetourAnalysis(
@@ -32,7 +34,8 @@ export function getWaypointDetourAnalysis(
 		analysis[index] ?? {
 			waypointIndex: index,
 			candidate: null,
-			recommendedAction: 'keep'
+			coveredByWaypointIndexes: [],
+			action: 'keep'
 		}
 	);
 }
@@ -260,136 +263,10 @@ export function analyzeRouteDetours(
 		return {
 			waypointIndex,
 			candidate,
-			recommendedAction: candidate ? 'move' : 'keep'
+			coveredByWaypointIndexes: [],
+			action: candidate ? 'move' : 'keep'
 		};
 	});
 
-	return consolidateOverlappingCandidates(points, cumulative, analysis);
-}
-
-type CandidateMember = {
-	analysisIndex: number;
-	waypointIndex: number;
-	candidate: RouteDetour;
-};
-
-type CandidateCluster = {
-	startIndex: number;
-	endIndex: number;
-	members: CandidateMember[];
-};
-
-function consolidateOverlappingCandidates(
-	points: Position[],
-	cumulative: number[],
-	analysis: WaypointDetourAnalysis[]
-): WaypointDetourAnalysis[] {
-	const result = analysis.map((item) => ({ ...item }));
-	const members = analysis.flatMap((item, analysisIndex): CandidateMember[] =>
-		item.candidate
-			? [{ analysisIndex, waypointIndex: item.waypointIndex, candidate: item.candidate }]
-			: []
-	);
-	members.sort(
-		(a, b) =>
-			a.candidate.startIndex - b.candidate.startIndex ||
-			a.candidate.endIndex - b.candidate.endIndex ||
-			a.waypointIndex - b.waypointIndex
-	);
-
-	const clusters: CandidateCluster[] = [];
-	for (const member of members) {
-		const previous = clusters.at(-1);
-		if (!previous || member.candidate.startIndex > previous.endIndex) {
-			clusters.push({
-				startIndex: member.candidate.startIndex,
-				endIndex: member.candidate.endIndex,
-				members: [member]
-			});
-			continue;
-		}
-
-		previous.endIndex = Math.max(previous.endIndex, member.candidate.endIndex);
-		previous.members.push(member);
-	}
-
-	const finalWaypointIndex = analysis.length - 1;
-	for (const cluster of clusters) {
-		if (cluster.members.length < 2) continue;
-
-		const startMember = cluster.members.find(({ waypointIndex }) => waypointIndex === 0);
-		const endMember = cluster.members.find(
-			({ waypointIndex }) => waypointIndex === finalWaypointIndex
-		);
-		// Preserve both termini when a route-wide excursion makes their intervals overlap.
-		if (startMember && endMember) continue;
-
-		const anchor =
-			startMember ??
-			endMember ??
-			[...cluster.members].sort((a, b) => a.waypointIndex - b.waypointIndex)[0]!;
-		const mergedInterval = intervalForRange(
-			points,
-			cumulative,
-			cluster.startIndex,
-			cluster.endIndex
-		);
-		if (!mergedInterval) continue;
-
-		result[anchor.analysisIndex] = {
-			...result[anchor.analysisIndex]!,
-			candidate: withGeometry(points, mergedInterval),
-			recommendedAction: 'move'
-		};
-		for (const member of cluster.members) {
-			if (member.analysisIndex === anchor.analysisIndex) continue;
-			result[member.analysisIndex] = {
-				...result[member.analysisIndex]!,
-				recommendedAction: 'remove'
-			};
-		}
-	}
-
-	return result;
-}
-
-function mergeIntervals(
-	points: Position[],
-	cumulative: number[],
-	intervals: DetourInterval[]
-): DetourInterval[] {
-	const sorted = [...intervals].sort(
-		(a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex
-	);
-	const merged: DetourInterval[] = [];
-
-	for (const interval of sorted) {
-		const previous = merged.at(-1);
-		if (!previous || interval.startIndex > previous.endIndex) {
-			merged.push({ ...interval });
-			continue;
-		}
-
-		previous.endIndex = Math.max(previous.endIndex, interval.endIndex);
-		previous.routeDistanceM = cumulative[previous.endIndex]! - cumulative[previous.startIndex]!;
-		previous.returnDistanceM = distanceBetween(
-			points[previous.startIndex]!,
-			points[previous.endIndex]!
-		);
-		previous.excessDistanceM = previous.routeDistanceM - previous.returnDistanceM;
-	}
-
-	return merged;
-}
-
-export function mergeRouteDetourCandidates(
-	route: LineString,
-	candidates: RouteDetour[]
-): RouteDetour[] {
-	const points = route.coordinates;
-	if (points.length < 2 || candidates.length === 0) return [];
-	const cumulative = cumulativeDistances(points);
-	return mergeIntervals(points, cumulative, candidates).map((interval) =>
-		withGeometry(points, interval)
-	);
+	return applyCandidateCoverage(analysis, waypointRouteIndexes);
 }

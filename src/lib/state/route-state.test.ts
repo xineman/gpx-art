@@ -128,6 +128,24 @@ const clusteredSuccess = {
 	]
 };
 
+const endpointClusteredSuccess = {
+	ok: true as const,
+	geometry: {
+		type: 'LineString' as const,
+		coordinates: [
+			[21, 52],
+			[21.005, 52],
+			[21.005, 52.005],
+			[21.0001, 52]
+		]
+	},
+	distanceM: 1_200,
+	waypoints: [
+		[21, 52],
+		[21.0001, 52]
+	]
+};
+
 const attributedSuccess = {
 	ok: true as const,
 	geometry: straightSuccess.geometry,
@@ -431,20 +449,39 @@ describe('route state', () => {
 		expect(featuresOfKind('detour')[0]?.geometry).toBeDefined();
 	});
 
-	it('moves one overlapping candidate and removes the redundant waypoint in one refinement', async () => {
+	it('cycles a covered candidate through keep, move, and remove', async () => {
 		requestRouteMock.mockResolvedValueOnce(clusteredSuccess).mockResolvedValueOnce(success);
 
 		await route.generate([line], 19);
 
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'remove' });
+		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'move' });
+		expect(route.moveWaypointCount).toBe(1);
+		expect(route.removeWaypointCount).toBe(1);
+		expect(featuresOfKind('detour')).toHaveLength(1);
+
+		expect(route.cycleWaypointAction(1)).toBe('keep');
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'keep' });
+		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'remove' });
+		expect(route.moveWaypointCount).toBe(0);
+		expect(route.removeWaypointCount).toBe(1);
+		expect(featuresOfKind('detour')).toHaveLength(0);
+
+		expect(route.cycleWaypointAction(1)).toBe('move');
 		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
 		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'remove' });
 		expect(route.moveWaypointCount).toBe(1);
 		expect(route.removeWaypointCount).toBe(1);
 		expect(featuresOfKind('detour')).toHaveLength(1);
 
-		expect(route.cycleWaypointAction(2)).toBe('keep');
-		expect(route.cycleWaypointAction(2)).toBe('move');
-		expect(route.cycleWaypointAction(2)).toBe('remove');
+		expect(route.cycleWaypointAction(1)).toBe('remove');
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'remove' });
+		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'move' });
+
+		const selectedDetour = featuresOfKind('detour')[0]!.geometry;
+		expect(selectedDetour.type).toBe('LineString');
+		const selectedEntry =
+			selectedDetour.type === 'LineString' ? selectedDetour.coordinates[0] : null;
 
 		await route.refineRoute();
 
@@ -454,7 +491,51 @@ describe('route state', () => {
 				vias: [
 					{ location: [21, 52] },
 					{
-						location: [21.001, 52],
+						location: selectedEntry,
+						radiusM: 20
+					},
+					{ location: [21.005, 52] }
+				]
+			},
+			expect.objectContaining({ signal: expect.anything() })
+		);
+	});
+
+	it('preserves both move actions when overlapping candidates span the route endpoints', async () => {
+		requestRouteMock.mockResolvedValue(endpointClusteredSuccess);
+
+		await route.generate([line], 20);
+
+		expect(waypointProperties(0)).toMatchObject({ candidate: true, action: 'move' });
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
+		expect(route.moveWaypointCount).toBe(2);
+		expect(route.removeWaypointCount).toBe(0);
+		expect(featuresOfKind('detour')).toHaveLength(2);
+	});
+
+	it('uses a selected covered candidate in place of its incompatible covering detour', async () => {
+		requestRouteMock.mockResolvedValueOnce(clusteredSuccess).mockResolvedValueOnce(success);
+
+		await route.generate([line], 21);
+		expect(route.cycleWaypointAction(1)).toBe('keep');
+		expect(route.cycleWaypointAction(1)).toBe('move');
+		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
+		expect(waypointProperties(2)).toMatchObject({ candidate: true, action: 'remove' });
+
+		const selectedDetour = featuresOfKind('detour')[0]!.geometry;
+		expect(selectedDetour.type).toBe('LineString');
+		const selectedEntry =
+			selectedDetour.type === 'LineString' ? selectedDetour.coordinates[0] : null;
+
+		await route.refineRoute();
+
+		expect(requestRouteMock).toHaveBeenNthCalledWith(
+			2,
+			{
+				vias: [
+					{ location: [21, 52] },
+					{
+						location: selectedEntry,
 						radiusM: 20,
 						bearing: 90,
 						bearingRange: 45
