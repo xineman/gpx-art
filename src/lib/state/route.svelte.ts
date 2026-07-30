@@ -19,7 +19,7 @@ import type { WaypointRefinementAction } from '$lib/routing/refinement/types';
 import { supersededFailure } from '$lib/routing/shared/failure';
 import {
 	createLatestOperation,
-	type LatestOperationLease
+	type LatestOperationScope
 } from '$lib/routing/shared/latest-operation';
 import { createRouteRefinementState } from './route-refinement.svelte';
 
@@ -79,53 +79,20 @@ function resetRoute(nextStatus: Extract<RouteStatus, 'idle' | 'error'>) {
 
 function acceptRoute(
 	result: RouteSuccess,
-	refined: boolean,
-	preservedOverrides: Record<number, WaypointRefinementAction> = {}
+	options: {
+		refined: boolean;
+		preservedOverrides?: Record<number, WaypointRefinementAction>;
+	}
 ) {
-	acceptedRoute = { ...result, refined };
+	acceptedRoute = { ...result, refined: options.refined };
 	attribution = null;
-	refinement.replaceOverrides(preservedOverrides);
+	refinement.replaceOverrides(options.preservedOverrides ?? {});
 	activeRoadSpanIndex = null;
 	phase = { status: 'ready', action: null };
 }
 
-async function runPreparedRouteRequest(
-	operation: LatestOperationLease,
-	request: (signal: AbortSignal) => Promise<RouteResponse>,
-	revision: number,
-	action: ActiveRouteLoadingAction,
-	options: {
-		preserveCurrent: boolean;
-		refined: boolean;
-		preservedOverrides?: Record<number, WaypointRefinementAction>;
-	}
-): Promise<RouteResponse> {
-	phase = { status: 'loading', action };
-	routeSketchRevision = revision;
-
-	if (!options.preserveCurrent) {
-		clearRouteData();
-	}
-
-	const result = await request(operation.signal);
-	if (!operation.isCurrent()) return supersededFailure();
-
-	if (!result.ok) {
-		if (options.preserveCurrent && acceptedRoute) {
-			phase = { status: 'ready', action: null };
-			return result;
-		}
-
-		resetRoute('error');
-		return result;
-	}
-
-	acceptRoute(result, options.refined, options.preservedOverrides);
-	return result;
-}
-
 async function attributeReadyRoute(
-	operation: LatestOperationLease,
+	operation: LatestOperationScope,
 	action: ActiveRouteLoadingAction
 ): Promise<RouteResponse> {
 	if (!acceptedRoute || !geometry) return { ok: false, error: 'No route found.' };
@@ -133,10 +100,11 @@ async function attributeReadyRoute(
 	const routedWaypoints = [...waypoints];
 	phase = { status: 'loading', action };
 
-	const attributed = await requestRouteAttributes(geometryToAttribute, {
-		signal: operation.signal
-	});
-	if (!operation.isCurrent()) return supersededFailure();
+	const attributed = await operation.guard(
+		requestRouteAttributes(geometryToAttribute, {
+			signal: operation.signal
+		})
+	);
 	if (!attributed.ok) {
 		phase = { status: 'ready', action: null };
 		return attributed;
@@ -154,16 +122,16 @@ async function attributeReadyRoute(
 	return result;
 }
 
-async function refineAutomatically(operation: LatestOperationLease, initialRoute: RouteSuccess) {
+async function refineAutomatically(operation: LatestOperationScope, initialRoute: RouteSuccess) {
 	phase = { status: 'loading', action: 'generate' };
 
-	const outcome = await refineRouteAutomatically(initialRoute, async (request) => {
-		const response = await requestRoute(request, { signal: operation.signal });
-		return operation.isCurrent() ? response : supersededFailure();
-	});
-	if (!operation.isCurrent()) return supersededFailure();
+	const outcome = await operation.guard(
+		refineRouteAutomatically(initialRoute, (request) =>
+			operation.guard(requestRoute(request, { signal: operation.signal }))
+		)
+	);
 
-	acceptRoute(outcome.route, outcome.refined);
+	acceptRoute(outcome.route, { refined: outcome.refined });
 	return outcome.response;
 }
 
@@ -234,35 +202,40 @@ export const route = {
 		return distanceLabel;
 	},
 	async generate(features: Feature[], revision: number, options: { autoRefine?: boolean } = {}) {
-		const operation = routeOperations.begin();
-		if (features.length === 0) {
-			const error = 'Sketch a shape first.';
-			resetRoute('error');
-			return { ok: false as const, error };
-		}
-
-		const prepared = prepareRouteShapes(features);
-		if (!prepared.ok) {
-			resetRoute('error');
-			return prepared;
-		}
-
-		const result = await runPreparedRouteRequest(
-			operation,
-			(signal) => requestOptimizedRoute(prepared.shapes, { signal }),
-			revision,
-			'generate',
-			{
-				preserveCurrent: false,
-				refined: false
+		return routeOperations.run(async (operation) => {
+			if (features.length === 0) {
+				const error = 'Sketch a shape first.';
+				resetRoute('error');
+				return { ok: false as const, error };
 			}
-		);
-		if (!result.ok) return result;
-		if (options.autoRefine) {
-			const refined = await refineAutomatically(operation, result);
-			if (!refined.ok) return refined;
-		}
-		return attributeReadyRoute(operation, 'generate');
+
+			const prepared = prepareRouteShapes(features);
+			if (!prepared.ok) {
+				resetRoute('error');
+				return prepared;
+			}
+
+			clearRouteData();
+			routeSketchRevision = revision;
+			phase = { status: 'loading', action: 'generate' };
+
+			const result = await operation.guard(
+				requestOptimizedRoute(prepared.shapes, {
+					signal: operation.signal
+				})
+			);
+			if (!result.ok) {
+				resetRoute('error');
+				return result;
+			}
+
+			acceptRoute(result, { refined: false });
+			if (options.autoRefine) {
+				const refined = await refineAutomatically(operation, result);
+				if (!refined.ok) return refined;
+			}
+			return attributeReadyRoute(operation, 'generate');
+		}, supersededFailure);
 	},
 	async refineRoute(): Promise<RouteResponse> {
 		if (!isReady || routeSketchRevision == null) {
@@ -277,20 +250,23 @@ export const route = {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
-		const revision = routeSketchRevision;
-		const operation = routeOperations.begin();
-		const result = await runPreparedRouteRequest(
-			operation,
-			(signal) => requestRoute(plan.request, { signal }),
-			revision,
-			'refine',
-			{
-				preserveCurrent: true,
+		return routeOperations.run(async (operation) => {
+			phase = { status: 'loading', action: 'refine' };
+
+			const result = await operation.guard(
+				requestRoute(plan.request, { signal: operation.signal })
+			);
+			if (!result.ok) {
+				phase = { status: 'ready', action: null };
+				return result;
+			}
+
+			acceptRoute(result, {
 				refined: true,
 				preservedOverrides: plan.preservedOverrides
-			}
-		);
-		return result.ok ? attributeReadyRoute(operation, 'refine') : result;
+			});
+			return attributeReadyRoute(operation, 'refine');
+		}, supersededFailure);
 	},
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
 		if (!isReady || !hasRefinedRoute) {
@@ -302,18 +278,23 @@ export const route = {
 			return prepared;
 		}
 
-		const operation = routeOperations.begin();
-		const result = await runPreparedRouteRequest(
-			operation,
-			(signal) => requestOptimizedRoute(prepared.shapes, { signal }),
-			revision,
-			'reset',
-			{
-				preserveCurrent: true,
-				refined: false
+		return routeOperations.run(async (operation) => {
+			routeSketchRevision = revision;
+			phase = { status: 'loading', action: 'reset' };
+
+			const result = await operation.guard(
+				requestOptimizedRoute(prepared.shapes, {
+					signal: operation.signal
+				})
+			);
+			if (!result.ok) {
+				phase = { status: 'ready', action: null };
+				return result;
 			}
-		);
-		return result.ok ? attributeReadyRoute(operation, 'reset') : result;
+
+			acceptRoute(result, { refined: false });
+			return attributeReadyRoute(operation, 'reset');
+		}, supersededFailure);
 	},
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {
