@@ -24,6 +24,7 @@ afterEach(() => {
 
 describe('requestOptimizedRoute', () => {
 	it('requests Matrix, optimizes in the browser, then sends ordered vias to Route', async () => {
+		const controller = new AbortController();
 		const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 			if (String(input) === '/api/matrix') {
 				const { coordinates } = JSON.parse(String(init?.body)) as { coordinates: Position[] };
@@ -45,26 +46,30 @@ describe('requestOptimizedRoute', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 
-		const result = await requestOptimizedRoute([
-			{
-				closed: false,
-				vias: [
-					[10, 0],
-					[11, 0]
-				]
-			},
-			{
-				closed: false,
-				vias: [
-					[0, 0],
-					[1, 0]
-				]
-			}
-		]);
+		const result = await requestOptimizedRoute(
+			[
+				{
+					closed: false,
+					vias: [
+						[10, 0],
+						[11, 0]
+					]
+				},
+				{
+					closed: false,
+					vias: [
+						[0, 0],
+						[1, 0]
+					]
+				}
+			],
+			{ signal: controller.signal }
+		);
 
 		expect(result.ok).toBe(true);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/matrix', '/api/route']);
+		expect(fetchMock.mock.calls.every(([, init]) => init?.signal === controller.signal)).toBe(true);
 		const routeBody = JSON.parse(String(fetchMock.mock.calls[1]![1]?.body));
 		expect(routeBody).toEqual({
 			vias: [

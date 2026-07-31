@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { parseMatrixRequest } from '$lib/routing/optimization/matrix.server';
+import { parseMatrixRequest } from '$lib/routing/shape-optimization/matrix.server';
 import { resolveValhallaConfig } from '$lib/routing/providers/valhalla/config.server';
 import { fetchValhallaDistanceMatrix } from '$lib/routing/providers/valhalla/matrix.server';
 import type { RouteFailure } from '$lib/routing/shared/failure';

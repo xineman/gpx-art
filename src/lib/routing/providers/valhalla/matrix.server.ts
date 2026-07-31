@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import type { MatrixResponse } from '../../optimization/types';
+import type { MatrixResponse } from '../../shape-optimization/types';
 import type { ValhallaConfig } from './types.server';
 
 type ValhallaMatrixResponse = {

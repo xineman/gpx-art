@@ -70,7 +70,7 @@ src/
       tap.ts              # double-tap / re-tap-last helpers (pure)
     routing/              # feature-oriented route pipeline
       preparation/        # features → guide paths → bounded trace vias
-      optimization/       # shape traversal candidates, matrix API, route ordering
+      shape-optimization/ # shape traversal candidates, matrix API, route ordering
       matching/           # route contracts, client, request validation/orchestration
       attribution/        # road-edge/span contracts, client, geometry validation
       refinement/         # detour analysis + waypoint refinement plans

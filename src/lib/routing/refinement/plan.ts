@@ -1,12 +1,12 @@
 import type { LineString, Position } from 'geojson';
-import type { RouteDetour, WaypointDetourAnalysis } from './detours';
+import type { WaypointDetourAnalysis } from './detours';
+import { normalizeWaypointSelections } from './detour-coverage';
+import type { WaypointActionSelection } from './types';
 import type { RouteRequest, RouteVia } from '../matching/types';
-
-export type WaypointRefinementAction = 'keep' | 'move' | 'remove';
 
 export type RefinementPlan = {
 	request: RouteRequest;
-	preservedOverrides: Record<number, WaypointRefinementAction>;
+	nextSelections: WaypointActionSelection[];
 };
 
 export type DetourScore = {
@@ -16,19 +16,6 @@ export type DetourScore = {
 };
 
 const MAX_AUTOMATIC_DISTANCE_INCREASE_RATIO = 1.1;
-
-export function defaultWaypointRefinementAction(
-	candidate: RouteDetour | null
-): WaypointRefinementAction {
-	return candidate ? 'move' : 'keep';
-}
-
-export function getWaypointRefinementAction(
-	candidate: RouteDetour | null,
-	override: WaypointRefinementAction | undefined
-): WaypointRefinementAction {
-	return override ?? defaultWaypointRefinementAction(candidate);
-}
 
 function samePosition(a: Position, b: Position): boolean {
 	return a[0] === b[0] && a[1] === b[1];
@@ -46,23 +33,29 @@ function bearingAtRouteIndex(points: Position[], index: number): number | undefi
 }
 
 /**
- * Build the request and remap explicit keep choices in one pass so waypoint
+ * Build the request and remap explicit keep selections in one pass so waypoint
  * counts, deduplication, and the actual map-matching payload cannot drift apart.
  */
 export function buildRefinementPlan(
 	geometry: LineString | null,
 	waypoints: Position[],
-	analysis: WaypointDetourAnalysis[],
-	overrides: Record<number, WaypointRefinementAction>
+	analysisWithSelections: WaypointDetourAnalysis[],
+	selections: WaypointActionSelection[] = []
 ): RefinementPlan {
 	const routePoints = geometry?.coordinates ?? [];
 	const vias: RouteVia[] = [];
-	const preservedOverrides: Record<number, WaypointRefinementAction> = {};
+	const nextSelections: WaypointActionSelection[] = [];
+	const explicitlyKeptWaypointIndexes = new Set(
+		normalizeWaypointSelections(analysisWithSelections, selections).flatMap(
+			({ waypointIndex, action }) => (action === 'keep' ? [waypointIndex] : [])
+		)
+	);
 
 	for (let index = 0; index < waypoints.length; index++) {
 		const waypoint = waypoints[index]!;
-		const candidate = analysis[index]?.candidate ?? null;
-		const action = getWaypointRefinementAction(candidate, overrides[index]);
+		const waypointAnalysis = analysisWithSelections[index]!;
+		const candidate = waypointAnalysis.candidate;
+		const action = waypointAnalysis.action;
 		if (action === 'remove') continue;
 
 		let via: RouteVia = { location: waypoint };
@@ -78,20 +71,19 @@ export function buildRefinementPlan(
 			}
 		}
 
-		const previousIndex = vias.length - 1;
-		const previous = vias[previousIndex];
-		if (previous && samePosition(previous.location, via.location)) {
-			if (overrides[index] === 'keep') preservedOverrides[previousIndex] = 'keep';
-			continue;
+		const previous = vias[vias.length - 1];
+		if (!previous || !samePosition(previous.location, via.location)) {
+			vias.push(via);
 		}
 
-		if (overrides[index] === 'keep') preservedOverrides[vias.length] = 'keep';
-		vias.push(via);
+		if (explicitlyKeptWaypointIndexes.has(waypointAnalysis.waypointIndex)) {
+			nextSelections.push({ waypointIndex: vias.length - 1, action: 'keep' });
+		}
 	}
 
 	return {
 		request: { vias },
-		preservedOverrides
+		nextSelections
 	};
 }
 

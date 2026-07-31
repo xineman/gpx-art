@@ -1,9 +1,17 @@
-import { parseApiFailure, postJson } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
 import type { RouteRequest, RouteResponse } from './types';
 
 /** Request one ordered Valhalla map-matching trace. */
-export async function requestRoute(request: RouteRequest): Promise<RouteResponse> {
-	const parsed = await postJson('/api/route', request, 'Network error — couldn’t start routing.');
+export async function requestRoute(
+	request: RouteRequest,
+	options: RoutingRequestOptions = {}
+): Promise<RouteResponse> {
+	const parsed = await postJson(
+		'/api/route',
+		request,
+		'Network error — couldn’t start routing.',
+		options
+	);
 	const failure = parseApiFailure(parsed);
 	if (failure) return failure;
 	if (

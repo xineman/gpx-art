@@ -11,6 +11,7 @@
 	import { routingOptions } from '$lib/state/routing-options.svelte';
 	import { status } from '$lib/state/status.svelte';
 	import { tools } from '$lib/state/tools.svelte';
+	import { isSupersededFailure, type RouteFailure } from '$lib/routing/shared/failure';
 	import { dismissibleLayer } from '$lib/util/dismissible-layer';
 	import { pointer } from '$lib/util/pointer.svelte';
 	import { routeActionModel } from './route-action';
@@ -42,12 +43,12 @@
 		return `${prefix} · ${route.distanceLabel}.`;
 	}
 
-	function handleFailure(error: string) {
-		if (error === 'Superseded.') {
+	function handleFailure(failure: RouteFailure) {
+		if (isSupersededFailure(failure)) {
 			status.clearFlash();
 			return;
 		}
-		status.flash(error);
+		status.flash(failure.error);
 	}
 
 	async function onPrimary() {
@@ -63,7 +64,7 @@
 						autoRefine: routingOptions.autoRefineOnGenerate
 					});
 		if (!result.ok) {
-			handleFailure(result.error);
+			handleFailure(result);
 			return;
 		}
 
@@ -94,7 +95,7 @@
 		status.flash('Restoring sketch route…', 60_000);
 		const result = await route.resetFromSketch(drawings.features, drawings.revision);
 		if (!result.ok) {
-			handleFailure(result.error);
+			handleFailure(result);
 			return;
 		}
 

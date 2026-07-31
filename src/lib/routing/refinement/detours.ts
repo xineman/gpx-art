@@ -1,5 +1,7 @@
 import type { LineString, Position } from 'geojson';
 import { distanceBetween } from '$lib/geometry/distance';
+import { applyCandidateCoverage } from './detour-coverage';
+import type { WaypointRefinementAction } from './types';
 
 export type DetourDetectionOptions = {
 	/** Minimum routed distance from the waypoint to either side of the excursion. */
@@ -20,7 +22,23 @@ export type RouteDetour = {
 export type WaypointDetourAnalysis = {
 	waypointIndex: number;
 	candidate: RouteDetour | null;
+	coveredByWaypointIndexes: number[];
+	action: WaypointRefinementAction;
 };
+
+export function getWaypointDetourAnalysis(
+	analysis: WaypointDetourAnalysis[],
+	index: number
+): WaypointDetourAnalysis {
+	return (
+		analysis[index] ?? {
+			waypointIndex: index,
+			candidate: null,
+			coveredByWaypointIndexes: [],
+			action: 'keep'
+		}
+	);
+}
 
 const MIN_MEANINGFUL_EXCESS_DISTANCE_M = 10;
 const MIN_MEANINGFUL_STRETCH = 1.05;
@@ -222,70 +240,33 @@ export function analyzeRouteDetours(
 	const cumulative = cumulativeDistances(points);
 	const waypointRouteIndexes = locateWaypoints(points, waypoints);
 
-	return waypoints.map((_, waypointIndex) => {
+	const analysis = waypoints.map((_, waypointIndex): WaypointDetourAnalysis => {
+		let candidate: RouteDetour | null;
 		if (waypointIndex === 0 || waypointIndex === waypoints.length - 1) {
-			return {
-				waypointIndex,
-				candidate: analyzeEndpointWaypoint(
-					points,
-					cumulative,
-					waypointRouteIndexes,
-					waypointIndex,
-					options
-				)
-			};
-		}
-
-		return {
-			waypointIndex,
-			candidate: analyzeIntermediateWaypoint(
+			candidate = analyzeEndpointWaypoint(
 				points,
 				cumulative,
 				waypointRouteIndexes,
 				waypointIndex,
 				options
-			)
-		};
-	});
-}
-
-function mergeIntervals(
-	points: Position[],
-	cumulative: number[],
-	intervals: DetourInterval[]
-): DetourInterval[] {
-	const sorted = [...intervals].sort(
-		(a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex
-	);
-	const merged: DetourInterval[] = [];
-
-	for (const interval of sorted) {
-		const previous = merged.at(-1);
-		if (!previous || interval.startIndex > previous.endIndex) {
-			merged.push({ ...interval });
-			continue;
+			);
+		} else {
+			candidate = analyzeIntermediateWaypoint(
+				points,
+				cumulative,
+				waypointRouteIndexes,
+				waypointIndex,
+				options
+			);
 		}
 
-		previous.endIndex = Math.max(previous.endIndex, interval.endIndex);
-		previous.routeDistanceM = cumulative[previous.endIndex]! - cumulative[previous.startIndex]!;
-		previous.returnDistanceM = distanceBetween(
-			points[previous.startIndex]!,
-			points[previous.endIndex]!
-		);
-		previous.excessDistanceM = previous.routeDistanceM - previous.returnDistanceM;
-	}
+		return {
+			waypointIndex,
+			candidate,
+			coveredByWaypointIndexes: [],
+			action: candidate ? 'move' : 'keep'
+		};
+	});
 
-	return merged;
-}
-
-export function mergeRouteDetourCandidates(
-	route: LineString,
-	candidates: RouteDetour[]
-): RouteDetour[] {
-	const points = route.coordinates;
-	if (points.length < 2 || candidates.length === 0) return [];
-	const cumulative = cumulativeDistances(points);
-	return mergeIntervals(points, cumulative, candidates).map((interval) =>
-		withGeometry(points, interval)
-	);
+	return applyCandidateCoverage(analysis, waypointRouteIndexes);
 }

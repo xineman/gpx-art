@@ -260,7 +260,7 @@ function heuristicPath(
 	return best;
 }
 
-export function optimizeShapeOrder(
+export function optimizeShapeTraversal(
 	problem: ShapeOptimizationProblem,
 	matrix: (number | null)[][]
 ): ShapeOptimizationResult {
