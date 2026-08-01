@@ -4,6 +4,7 @@ import type { WaypointDetourAnalysis } from './detours';
 import { applySelectionsToWaypointAnalysis } from './detour-coverage';
 import {
 	buildRefinementPlan,
+	buildWaypointMoveProposals,
 	improvesDetourScore,
 	routeRequestHash,
 	scoreRouteDetours
@@ -51,6 +52,43 @@ const analysis: WaypointDetourAnalysis[] = [
 ];
 
 describe('buildRefinementPlan', () => {
+	it('projects the exact intermediate and endpoint move targets used by refinement', () => {
+		const endpointCandidate = {
+			geometry: {
+				type: 'LineString' as const,
+				coordinates: geometry.coordinates.slice(0, 3)
+			},
+			startIndex: 0,
+			endIndex: 2,
+			routeDistanceM: 250,
+			returnDistanceM: 100,
+			excessDistanceM: 150
+		};
+		const proposals = buildWaypointMoveProposals(
+			geometry,
+			[
+				[21, 52],
+				[21.002, 52],
+				[21.003, 52]
+			],
+			[
+				{
+					waypointIndex: 0,
+					candidate: endpointCandidate,
+					coveredByWaypointIndexes: [],
+					action: 'move'
+				},
+				analysis[1]!,
+				analysis[2]!
+			]
+		);
+
+		expect(proposals.map(({ waypointIndex, from, to }) => ({ waypointIndex, from, to }))).toEqual([
+			{ waypointIndex: 0, from: [21, 52], to: [21.002, 52] },
+			{ waypointIndex: 1, from: [21.002, 52], to: [21.001, 52] }
+		]);
+	});
+
 	it('moves detour candidates with road-snapping constraints and removes selected vias', () => {
 		const result = buildRefinementPlan(
 			geometry,

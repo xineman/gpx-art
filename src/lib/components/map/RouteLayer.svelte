@@ -6,6 +6,7 @@
 	import { route } from '$lib/state/route.svelte';
 	import { status } from '$lib/state/status.svelte';
 	import { tools } from '$lib/state/tools.svelte';
+	import { pointer } from '$lib/util/pointer.svelte';
 	import { routeWaypointAtPoint } from '$lib/map/waypoint-hit';
 	import { ROUTE_SOURCE, ensureRouteLayers, setSourceData } from '$lib/drawing/layers';
 
@@ -13,20 +14,36 @@
 
 	let boundMap: MaplibreMap | null = null;
 	let loadHandler: (() => void) | null = null;
-	let hoveringWaypoint = $state(false);
+	let hoveringWaypointIndex = $state<number | null>(null);
 
 	function restoreToolCursor(map: MaplibreMap) {
 		map.getCanvas().style.cursor = tools.isPanning ? 'grab' : 'crosshair';
 	}
 
+	function clearWaypointHover(map: MaplibreMap | null) {
+		if (hoveringWaypointIndex === null) return;
+		hoveringWaypointIndex = null;
+		route.clearMoveWaypointFocus();
+		if (map) restoreToolCursor(map);
+	}
+
 	function onMapMouseMove(event: MapMouseEvent) {
 		const map = boundMap;
-		if (!map) return;
-		const nextHover = route.isReady && routeWaypointAtPoint(map, event.point) != null;
-		if (nextHover === hoveringWaypoint) return;
-		hoveringWaypoint = nextHover;
-		if (nextHover) map.getCanvas().style.cursor = 'pointer';
-		else restoreToolCursor(map);
+		if (!map || !pointer.fineHover) return;
+		const nextIndex = route.isReady ? routeWaypointAtPoint(map, event.point) : null;
+		if (nextIndex === hoveringWaypointIndex) return;
+		if (nextIndex === null) {
+			clearWaypointHover(map);
+			return;
+		}
+		hoveringWaypointIndex = nextIndex;
+		route.inspectMoveWaypoint(nextIndex);
+		map.getCanvas().style.cursor = 'pointer';
+	}
+
+	function onMapMouseLeave() {
+		if (!pointer.fineHover) return;
+		clearWaypointHover(boundMap);
 	}
 
 	function onMapClick(event: MapMouseEvent) {
@@ -39,7 +56,7 @@
 		if (result) {
 			const message =
 				result === 'move'
-					? 'Move waypoint selected'
+					? 'Move waypoint selected · proposed position shown'
 					: result === 'remove'
 						? 'Remove waypoint selected'
 						: 'Waypoint kept';
@@ -54,10 +71,11 @@
 		if (boundMap) {
 			if (loadHandler) boundMap.off('load', loadHandler);
 			boundMap.off('mousemove', onMapMouseMove);
+			boundMap.off('mouseleave', onMapMouseLeave);
 			boundMap.off('click', onMapClick);
-			if (hoveringWaypoint) restoreToolCursor(boundMap);
+			clearWaypointHover(boundMap);
 		}
-		hoveringWaypoint = false;
+		hoveringWaypointIndex = null;
 		loadHandler = null;
 		boundMap = null;
 	}
@@ -67,6 +85,7 @@
 		teardown();
 		boundMap = map;
 		map.on('mousemove', onMapMouseMove);
+		map.on('mouseleave', onMapMouseLeave);
 		map.on('click', onMapClick);
 
 		const setup = () => {
@@ -103,9 +122,8 @@
 	$effect(() => {
 		const ready = route.isReady;
 		const map = boundMap;
-		if (!ready && map && hoveringWaypoint) {
-			hoveringWaypoint = false;
-			restoreToolCursor(map);
+		if (!ready && map && hoveringWaypointIndex != null) {
+			clearWaypointHover(map);
 		}
 	});
 

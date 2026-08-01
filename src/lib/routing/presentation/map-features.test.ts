@@ -34,7 +34,15 @@ describe('route map features', () => {
 				{ coordinates: [21.002, 52], candidate: true, action: 'move' },
 				{ coordinates: [21.003, 52], candidate: false, action: 'remove' }
 			],
-			detours: [detour],
+			moveProposals: [
+				{
+					waypointIndex: 1,
+					from: [21.002, 52],
+					to: [21.001, 52],
+					detour
+				}
+			],
+			highlightedMoveWaypointIndex: 1,
 			activeRoadSpan: null,
 			interactive: true
 		});
@@ -42,6 +50,8 @@ describe('route map features', () => {
 		expect(collection.features.map((feature) => feature.properties?.kind)).toEqual([
 			'route',
 			'detour',
+			'move-link',
+			'move-target',
 			'waypoint',
 			'waypoint',
 			'waypoint'
@@ -57,6 +67,7 @@ describe('route map features', () => {
 				role: 'start',
 				candidate: false,
 				action: 'keep',
+				activeMove: false,
 				interactive: true
 			},
 			{
@@ -65,6 +76,7 @@ describe('route map features', () => {
 				role: 'via',
 				candidate: true,
 				action: 'move',
+				activeMove: true,
 				interactive: true
 			},
 			{
@@ -73,16 +85,31 @@ describe('route map features', () => {
 				role: 'end',
 				candidate: false,
 				action: 'remove',
+				activeMove: false,
 				interactive: true
 			}
 		]);
+		expect(collection.features.find((feature) => feature.properties?.kind === 'move-link')).toEqual(
+			{
+				type: 'Feature',
+				properties: { kind: 'move-link', waypointIndex: 1, activeMove: true },
+				geometry: {
+					type: 'LineString',
+					coordinates: [
+						[21.002, 52],
+						[21.001, 52]
+					]
+				}
+			}
+		);
 	});
 
 	it('slices a valid active road span and ignores an invalid one', () => {
 		const input = {
 			routeGeometry,
 			waypoints: [],
-			detours: [],
+			moveProposals: [],
+			highlightedMoveWaypointIndex: null,
 			interactive: false
 		};
 		const highlighted = buildRouteMapFeatures({

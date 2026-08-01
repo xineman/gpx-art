@@ -16,12 +16,16 @@ const ROUTE_ROAD_HIGHLIGHT_CASING = 'gpx-route-road-highlight-casing';
 const ROUTE_ROAD_HIGHLIGHT = 'gpx-route-road-highlight';
 const ROUTE_DETOURS = 'gpx-route-detours';
 const ROUTE_CHEVRONS = 'gpx-route-chevrons';
+const ROUTE_MOVE_LINK = 'gpx-route-move-link';
+const ROUTE_MOVE_TARGET = 'gpx-route-move-target';
+const ROUTE_MOVE_TARGET_ICON = 'gpx-route-move-target-icon';
 export const ROUTE_WAYPOINTS = 'gpx-route-waypoints';
 const ROUTE_WAYPOINT_ACTIONS = 'gpx-route-waypoint-actions';
 /** Sprite id registered via `map.addImage` for line-following direction marks. */
 const ROUTE_CHEVRON_IMAGE = 'gpx-route-chevron';
 const ROUTE_MOVE_WAYPOINT_IMAGE = 'gpx-route-waypoint-move';
 const ROUTE_REMOVE_WAYPOINT_IMAGE = 'gpx-route-waypoint-remove';
+const ROUTE_MOVE_TARGET_IMAGE = 'gpx-route-move-target-reticle';
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -144,6 +148,61 @@ function ensureRouteWaypointActionImages(map: MaplibreMap) {
 	addActionImage(ROUTE_REMOVE_WAYPOINT_IMAGE, 'remove');
 }
 
+/** Survey reticle marking the exact destination of a proposed waypoint move. */
+function ensureRouteMoveTargetImage(map: MaplibreMap) {
+	if (map.hasImage(ROUTE_MOVE_TARGET_IMAGE)) return;
+
+	const size = 32;
+	const canvas = document.createElement('canvas');
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext('2d');
+	if (!ctx) return;
+
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
+	const drawTicks = () => {
+		ctx.beginPath();
+		ctx.moveTo(7, 16);
+		ctx.lineTo(12, 16);
+		ctx.moveTo(20, 16);
+		ctx.lineTo(25, 16);
+		ctx.moveTo(16, 7);
+		ctx.lineTo(16, 12);
+		ctx.moveTo(16, 20);
+		ctx.lineTo(16, 25);
+		ctx.stroke();
+	};
+
+	// A light under-stroke keeps the fine reticle legible over streets and labels.
+	ctx.strokeStyle = themeColor('trail-vertex');
+	ctx.lineWidth = 5;
+	drawTicks();
+	ctx.fillStyle = themeColor('trail-vertex');
+	ctx.beginPath();
+	ctx.arc(16, 16, 4, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.strokeStyle = themeColor('ember');
+	ctx.lineWidth = 2.5;
+	drawTicks();
+	ctx.fillStyle = themeColor('ember');
+	ctx.beginPath();
+	ctx.arc(16, 16, 2, 0, Math.PI * 2);
+	ctx.fill();
+
+	const imageData = ctx.getImageData(0, 0, size, size);
+	map.addImage(
+		ROUTE_MOVE_TARGET_IMAGE,
+		{
+			width: size,
+			height: size,
+			data: new Uint8Array(imageData.data)
+		},
+		{ pixelRatio: 2 }
+	);
+}
+
 export function ensureDrawingLayers(map: MaplibreMap) {
 	const stroke = themeColor('trail-deep');
 	const fill = themeColor('trail');
@@ -241,11 +300,15 @@ export function ensureRouteLayers(map: MaplibreMap) {
 	const route = themeColor('blaze');
 	const routeDeep = themeColor('ink-dark');
 	const detour = themeColor('ember');
+	const vertex = themeColor('trail-vertex');
 	const roadNational = themeColor('road-national');
 	const roadVoivodeship = themeColor('road-voivodeship');
 	const roadCounty = themeColor('road-county');
 	const roadMunicipal = themeColor('road-municipal');
 	const roadOther = themeColor('road-other');
+	const transitionDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+		? 0
+		: 180;
 
 	if (!map.getSource(ROUTE_SOURCE)) {
 		map.addSource(ROUTE_SOURCE, { type: 'geojson', data: empty });
@@ -253,6 +316,7 @@ export function ensureRouteLayers(map: MaplibreMap) {
 
 	ensureRouteChevronImage(map);
 	ensureRouteWaypointActionImages(map);
+	ensureRouteMoveTargetImage(map);
 
 	if (!map.getLayer(ROUTE_LINE_CASING)) {
 		map.addLayer({
@@ -345,8 +409,9 @@ export function ensureRouteLayers(map: MaplibreMap) {
 			},
 			paint: {
 				'line-color': detour,
-				'line-width': 4.5,
-				'line-opacity': 0.98
+				'line-width': ['case', ['==', ['get', 'activeMove'], true], 4.5, 3],
+				'line-opacity': ['case', ['==', ['get', 'activeMove'], true], 0.98, 0.3],
+				'line-opacity-transition': { duration: transitionDuration }
 			}
 		});
 	}
@@ -377,9 +442,50 @@ export function ensureRouteLayers(map: MaplibreMap) {
 		});
 	}
 
+	// One survey line at a time ties the current waypoint to its proposed position.
+	if (!map.getLayer(ROUTE_MOVE_LINK)) {
+		map.addLayer({
+			id: ROUTE_MOVE_LINK,
+			type: 'line',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'move-link'],
+			layout: {
+				'line-cap': 'round',
+				'line-join': 'round'
+			},
+			paint: {
+				'line-color': detour,
+				'line-width': 2,
+				'line-dasharray': [1.4, 1.8],
+				'line-opacity': ['case', ['==', ['get', 'activeMove'], true], 0.9, 0],
+				'line-opacity-transition': { duration: transitionDuration }
+			}
+		});
+	}
+
+	// Hollow registration rings keep every proposed position visible without adding more paths.
+	if (!map.getLayer(ROUTE_MOVE_TARGET)) {
+		map.addLayer({
+			id: ROUTE_MOVE_TARGET,
+			type: 'circle',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'move-target'],
+			paint: {
+				'circle-radius': ['case', ['==', ['get', 'activeMove'], true], 8, 5.5],
+				'circle-color': vertex,
+				'circle-opacity': ['case', ['==', ['get', 'activeMove'], true], 0.88, 0.2],
+				'circle-stroke-color': detour,
+				'circle-stroke-width': ['case', ['==', ['get', 'activeMove'], true], 3, 1.75],
+				'circle-stroke-opacity': ['case', ['==', ['get', 'activeMove'], true], 1, 0.55],
+				'circle-radius-transition': { duration: transitionDuration },
+				'circle-opacity-transition': { duration: transitionDuration },
+				'circle-stroke-opacity-transition': { duration: transitionDuration }
+			}
+		});
+	}
+
 	// Client-prepared trace points — above line/chevrons so direction anchors stay readable.
 	if (!map.getLayer(ROUTE_WAYPOINTS)) {
-		const vertex = themeColor('trail-vertex');
 		map.addLayer({
 			id: ROUTE_WAYPOINTS,
 			type: 'circle',
@@ -408,12 +514,16 @@ export function ensureRouteLayers(map: MaplibreMap) {
 				],
 				'circle-stroke-color': [
 					'case',
+					['all', ['==', ['get', 'action'], 'move'], ['==', ['get', 'activeMove'], true]],
+					vertex,
 					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
 					route,
 					routeDeep
 				],
 				'circle-stroke-width': [
 					'case',
+					['all', ['==', ['get', 'action'], 'move'], ['==', ['get', 'activeMove'], true]],
+					2.75,
 					['all', ['==', ['get', 'candidate'], true], ['==', ['get', 'action'], 'keep']],
 					2.5,
 					['match', ['get', 'role'], 'start', 2.25, 'end', 2.25, /* via */ 1.75]
@@ -449,6 +559,30 @@ export function ensureRouteLayers(map: MaplibreMap) {
 				'icon-opacity': 0.95
 			}
 		});
+	}
+
+	// Render destinations last so nearby waypoint/action markers cannot obscure the reticle.
+	if (!map.getLayer(ROUTE_MOVE_TARGET_ICON)) {
+		map.addLayer({
+			id: ROUTE_MOVE_TARGET_ICON,
+			type: 'symbol',
+			source: ROUTE_SOURCE,
+			filter: ['==', ['get', 'kind'], 'move-target'],
+			layout: {
+				'icon-image': ROUTE_MOVE_TARGET_IMAGE,
+				'icon-size': ['case', ['==', ['get', 'activeMove'], true], 1.25, 0.82],
+				'icon-allow-overlap': true,
+				'icon-ignore-placement': true,
+				'icon-rotation-alignment': 'viewport',
+				'icon-pitch-alignment': 'viewport'
+			},
+			paint: {
+				'icon-opacity': ['case', ['==', ['get', 'activeMove'], true], 1, 0.62],
+				'icon-opacity-transition': { duration: transitionDuration }
+			}
+		});
+	} else {
+		map.moveLayer(ROUTE_MOVE_TARGET_ICON);
 	}
 }
 

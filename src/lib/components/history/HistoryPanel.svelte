@@ -4,26 +4,30 @@
 	import DownloadGpxButton from './DownloadGpxButton.svelte';
 	import DrawingIOMenu from './DrawingIOMenu.svelte';
 	import HistoryButtons from './HistoryButtons.svelte';
+	import MoveReviewControls from './MoveReviewControls.svelte';
 	import RouteButton from './RouteButton.svelte';
 </script>
 
-<PanelChrome label="Drawing actions">
-	<HistoryButtons />
+<div class="relative inline-flex">
+	<MoveReviewControls />
+	<PanelChrome label="Drawing actions">
+		<HistoryButtons />
 
-	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+		<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
-	<DrawingIOMenu />
+		<DrawingIOMenu />
 
-	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+		<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
-	<ClearSketchButton />
+		<ClearSketchButton />
 
-	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+		<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
-	<DownloadGpxButton />
+		<DownloadGpxButton />
 
-	<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
+		<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
-	<!-- Adaptive next step: sketch → route → iterative refinement. -->
-	<RouteButton />
-</PanelChrome>
+		<!-- Adaptive next step: sketch → route → iterative refinement. -->
+		<RouteButton />
+	</PanelChrome>
+</div>

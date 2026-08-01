@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import type { RouteRoadSpan } from '../attribution/types';
-import type { RouteDetour } from '../refinement/detours';
+import type { WaypointMoveProposal } from '../refinement/plan';
 import type { WaypointRefinementAction } from '../refinement/types';
 
 type WaypointRole = 'start' | 'via' | 'end';
@@ -14,7 +14,8 @@ export type RouteMapWaypoint = {
 export type RouteMapData = {
 	routeGeometry: LineString | null;
 	waypoints: RouteMapWaypoint[];
-	detours: RouteDetour[];
+	moveProposals: WaypointMoveProposal[];
+	highlightedMoveWaypointIndex: number | null;
 	activeRoadSpan: Pick<RouteRoadSpan, 'roadKind' | 'startShapeIndex' | 'endShapeIndex'> | null;
 	interactive: boolean;
 };
@@ -25,7 +26,11 @@ function waypointRole(index: number, total: number): WaypointRole {
 	return 'via';
 }
 
-function waypointFeatures(waypoints: RouteMapWaypoint[], interactive: boolean): Feature[] {
+function waypointFeatures(
+	waypoints: RouteMapWaypoint[],
+	interactive: boolean,
+	highlightedMoveWaypointIndex: number | null
+): Feature[] {
 	const total = waypoints.length;
 	return waypoints.map(({ coordinates, candidate, action }, index) => ({
 		type: 'Feature' as const,
@@ -35,6 +40,7 @@ function waypointFeatures(waypoints: RouteMapWaypoint[], interactive: boolean): 
 			role: waypointRole(index, total),
 			candidate,
 			action,
+			activeMove: index === highlightedMoveWaypointIndex,
 			interactive
 		},
 		geometry: { type: 'Point' as const, coordinates }
@@ -44,7 +50,8 @@ function waypointFeatures(waypoints: RouteMapWaypoint[], interactive: boolean): 
 export function buildRouteMapFeatures({
 	routeGeometry,
 	waypoints,
-	detours,
+	moveProposals,
+	highlightedMoveWaypointIndex,
 	activeRoadSpan,
 	interactive
 }: RouteMapData): FeatureCollection {
@@ -77,12 +84,14 @@ export function buildRouteMapFeatures({
 		});
 	}
 
-	for (const detour of detours) {
+	for (const { waypointIndex, detour } of moveProposals) {
 		features.push({
 			type: 'Feature',
 			properties: {
 				kind: 'detour',
 				action: 'move',
+				waypointIndex,
+				activeMove: waypointIndex === highlightedMoveWaypointIndex,
 				routeDistanceM: detour.routeDistanceM,
 				returnDistanceM: detour.returnDistanceM,
 				excessDistanceM: detour.excessDistanceM
@@ -91,6 +100,20 @@ export function buildRouteMapFeatures({
 		});
 	}
 
-	features.push(...waypointFeatures(waypoints, interactive));
+	for (const { waypointIndex, from, to } of moveProposals) {
+		const activeMove = waypointIndex === highlightedMoveWaypointIndex;
+		features.push({
+			type: 'Feature',
+			properties: { kind: 'move-link', waypointIndex, activeMove },
+			geometry: { type: 'LineString', coordinates: [from, to] }
+		});
+		features.push({
+			type: 'Feature',
+			properties: { kind: 'move-target', waypointIndex, activeMove },
+			geometry: { type: 'Point', coordinates: to }
+		});
+	}
+
+	features.push(...waypointFeatures(waypoints, interactive, highlightedMoveWaypointIndex));
 	return { type: 'FeatureCollection', features };
 }

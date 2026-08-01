@@ -59,7 +59,7 @@
 		  flyouts clear into the map; tools stay in the thumb zone).
 		-->
 		<div
-			class="pointer-events-none absolute inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-2 hidden flex-col items-center gap-2 px-3 max-[620px]:flex"
+			class="pointer-events-none absolute inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-3 hidden flex-col items-center gap-2 px-3 max-[620px]:flex"
 		>
 			<div class="pointer-events-auto">
 				<HistoryPanel />
@@ -71,7 +71,7 @@
 
 		<!-- Desktop: bottom-left drawing actions. -->
 		<div
-			class="pointer-events-none absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(1.125rem,env(safe-area-inset-left))] z-2 max-[620px]:hidden"
+			class="pointer-events-none absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(1.125rem,env(safe-area-inset-left))] z-3 max-[620px]:hidden"
 		>
 			<div class="pointer-events-auto">
 				<HistoryPanel />

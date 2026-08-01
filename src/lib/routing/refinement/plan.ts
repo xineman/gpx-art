@@ -1,5 +1,5 @@
 import type { LineString, Position } from 'geojson';
-import type { WaypointDetourAnalysis } from './detours';
+import type { RouteDetour, WaypointDetourAnalysis } from './detours';
 import { normalizeWaypointSelections } from './detour-coverage';
 import type { WaypointActionSelection } from './types';
 import type { RouteRequest, RouteVia } from '../matching/types';
@@ -7,6 +7,13 @@ import type { RouteRequest, RouteVia } from '../matching/types';
 export type RefinementPlan = {
 	request: RouteRequest;
 	nextSelections: WaypointActionSelection[];
+};
+
+export type WaypointMoveProposal = {
+	waypointIndex: number;
+	from: Position;
+	to: Position;
+	detour: RouteDetour;
 };
 
 export type DetourScore = {
@@ -30,6 +37,37 @@ function bearingAtRouteIndex(points: Position[], index: number): number | undefi
 		after[1] - before[1]
 	);
 	return Math.round(((radians * 180) / Math.PI + 360) % 360);
+}
+
+function moveTarget(
+	routePoints: Position[],
+	waypoint: Position,
+	waypointIndex: number,
+	candidate: RouteDetour
+): { location: Position; routeIndex: number } {
+	const routeIndex = waypointIndex === 0 ? candidate.endIndex : candidate.startIndex;
+	return { location: routePoints[routeIndex] ?? waypoint, routeIndex };
+}
+
+/** Project the exact move locations used by the refinement request for map presentation. */
+export function buildWaypointMoveProposals(
+	geometry: LineString | null,
+	waypoints: Position[],
+	analysisWithSelections: WaypointDetourAnalysis[]
+): WaypointMoveProposal[] {
+	const routePoints = geometry?.coordinates ?? [];
+	return analysisWithSelections.flatMap(({ waypointIndex, candidate, action }) => {
+		const from = waypoints[waypointIndex];
+		if (action !== 'move' || !candidate || !from) return [];
+		return [
+			{
+				waypointIndex,
+				from,
+				to: moveTarget(routePoints, from, waypointIndex, candidate).location,
+				detour: candidate
+			}
+		];
+	});
 }
 
 /**
@@ -61,10 +99,11 @@ export function buildRefinementPlan(
 		let via: RouteVia = { location: waypoint };
 		if (action === 'move') {
 			if (candidate) {
-				const routeIndex = index === 0 ? candidate.endIndex : candidate.startIndex;
+				const target = moveTarget(routePoints, waypoint, index, candidate);
+				const routeIndex = target.routeIndex;
 				const bearing = bearingAtRouteIndex(routePoints, routeIndex);
 				via = {
-					location: routePoints[routeIndex] ?? waypoint,
+					location: target.location,
 					radiusM: 20,
 					...(bearing == null ? {} : { bearing, bearingRange: 45 })
 				};

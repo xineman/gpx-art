@@ -65,12 +65,27 @@ const refinement = createRouteRefinementState({
 	getWaypoints: () => waypoints
 });
 
+let lastFocusedMoveWaypointIndex = $state<number | null>(null);
+const moveWaypointIndexes: number[] = $derived(
+	refinement.moveProposals.map(({ waypointIndex }) => waypointIndex)
+);
+const highlightedMoveWaypointIndex: number | null = $derived.by(() => {
+	if (
+		lastFocusedMoveWaypointIndex === null ||
+		!moveWaypointIndexes.includes(lastFocusedMoveWaypointIndex)
+	) {
+		return null;
+	}
+	return lastFocusedMoveWaypointIndex;
+});
+
 const canRefineRoute = $derived(isReady && refinement.canRefineCurrentResult);
 
 function clearRouteData() {
 	acceptedRoute = null;
 	attribution = null;
 	refinement.reset();
+	lastFocusedMoveWaypointIndex = null;
 	activeRoadSpanIndex = null;
 }
 
@@ -90,6 +105,7 @@ function acceptRoute(
 	acceptedRoute = { ...result, refined: options.refined };
 	attribution = null;
 	refinement.replaceSelections(options.selections ?? []);
+	lastFocusedMoveWaypointIndex = null;
 	activeRoadSpanIndex = null;
 	phase = { status: 'ready', action: null };
 }
@@ -146,7 +162,8 @@ const collection: FeatureCollection = $derived.by(() =>
 			candidate: refinement.hasCandidate(index),
 			action: refinement.action(index)
 		})),
-		detours: refinement.detours,
+		moveProposals: refinement.moveProposals,
+		highlightedMoveWaypointIndex,
 		activeRoadSpan,
 		interactive: isReady
 	})
@@ -171,6 +188,12 @@ export const route = {
 	get moveWaypointCount() {
 		return refinement.actionCounts.move;
 	},
+	get moveWaypointIndexes(): number[] {
+		return moveWaypointIndexes;
+	},
+	get highlightedMoveWaypointIndex() {
+		return highlightedMoveWaypointIndex;
+	},
 	get removeWaypointCount() {
 		return refinement.actionCounts.remove;
 	},
@@ -194,6 +217,23 @@ export const route = {
 			index !== null && Number.isInteger(index) && index >= 0 && index < roadSpans.length
 				? index
 				: null;
+	},
+	inspectMoveWaypoint(index: number) {
+		if (moveWaypointIndexes.includes(index)) lastFocusedMoveWaypointIndex = index;
+	},
+	clearMoveWaypointFocus() {
+		lastFocusedMoveWaypointIndex = null;
+	},
+	reviewMoveWaypoint(offset: number): number | null {
+		if (moveWaypointIndexes.length === 0 || !Number.isFinite(offset)) return null;
+		const currentIndex = Math.max(
+			0,
+			moveWaypointIndexes.indexOf(highlightedMoveWaypointIndex ?? -1)
+		);
+		const nextIndex =
+			(currentIndex + Math.trunc(offset) + moveWaypointIndexes.length) % moveWaypointIndexes.length;
+		lastFocusedMoveWaypointIndex = moveWaypointIndexes[nextIndex]!;
+		return lastFocusedMoveWaypointIndex;
 	},
 	/**
 	 * Map source data: base route, display-only detour overlays, and via points.
@@ -302,7 +342,9 @@ export const route = {
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {
 		if (!isReady) return null;
-		return refinement.cycle(index);
+		const next = refinement.cycle(index);
+		if (next === 'move') lastFocusedMoveWaypointIndex = index;
+		return next;
 	},
 	/** Drop route when the drawing revision no longer matches what produced it. */
 	syncSketch(revision: number) {

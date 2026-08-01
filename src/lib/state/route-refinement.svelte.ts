@@ -3,14 +3,18 @@ import { MIN_VIAS } from '$lib/config/routing';
 import {
 	analyzeRouteDetours,
 	getWaypointDetourAnalysis,
-	type RouteDetour,
 	type WaypointDetourAnalysis
 } from '$lib/routing/refinement/detours';
 import {
 	applyWaypointSelection,
 	applySelectionsToWaypointAnalysis
 } from '$lib/routing/refinement/detour-coverage';
-import { buildRefinementPlan, type RefinementPlan } from '$lib/routing/refinement/plan';
+import {
+	buildRefinementPlan,
+	buildWaypointMoveProposals,
+	type RefinementPlan,
+	type WaypointMoveProposal
+} from '$lib/routing/refinement/plan';
 import type {
 	WaypointActionSelection,
 	WaypointRefinementAction
@@ -51,10 +55,8 @@ export function createRouteRefinementState({
 		buildRefinementPlan(getRouteGeometry(), getWaypoints(), analysisWithSelections, selections)
 	);
 
-	const detours: RouteDetour[] = $derived.by(() =>
-		analysisWithSelections.flatMap(({ action, candidate }) =>
-			action === 'move' && candidate ? [candidate] : []
-		)
+	const moveProposals: WaypointMoveProposal[] = $derived.by(() =>
+		buildWaypointMoveProposals(getRouteGeometry(), getWaypoints(), analysisWithSelections)
 	);
 
 	const actionCounts = $derived.by(() => {
@@ -104,8 +106,8 @@ export function createRouteRefinementState({
 		get plan() {
 			return plan;
 		},
-		get detours() {
-			return detours;
+		get moveProposals() {
+			return moveProposals;
 		},
 		get canRefineCurrentResult() {
 			return canRefineCurrentResult;

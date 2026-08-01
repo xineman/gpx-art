@@ -445,6 +445,11 @@ describe('route state', () => {
 		expect(route.removeWaypointCount).toBe(0);
 		expect(route.pendingWaypointCount).toBe(1);
 		expect(featuresOfKind('detour')).toHaveLength(1);
+		expect(featuresOfKind('move-link')).toHaveLength(1);
+		expect(featuresOfKind('move-target')[0]).toMatchObject({
+			properties: { waypointIndex: 1, activeMove: false },
+			geometry: { type: 'Point', coordinates: [21.001, 52] }
+		});
 		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
 		expect(featuresOfKind('detour')[0]?.geometry).toBeDefined();
 	});
@@ -511,6 +516,19 @@ describe('route state', () => {
 		expect(route.moveWaypointCount).toBe(2);
 		expect(route.removeWaypointCount).toBe(0);
 		expect(featuresOfKind('detour')).toHaveLength(2);
+		expect(route.moveWaypointIndexes).toEqual([0, 1]);
+		expect(route.highlightedMoveWaypointIndex).toBeNull();
+		route.inspectMoveWaypoint(0);
+		expect(route.highlightedMoveWaypointIndex).toBe(0);
+		expect(route.reviewMoveWaypoint(1)).toBe(1);
+		expect(route.highlightedMoveWaypointIndex).toBe(1);
+		expect(
+			featuresOfKind('move-target').find((feature) => feature.properties?.activeMove === true)
+				?.properties?.waypointIndex
+		).toBe(1);
+		expect(route.reviewMoveWaypoint(1)).toBe(0);
+		route.clearMoveWaypointFocus();
+		expect(route.highlightedMoveWaypointIndex).toBeNull();
 	});
 
 	it('uses a selected covered candidate in place of its incompatible covering detour', async () => {
