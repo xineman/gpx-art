@@ -159,7 +159,11 @@ export const status = {
 		clearFlashInternal();
 	},
 	/** Called after a successful commit so the bar acknowledges the action. */
-	announceCommit(tool: string) {
+	announceCommit(tool: string, closed = false) {
+		if (closed) {
+			this.flash('Closed loop added.');
+			return;
+		}
 		const label = toolLabel(tool);
 		switch (tool) {
 			case 'pencil':

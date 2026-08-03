@@ -31,6 +31,16 @@ const closedSquare: Polygon = {
 	]
 };
 
+const closedLine: LineString = {
+	type: 'LineString',
+	coordinates: [
+		[0, 0],
+		[0.01, 0],
+		[0.01, 0.01],
+		[0, 0]
+	]
+};
+
 describe('geometryPointCount', () => {
 	it('counts line vertices', () => {
 		expect(geometryPointCount(line)).toBe(3);
@@ -38,6 +48,10 @@ describe('geometryPointCount', () => {
 
 	it('drops the repeated close vertex on polygons', () => {
 		expect(geometryPointCount(closedSquare)).toBe(4);
+	});
+
+	it('drops the repeated close vertex on closed lines', () => {
+		expect(geometryPointCount(closedLine)).toBe(3);
 	});
 });
 
@@ -49,6 +63,10 @@ describe('geometryLength', () => {
 	it('includes the closing edge for polygons', () => {
 		const ring = closedSquare.coordinates[0]!;
 		expect(geometryLength(closedSquare)).toBeCloseTo(pathLength(ring), 5);
+	});
+
+	it('includes the closing edge for closed lines', () => {
+		expect(geometryLength(closedLine)).toBeCloseTo(pathLength(closedLine.coordinates), 5);
 	});
 });
 

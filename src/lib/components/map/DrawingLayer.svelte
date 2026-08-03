@@ -6,6 +6,7 @@
 	import { drawings } from '$lib/state/drawings.svelte';
 	import { status } from '$lib/state/status.svelte';
 	import { DrawingController } from '$lib/drawing/controller';
+	import { isClosedLineString } from '$lib/drawing/geo';
 	import { DRAWINGS_SOURCE, ensureDrawingLayers, setSourceData } from '$lib/drawing/layers';
 
 	const mapHandle = useMap();
@@ -40,7 +41,7 @@
 				map,
 				(geometry, tool) => {
 					drawings.add(geometry, tool);
-					status.announceCommit(tool);
+					status.announceCommit(tool, isClosedLineString(geometry));
 				},
 				(draft) => {
 					if (!draft) status.setDraft(null);

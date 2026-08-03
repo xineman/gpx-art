@@ -49,6 +49,36 @@ describe('extractGuidePaths', () => {
 		expect(paths[0]!.points).toHaveLength(3);
 	});
 
+	it('extracts a repeated-endpoint LineString as a closed path', () => {
+		const features: Feature[] = [
+			{
+				type: 'Feature',
+				properties: { tool: 'rectangle' },
+				geometry: {
+					type: 'LineString',
+					coordinates: [
+						[21, 52],
+						[21.01, 52],
+						[21.01, 52.01],
+						[21, 52]
+					]
+				}
+			}
+		];
+
+		const paths = extractGuidePaths(features);
+		expect(paths).toEqual([
+			{
+				closed: true,
+				points: [
+					[21, 52],
+					[21.01, 52],
+					[21.01, 52.01]
+				]
+			}
+		]);
+	});
+
 	it('extracts polygon exterior as closed open-ring', () => {
 		const features: Feature[] = [
 			{
