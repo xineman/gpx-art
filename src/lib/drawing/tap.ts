@@ -36,21 +36,27 @@ export function isDoubleTap(
 /**
  * Decide what a vertex-tool click should do.
  *
- * Order matters: re-tap last vertex (any delay) finishes without undoing,
- * so “double-tap last point to finish” works at the minimum vertex count.
- * A quick double-tap *elsewhere* undoes the accidental second vertex then finishes.
+ * Order matters: close-at-start (first vertex) finishes the ring, re-tap last
+ * vertex (any delay) finishes without undoing, so “double-tap last point to
+ * finish” works at the minimum vertex count. A quick double-tap *elsewhere*
+ * undoes the accidental second vertex then finishes.
  */
-export type VertexClickAction = 'finish-last' | 'finish-double-tap-undo' | 'place';
+export type VertexClickAction = 'close-first' | 'finish-last' | 'finish-double-tap-undo' | 'place';
 
 export function resolveVertexClick(opts: {
 	canFinish: boolean;
 	/** Screen position of the last committed vertex, or null if none. */
 	lastVertexScreen: ScreenPoint | null;
+	/** Screen position of the first vertex — enables close-at-start. Null when ring-ineligible. */
+	firstVertexScreen?: ScreenPoint | null;
 	screen: ScreenPoint;
 	lastTap: { t: number; screen: ScreenPoint } | null;
 	now: number;
 }): VertexClickAction {
-	const { canFinish, lastVertexScreen, screen, lastTap, now } = opts;
+	const { canFinish, lastVertexScreen, firstVertexScreen, screen, lastTap, now } = opts;
+	if (firstVertexScreen && canFinish && isWithinPx(screen, firstVertexScreen)) {
+		return 'close-first';
+	}
 	if (lastVertexScreen && canFinish && isWithinPx(screen, lastVertexScreen)) {
 		return 'finish-last';
 	}

@@ -19,10 +19,15 @@ export function geometryPointCount(geometry: Geometry): number {
 			return 1;
 		case 'MultiPoint':
 			return geometry.coordinates.length;
-		case 'LineString':
-			return geometry.coordinates.length;
+		case 'LineString': {
+			const line = geometry.coordinates;
+			return isClosedRing(line) ? Math.max(0, line.length - 1) : line.length;
+		}
 		case 'MultiLineString':
-			return geometry.coordinates.reduce((n, line) => n + line.length, 0);
+			return geometry.coordinates.reduce(
+				(n, line) => n + (isClosedRing(line) ? Math.max(0, line.length - 1) : line.length),
+				0
+			);
 		case 'Polygon': {
 			const ring = geometry.coordinates[0] ?? [];
 			return isClosedRing(ring) ? Math.max(0, ring.length - 1) : ring.length;

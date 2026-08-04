@@ -1,31 +1,38 @@
-import type { LineString, Polygon, Position } from 'geojson';
+import type { Geometry, LineString, Position } from 'geojson';
 
 export function lineString(points: Position[]): LineString {
 	return { type: 'LineString', coordinates: points };
 }
 
-export function closedPolygon(points: Position[]): Polygon {
-	const ring = [...points];
-	const first = ring[0];
-	const last = ring[ring.length - 1];
+/** Close a route guide by repeating its first coordinate exactly once. */
+export function closedLineString(points: Position[]): LineString {
+	const line = [...points];
+	const first = line[0];
+	const last = line[line.length - 1];
 	if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
-		ring.push(first);
+		line.push(first);
 	}
-	return { type: 'Polygon', coordinates: [ring] };
+	return lineString(line);
 }
 
 /** Axis-aligned rectangle from two opposite corners (lng/lat). */
-export function rectanglePolygon(a: Position, b: Position): Polygon {
+export function rectangleLineString(a: Position, b: Position): LineString {
 	const [lng1, lat1] = a;
 	const [lng2, lat2] = b;
-	const ring: Position[] = [
+	return lineString([
 		[lng1, lat1],
 		[lng2, lat1],
 		[lng2, lat2],
 		[lng1, lat2],
 		[lng1, lat1]
-	];
-	return { type: 'Polygon', coordinates: [ring] };
+	]);
+}
+
+export function isClosedLineString(geometry: Geometry): boolean {
+	if (geometry.type !== 'LineString' || geometry.coordinates.length < 3) return false;
+	const first = geometry.coordinates[0];
+	const last = geometry.coordinates[geometry.coordinates.length - 1];
+	return !!first && !!last && first[0] === last[0] && first[1] === last[1];
 }
 
 export function distanceSq(a: Position, b: Position): number {

@@ -98,3 +98,88 @@ describe('resolveVertexClick', () => {
 		).toBe('place');
 	});
 });
+
+describe('resolveVertexClick close-at-start', () => {
+	const first = { x: 400, y: 400 };
+	const last = { x: 100, y: 100 };
+	const nearFirst = { x: 402, y: 401 };
+	const elsewhere = { x: 300, y: 300 };
+
+	it('closes when tapping near the first vertex (no time limit)', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: true,
+				lastVertexScreen: last,
+				firstVertexScreen: first,
+				screen: nearFirst,
+				lastTap: { t: 1000, screen: last },
+				now: 5000
+			})
+		).toBe('close-first');
+	});
+
+	it('does not close at start when the ring cannot finish', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: false,
+				lastVertexScreen: last,
+				firstVertexScreen: first,
+				screen: nearFirst,
+				lastTap: null,
+				now: 1000
+			})
+		).toBe('place');
+	});
+
+	it('prefers close-at-start when the last vertex sits near the first', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: true,
+				lastVertexScreen: nearFirst,
+				firstVertexScreen: first,
+				screen: nearFirst,
+				lastTap: null,
+				now: 1000
+			})
+		).toBe('close-first');
+	});
+
+	it('prefers close-at-start over a quick double-tap at the first vertex', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: true,
+				lastVertexScreen: last,
+				firstVertexScreen: first,
+				screen: nearFirst,
+				lastTap: { t: 1000, screen: nearFirst },
+				now: 1200
+			})
+		).toBe('close-first');
+	});
+
+	it('places when no first vertex is ring-eligible', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: true,
+				lastVertexScreen: last,
+				firstVertexScreen: null,
+				screen: nearFirst,
+				lastTap: null,
+				now: 1000
+			})
+		).toBe('place');
+	});
+
+	it('places when tapping far from the first vertex', () => {
+		expect(
+			resolveVertexClick({
+				canFinish: true,
+				lastVertexScreen: last,
+				firstVertexScreen: first,
+				screen: elsewhere,
+				lastTap: null,
+				now: 1000
+			})
+		).toBe('place');
+	});
+});

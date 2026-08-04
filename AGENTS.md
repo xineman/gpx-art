@@ -64,7 +64,7 @@ src/
     config/routing.ts     # via caps / simplify tolerances (client-safe)
     drawing/              # framework-agnostic MapLibre draw logic
       controller.ts       # pointer/keyboard interaction → draft/commit
-      geo.ts              # LineString / Polygon helpers, sampling
+      geo.ts              # Open / closed LineString helpers, sampling
       layers.ts           # sketch + preview + route/detour GeoJSON layers
       io.ts               # GeoJSON sketch parse/serialize/download
       tap.ts              # double-tap / re-tap-last helpers (pure)

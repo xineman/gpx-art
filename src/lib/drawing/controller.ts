@@ -2,9 +2,9 @@ import type { Map as MaplibreMap, MapMouseEvent, MapTouchEvent } from 'maplibre-
 import type { Geometry, Position } from 'geojson';
 import type { ToolId } from '$lib/state/tools.svelte';
 import { routeWaypointAtPoint } from '$lib/map/waypoint-hit';
-import { closedPolygon, lineString, rectanglePolygon, shouldSample } from './geo';
+import { closedLineString, lineString, rectangleLineString, shouldSample } from './geo';
 import { PREVIEW_SOURCE, previewCollection, setSourceData } from './layers';
-import { resolveVertexClick, toLngLat, type ScreenPoint } from './tap';
+import { isDoubleTap, isWithinPx, resolveVertexClick, toLngLat, type ScreenPoint } from './tap';
 
 export type CommitFn = (geometry: Geometry, tool: string) => void;
 
@@ -60,6 +60,8 @@ export class DrawingController {
 	 * a second same-spot tap in the click handler.
 	 */
 	#lastTap: { t: number; screen: ScreenPoint } | null = null;
+	/** Completion click whose paired click must not start a fresh draft. */
+	#completionTap: { t: number; screen: ScreenPoint } | null = null;
 	/** Window listeners active during a touch stroke (finger can leave the canvas). */
 	#windowTouchBound = false;
 	/** Window listeners active during a mouse stroke (cursor can leave the canvas). */
@@ -138,6 +140,7 @@ export class DrawingController {
 		this.#pointerDown = false;
 		this.#activePointer = null;
 		this.#lastTap = null;
+		this.#completionTap = null;
 		this.#unbindWindowPointer();
 		this.#clearPreview();
 		this.#publishDraft();
@@ -205,11 +208,19 @@ export class DrawingController {
 		if (!draft) return;
 
 		if (draft.kind === 'pencil') {
-			if (p) {
-				const last = draft.points[draft.points.length - 1];
-				if (shouldSample(last, p, 0)) draft.points.push(p);
-			}
-			if (draft.points.length >= 2) {
+			const first = draft.points[0];
+			const last = draft.points[draft.points.length - 1];
+			const end = p ?? last;
+			const closed =
+				draft.points.length >= 3 &&
+				!!first &&
+				!!end &&
+				isWithinPx(this.#screenOf(first), this.#screenOf(end));
+			// A release point hugging the start vertex is redundant on a closed ring.
+			if (p && !closed && shouldSample(last, p, 0)) draft.points.push(p);
+			if (closed) {
+				this.#commit(closedLineString(draft.points), 'pencil');
+			} else if (draft.points.length >= 2) {
 				this.#commit(lineString(draft.points), 'pencil');
 			}
 			this.cancel();
@@ -217,7 +228,7 @@ export class DrawingController {
 			if (p) draft.end = p;
 			const { start, end } = draft;
 			if (start[0] !== end[0] && start[1] !== end[1]) {
-				this.#commit(rectanglePolygon(start, end), 'rectangle');
+				this.#commit(rectangleLineString(start, end), 'rectangle');
 			}
 			this.cancel();
 		}
@@ -385,21 +396,40 @@ export class DrawingController {
 		const p = this.#lngLatFromMouse(e);
 		const now = performance.now();
 		const screen = this.#screenOf(p);
+		const pairedNativeClick =
+			this.#completionTap &&
+			e.originalEvent.detail > 1 &&
+			isWithinPx(this.#completionTap.screen, screen);
+		if (pairedNativeClick || isDoubleTap(this.#completionTap, now, screen)) {
+			this.#completionTap = null;
+			e.preventDefault();
+			return;
+		}
+		this.#completionTap = null;
 		const draft = this.#draft;
 
 		if (draft && (draft.kind === 'polyline' || draft.kind === 'polygon')) {
 			const last = draft.points[draft.points.length - 1];
+			const first = draft.points[0];
 			const action = resolveVertexClick({
 				canFinish: this.#canFinish(draft),
 				lastVertexScreen: last ? this.#screenOf(last) : null,
+				// Closing the ring needs ≥3 vertices — enables close-at-start.
+				firstVertexScreen: first && draft.points.length >= 3 ? this.#screenOf(first) : null,
 				screen,
 				lastTap: this.#lastTap,
 				now
 			});
 
+			if (action === 'close-first') {
+				e.preventDefault();
+				if (this.#finishVertexDraft(true)) this.#completionTap = { t: now, screen };
+				return;
+			}
+
 			if (action === 'finish-last') {
 				e.preventDefault();
-				this.#finishVertexDraft();
+				if (this.#finishVertexDraft()) this.#completionTap = { t: now, screen };
 				return;
 			}
 
@@ -408,7 +438,7 @@ export class DrawingController {
 				// First half of the pair already placed a vertex — undo it, then finish.
 				const removed = draft.points.pop();
 				if (this.#canFinish(draft)) {
-					this.#finishVertexDraft();
+					if (this.#finishVertexDraft()) this.#completionTap = { t: now, screen };
 				} else {
 					// Too few points: restore so we never silently shrink the draft.
 					if (removed) draft.points.push(removed);
@@ -463,21 +493,32 @@ export class DrawingController {
 		}
 	};
 
-	/** Commit open polyline/polygon when vertex count allows. */
-	#finishVertexDraft() {
+	/** Commit a vertex draft, inferring a closed polyline from nearby endpoints. */
+	#finishVertexDraft(forceClosed = false): boolean {
 		const draft = this.#draft;
-		if (!draft) return;
+		if (!draft) return false;
 
 		if (draft.kind === 'polyline' && draft.points.length >= 2) {
-			this.#commit(lineString(draft.points), 'polyline');
+			const first = draft.points[0];
+			const last = draft.points[draft.points.length - 1];
+			const closed =
+				forceClosed ||
+				(draft.points.length >= 3 &&
+					!!first &&
+					!!last &&
+					isWithinPx(this.#screenOf(first), this.#screenOf(last)));
+			this.#commit(closed ? closedLineString(draft.points) : lineString(draft.points), 'polyline');
 			this.cancel();
+			return true;
 		} else if (draft.kind === 'polygon' && draft.points.length >= 3) {
-			this.#commit(closedPolygon(draft.points), 'polygon');
+			this.#commit(closedLineString(draft.points), 'polygon');
 			this.cancel();
+			return true;
 		} else {
 			// Not enough points — clear the double-tap timer so the next tap adds.
 			this.#lastTap = null;
 			this.#renderPreview();
+			return false;
 		}
 	}
 
@@ -533,10 +574,10 @@ export class DrawingController {
 		} else if (draft.kind === 'polygon') {
 			vertices = draft.points as [number, number][];
 			const pts = draft.cursor ? [...draft.points, draft.cursor] : draft.points;
-			if (pts.length >= 3) geometry = closedPolygon(pts);
+			if (pts.length >= 3) geometry = closedLineString(pts);
 			else if (pts.length === 2) geometry = lineString(pts);
 		} else if (draft.kind === 'rectangle') {
-			geometry = rectanglePolygon(draft.start, draft.end);
+			geometry = rectangleLineString(draft.start, draft.end);
 			vertices = [draft.start as [number, number], draft.end as [number, number]];
 		}
 

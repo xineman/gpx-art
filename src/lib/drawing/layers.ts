@@ -6,9 +6,7 @@ export const PREVIEW_SOURCE = 'gpx-draw-preview';
 export const ROUTE_SOURCE = 'gpx-route';
 
 const LINE_LAYER = 'gpx-drawings-line';
-const FILL_LAYER = 'gpx-drawings-fill';
 const PREVIEW_LINE = 'gpx-preview-line';
-const PREVIEW_FILL = 'gpx-preview-fill';
 const PREVIEW_POINTS = 'gpx-preview-points';
 const ROUTE_LINE = 'gpx-route-line';
 const ROUTE_LINE_CASING = 'gpx-route-line-casing';
@@ -205,7 +203,6 @@ function ensureRouteMoveTargetImage(map: MaplibreMap) {
 
 export function ensureDrawingLayers(map: MaplibreMap) {
 	const stroke = themeColor('trail-deep');
-	const fill = themeColor('trail');
 	const vertex = themeColor('trail-vertex');
 
 	if (!map.getSource(DRAWINGS_SOURCE)) {
@@ -213,19 +210,6 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 	}
 	if (!map.getSource(PREVIEW_SOURCE)) {
 		map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: empty });
-	}
-
-	if (!map.getLayer(FILL_LAYER)) {
-		map.addLayer({
-			id: FILL_LAYER,
-			type: 'fill',
-			source: DRAWINGS_SOURCE,
-			filter: ['==', ['geometry-type'], 'Polygon'],
-			paint: {
-				'fill-color': fill,
-				'fill-opacity': 0.22
-			}
-		});
 	}
 
 	if (!map.getLayer(LINE_LAYER)) {
@@ -241,19 +225,6 @@ export function ensureDrawingLayers(map: MaplibreMap) {
 				'line-color': stroke,
 				'line-width': 2.75,
 				'line-opacity': 0.95
-			}
-		});
-	}
-
-	if (!map.getLayer(PREVIEW_FILL)) {
-		map.addLayer({
-			id: PREVIEW_FILL,
-			type: 'fill',
-			source: PREVIEW_SOURCE,
-			filter: ['==', ['geometry-type'], 'Polygon'],
-			paint: {
-				'fill-color': fill,
-				'fill-opacity': 0.14
 			}
 		});
 	}
