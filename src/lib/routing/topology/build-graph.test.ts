@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Position } from 'geojson';
 import type { GuidePath } from '../preparation/types';
-import { buildTopologyGraph, type TopologyGraph } from './build-graph';
+import { buildTopologyGraph, type TopologyBuildOptions, type TopologyGraph } from './build-graph';
 
 function open(...points: Position[]): GuidePath {
 	return { points, closed: false };
@@ -11,8 +11,8 @@ function closed(...points: Position[]): GuidePath {
 	return { points, closed: true };
 }
 
-function graphFor(guides: GuidePath[]): TopologyGraph {
-	const result = buildTopologyGraph(guides);
+function graphFor(guides: GuidePath[], options?: TopologyBuildOptions): TopologyGraph {
+	const result = buildTopologyGraph(guides, options);
 	expect(result.ok).toBe(true);
 	if (!result.ok) throw new Error(result.code);
 	return result.graph;
@@ -81,10 +81,67 @@ describe('buildTopologyGraph', () => {
 		expect(junction && degree(graph, junction.id)).toBe(4);
 	});
 
-	it('does not connect a near miss', () => {
-		const graph = graphFor([open([0, 0], [2, 0]), open([1, 0.000001], [1, 1])]);
-		expect(graph.nodes).toHaveLength(4);
-		expect(graph.edges).toHaveLength(2);
+	it('snaps an endpoint to a host segment within the default tolerance', () => {
+		const graph = graphFor([open([0, 0], [0.002, 0]), open([0.001, 0.00005], [0.001, 0.001])]);
+		const junction = nodeAt(graph, [0.001, 0]);
+		expect(graph.edges).toHaveLength(3);
+		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it('honors custom, disabled, and default snapping tolerances', () => {
+		const nearGuides = [open([0, 0], [0.002, 0]), open([0.001, 0.00005], [0.001, 0.001])];
+		expect(graphFor(nearGuides, { snapToleranceM: 5 }).edges).toHaveLength(2);
+		expect(graphFor(nearGuides, { snapToleranceM: 6 }).edges).toHaveLength(3);
+		expect(graphFor(nearGuides, { snapToleranceM: 0 }).edges).toHaveLength(2);
+
+		const outsideDefault = graphFor([
+			open([0, 0], [0.002, 0]),
+			open([0.001, 0.0001], [0.001, 0.001])
+		]);
+		expect(outsideDefault.edges).toHaveLength(2);
+	});
+
+	it('anchors a near endpoint pair without mutating the guides', () => {
+		const guides = [open([0, 0], [0.001, 0]), open([0.00105, 0], [0.002, 0])];
+		const original = guides.map((guide) => guide.points.map((point) => [...point]));
+		const graph = graphFor(guides);
+		const junction = nodeAt(graph, [0.00105, 0]);
+
+		expect(graph.nodes).toHaveLength(3);
+		expect(junction && degree(graph, junction.id)).toBe(2);
+		expect(guides.map((guide) => guide.points)).toEqual(original);
+	});
+
+	it('snaps both endpoints of an open guide onto a closed guide', () => {
+		const graph = graphFor([
+			closed([0, 0], [0.002, 0], [0.002, 0.002], [0, 0.002]),
+			open([0.001, 0.00005], [0.001, 0.00195])
+		]);
+		const bottom = nodeAt(graph, [0.001, 0]);
+		const top = nodeAt(graph, [0.001, 0.002]);
+
+		expect(bottom && degree(graph, bottom.id)).toBe(3);
+		expect(top && degree(graph, top.id)).toBe(3);
+	});
+
+	it('snaps onto a non-incident segment of the same guide', () => {
+		const graph = graphFor([open([0, 0], [0.002, 0], [0.002, 0.002], [0.001, 0.00005])]);
+		const junction = nodeAt(graph, [0.001, 0]);
+
+		expect(graph.edges).toHaveLength(4);
+		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it('snaps to the nearest eligible path', () => {
+		const graph = graphFor([
+			closed([0, -0.001], [0.002, -0.001], [0.002, 0], [0, 0]),
+			closed([0, 0.00008], [0.002, 0.00008], [0.002, 0.001], [0, 0.001]),
+			open([0.001, 0.00003], [0.003, 0.00004], [0.004, 0.00004])
+		]);
+		const nearest = nodeAt(graph, [0.001, 0]);
+
+		expect(nearest && degree(graph, nearest.id)).toBe(3);
+		expect(nodeAt(graph, [0.001, 0.00008])).toBeUndefined();
 	});
 
 	it('supports a single-point collinear touch', () => {

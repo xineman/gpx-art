@@ -12,6 +12,9 @@ export const VIA_SIMPLIFY_TOLERANCE_M = 35;
 /** Preferred maximum interval between prepared vias after simplifying the guide path. */
 export const VIA_SAMPLE_SPACING_M = 120;
 
+/** Maximum endpoint-to-path gap inferred as a topology connection. */
+export const TOPOLOGY_SNAP_TOLERANCE_M = 10;
+
 /** Minimum distinct points needed to call Valhalla. */
 export const MIN_VIAS = 2;
 

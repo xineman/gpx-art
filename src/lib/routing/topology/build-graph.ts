@@ -1,4 +1,5 @@
 import type { Position } from 'geojson';
+import { TOPOLOGY_SNAP_TOLERANCE_M } from '$lib/config/routing';
 import type { GuidePath } from '../preparation/types';
 
 const NUMERIC_EPSILON = 1e-12;
@@ -35,6 +36,10 @@ export type TopologyBuildResult =
 			segments: [TopologySegmentRef, TopologySegmentRef];
 	  };
 
+export type TopologyBuildOptions = {
+	snapToleranceM?: number;
+};
+
 type SplitPoint = {
 	t: number;
 	position: Position;
@@ -48,6 +53,16 @@ type SourceSegment = TopologySegmentRef & {
 
 type SegmentIntersection =
 	{ kind: 'none' } | { kind: 'point'; left: SplitPoint; right: SplitPoint } | { kind: 'overlap' };
+
+type EndpointRef = {
+	guideIndex: number;
+	pointIndex: number;
+	incidentSegmentIndex: number;
+};
+
+type SegmentProjection = SplitPoint & {
+	distanceM: number;
+};
 
 function copyPosition(position: Position): Position {
 	return [position[0]!, position[1]!];
@@ -89,6 +104,34 @@ function clampParameter(value: number): number {
 	if (Math.abs(value) <= NUMERIC_EPSILON) return 0;
 	if (Math.abs(1 - value) <= NUMERIC_EPSILON) return 1;
 	return value;
+}
+
+function projectPointToSegment(point: Position, segment: SourceSegment): SegmentProjection {
+	const midLatitude = (((segment.start[1]! + segment.end[1]!) / 2) * Math.PI) / 180;
+	const metersPerLongitude = 111_320 * Math.cos(midLatitude);
+	const metersPerLatitude = 110_540;
+	const segmentX = (segment.end[0]! - segment.start[0]!) * metersPerLongitude;
+	const segmentY = (segment.end[1]! - segment.start[1]!) * metersPerLatitude;
+	const pointX = (point[0]! - segment.start[0]!) * metersPerLongitude;
+	const pointY = (point[1]! - segment.start[1]!) * metersPerLatitude;
+	const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+	const t = clampParameter(
+		Math.max(
+			0,
+			Math.min(1, lengthSquared ? (pointX * segmentX + pointY * segmentY) / lengthSquared : 0)
+		)
+	);
+	const projectedX = segmentX * t;
+	const projectedY = segmentY * t;
+
+	return {
+		t,
+		position: [
+			segment.start[0]! + (segment.end[0]! - segment.start[0]!) * t,
+			segment.start[1]! + (segment.end[1]! - segment.start[1]!) * t
+		],
+		distanceM: Math.hypot(pointX - projectedX, pointY - projectedY)
+	};
 }
 
 function parameterOnSegment(position: Position, segment: SourceSegment): number {
@@ -206,7 +249,8 @@ function addSplit(segment: SourceSegment, split: SplitPoint) {
 	if (!existing) segment.splits.push({ t: split.t, position: copyPosition(split.position) });
 }
 
-function guidePoints(guide: GuidePath): Position[] {
+/** Copy guide points, removing consecutive duplicates and a duplicated closing position. */
+function normalizeGuidePoints(guide: GuidePath): Position[] {
 	const points: Position[] = [];
 	for (const point of guide.points) {
 		if (!points.length || !samePosition(points[points.length - 1]!, point)) {
@@ -222,7 +266,7 @@ function guidePoints(guide: GuidePath): Position[] {
 function sourceSegments(guides: GuidePath[]): SourceSegment[] {
 	const segments: SourceSegment[] = [];
 	for (const [guideIndex, guide] of guides.entries()) {
-		const points = guidePoints(guide);
+		const points = normalizeGuidePoints(guide);
 		const minimumPoints = guide.closed ? 3 : 2;
 		if (points.length < minimumPoints) continue;
 		const segmentCount = guide.closed ? points.length : points.length - 1;
@@ -245,9 +289,92 @@ function sourceSegments(guides: GuidePath[]): SourceSegment[] {
 	return segments;
 }
 
-/** Build an undirected graph by splitting guide segments at exact point intersections. */
-export function buildTopologyGraph(guides: GuidePath[]): TopologyBuildResult {
-	const segments = sourceSegments(guides);
+function collectOpenEndpoints(guides: GuidePath[]): EndpointRef[] {
+	const endpoints: EndpointRef[] = [];
+	for (const [guideIndex, guide] of guides.entries()) {
+		if (guide.closed || guide.points.length < 2) continue;
+		endpoints.push({ guideIndex, pointIndex: 0, incidentSegmentIndex: 0 });
+		endpoints.push({
+			guideIndex,
+			pointIndex: guide.points.length - 1,
+			incidentSegmentIndex: guide.points.length - 2
+		});
+	}
+	return endpoints;
+}
+
+function endpointKey(endpoint: EndpointRef): string {
+	return `${endpoint.guideIndex}:${endpoint.pointIndex}`;
+}
+
+function targetEndpoint(
+	guides: GuidePath[],
+	segment: SourceSegment,
+	projection: SegmentProjection
+): EndpointRef | null {
+	const guide = guides[segment.guideIndex]!;
+	if (guide.closed) return null;
+	if (projection.t === 0 && segment.segmentIndex === 0) {
+		return { guideIndex: segment.guideIndex, pointIndex: 0, incidentSegmentIndex: 0 };
+	}
+	if (projection.t === 1 && segment.segmentIndex === guide.points.length - 2) {
+		return {
+			guideIndex: segment.guideIndex,
+			pointIndex: guide.points.length - 1,
+			incidentSegmentIndex: guide.points.length - 2
+		};
+	}
+	return null;
+}
+
+function snapNearEndpoints(guides: GuidePath[], toleranceM: number): GuidePath[] {
+	const snappedGuides = guides.map<GuidePath>((guide) => ({
+		closed: guide.closed,
+		points: normalizeGuidePoints(guide)
+	}));
+	if (!Number.isFinite(toleranceM) || toleranceM <= 0) return snappedGuides;
+
+	const lockedTargetEndpoints = new Set<string>();
+	for (const endpoint of collectOpenEndpoints(snappedGuides)) {
+		if (lockedTargetEndpoints.has(endpointKey(endpoint))) continue;
+
+		const position = snappedGuides[endpoint.guideIndex]!.points[endpoint.pointIndex]!;
+		let best: { segment: SourceSegment; projection: SegmentProjection } | null = null;
+
+		for (const segment of sourceSegments(snappedGuides)) {
+			const isEndpointIncidentSegment =
+				segment.guideIndex === endpoint.guideIndex &&
+				segment.segmentIndex === endpoint.incidentSegmentIndex;
+			if (isEndpointIncidentSegment) continue;
+
+			const projection = projectPointToSegment(position, segment);
+			if (projection.distanceM > toleranceM) continue;
+			if (!best || projection.distanceM < best.projection.distanceM - NUMERIC_EPSILON) {
+				best = { segment, projection };
+			}
+		}
+
+		if (!best) continue;
+		snappedGuides[endpoint.guideIndex]!.points[endpoint.pointIndex] = copyPosition(
+			best.projection.position
+		);
+
+		const anchor = targetEndpoint(snappedGuides, best.segment, best.projection);
+		if (anchor) lockedTargetEndpoints.add(endpointKey(anchor));
+	}
+	return snappedGuides;
+}
+
+/** Build an undirected graph by inferring near connections, then splitting exact intersections. */
+export function buildTopologyGraph(
+	guides: GuidePath[],
+	options: TopologyBuildOptions = {}
+): TopologyBuildResult {
+	const snappedGuides = snapNearEndpoints(
+		guides,
+		options.snapToleranceM ?? TOPOLOGY_SNAP_TOLERANCE_M
+	);
+	const segments = sourceSegments(snappedGuides);
 
 	for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
 		const left = segments[leftIndex]!;
