@@ -4,8 +4,8 @@ import {
 	MIN_VIAS,
 	VIA_SAMPLE_SPACING_M,
 	VIA_SIMPLIFY_TOLERANCE_M
-} from '$lib/config/routing';
-import { distanceBetween } from '$lib/geometry/distance';
+} from '#lib/config/routing.js';
+import { distanceBetween } from '#lib/geometry/distance.js';
 import type { GuidePath } from './types';
 
 export type ViasResult = { ok: true; vias: Position[] } | { ok: false; error: string };

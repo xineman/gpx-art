@@ -1,9 +1,9 @@
 <script lang="ts">
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import Redo2 from '@lucide/svelte/icons/redo-2';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	/**
 	 * Platform-aware keycap labels for tooltips.

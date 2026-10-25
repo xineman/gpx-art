@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import { pointer } from '$lib/util/pointer.svelte';
+import { pointer } from '#lib/util/pointer.svelte.js';
 import SketchDistancePill from './SketchDistancePill.svelte';
 
 afterEach(() => {

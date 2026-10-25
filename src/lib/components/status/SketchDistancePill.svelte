@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Info from '@lucide/svelte/icons/info';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	interface Props {
 		distanceLabel: string;

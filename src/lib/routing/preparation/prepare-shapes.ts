@@ -1,6 +1,6 @@
 import type { Feature } from 'geojson';
-import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
-import { pathLength } from '$lib/geometry/distance';
+import { MAX_VIAS, MIN_VIAS } from '#lib/config/routing.js';
+import { pathLength } from '#lib/geometry/distance.js';
 import { extractGuidePaths } from './extract';
 import type { GuidePath, PreparedRouteShape } from './types';
 import { guideToVias } from './vias';

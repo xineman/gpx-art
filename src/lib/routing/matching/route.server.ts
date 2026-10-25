@@ -1,4 +1,4 @@
-import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
+import { MAX_VIAS, MIN_VIAS } from '#lib/config/routing.js';
 import type { RouteRequest, RouteResponse, RouteVia } from './types';
 import { fetchValhallaTrace } from '../providers/valhalla/trace.server';
 import type { ValhallaConfig } from '../providers/valhalla/types.server';

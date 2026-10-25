@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount, type Snippet } from 'svelte';
 	import type { Map as MaplibreMap } from 'maplibre-gl';
-	import { MAP_STYLE_URL } from '$lib/config/map';
-	import { provideMap } from '$lib/map/context';
+	import { MAP_STYLE_URL } from '#lib/config/map.js';
+	import { provideMap } from '#lib/map/context.js';
 
 	interface Props {
 		/** Map center as [lng, lat] */

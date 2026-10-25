@@ -1,9 +1,9 @@
 <script lang="ts">
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import { route } from '$lib/state/route.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import { route } from '#lib/state/route.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	const waypointIndexes = $derived(route.moveWaypointIndexes);
 	const activePosition = $derived(

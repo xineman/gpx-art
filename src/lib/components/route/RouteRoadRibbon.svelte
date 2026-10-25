@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { route } from '$lib/state/route.svelte';
-	import type { RouteRoadKind, RouteRoadSpan } from '$lib/routing/attribution/types';
+	import { route } from '#lib/state/route.svelte.js';
+	import type { RouteRoadKind, RouteRoadSpan } from '#lib/routing/attribution/types.js';
 
 	let activeIndex = $state<number | null>(null);
 	let pinnedIndex = $state<number | null>(null);

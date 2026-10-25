@@ -1,5 +1,5 @@
 import type { LineString, Position } from 'geojson';
-import { distanceBetween } from '$lib/geometry/distance';
+import { distanceBetween } from '#lib/geometry/distance.js';
 import { applyCandidateCoverage } from './detour-coverage';
 import type { WaypointRefinementAction } from './types';
 

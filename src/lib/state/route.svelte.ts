@@ -1,29 +1,29 @@
 import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
-import { MIN_VIAS } from '$lib/config/routing';
-import { downloadTextFile } from '$lib/drawing/io';
-import { formatDistance } from '$lib/geometry/distance';
-import { requestRouteAttributes } from '$lib/routing/attribution/client';
+import { MIN_VIAS } from '#lib/config/routing.js';
+import { downloadTextFile } from '#lib/drawing/io.js';
+import { formatDistance } from '#lib/geometry/distance.js';
+import { requestRouteAttributes } from '#lib/routing/attribution/client.js';
 import type {
 	AttributedRouteEdge,
 	RouteAttributionSuccess,
 	RouteRoadSpan
-} from '$lib/routing/attribution/types';
-import { lineStringToGpx, routeGpxFilename } from '$lib/routing/export/gpx';
-import { requestOptimizedRoute } from '$lib/routing/generate-route';
-import { requestRoute } from '$lib/routing/matching/client';
-import type { RouteResponse, RouteSuccess } from '$lib/routing/matching/types';
-import { prepareRouteShapes } from '$lib/routing/preparation/prepare-shapes';
-import { buildRouteMapFeatures } from '$lib/routing/presentation/map-features';
-import { refineRouteAutomatically } from '$lib/routing/refinement/auto-refine';
+} from '#lib/routing/attribution/types.js';
+import { lineStringToGpx, routeGpxFilename } from '#lib/routing/export/gpx.js';
+import { requestOptimizedRoute } from '#lib/routing/generate-route.js';
+import { requestRoute } from '#lib/routing/matching/client.js';
+import type { RouteResponse, RouteSuccess } from '#lib/routing/matching/types.js';
+import { prepareRouteShapes } from '#lib/routing/preparation/prepare-shapes.js';
+import { buildRouteMapFeatures } from '#lib/routing/presentation/map-features.js';
+import { refineRouteAutomatically } from '#lib/routing/refinement/auto-refine.js';
 import type {
 	WaypointActionSelection,
 	WaypointRefinementAction
-} from '$lib/routing/refinement/types';
-import { supersededFailure } from '$lib/routing/shared/failure';
+} from '#lib/routing/refinement/types.js';
+import { supersededFailure } from '#lib/routing/shared/failure.js';
 import {
 	createLatestOperation,
 	type LatestOperationScope
-} from '$lib/routing/shared/latest-operation';
+} from '#lib/routing/shared/latest-operation.js';
 import { createRouteRefinementState } from './route-refinement.svelte';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';

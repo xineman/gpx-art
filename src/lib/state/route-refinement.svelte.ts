@@ -1,24 +1,24 @@
 import type { LineString, Position } from 'geojson';
-import { MIN_VIAS } from '$lib/config/routing';
+import { MIN_VIAS } from '#lib/config/routing.js';
 import {
 	analyzeRouteDetours,
 	getWaypointDetourAnalysis,
 	type WaypointDetourAnalysis
-} from '$lib/routing/refinement/detours';
+} from '#lib/routing/refinement/detours.js';
 import {
 	applyWaypointSelection,
 	applySelectionsToWaypointAnalysis
-} from '$lib/routing/refinement/detour-coverage';
+} from '#lib/routing/refinement/detour-coverage.js';
 import {
 	buildRefinementPlan,
 	buildWaypointMoveProposals,
 	type RefinementPlan,
 	type WaypointMoveProposal
-} from '$lib/routing/refinement/plan';
+} from '#lib/routing/refinement/plan.js';
 import type {
 	WaypointActionSelection,
 	WaypointRefinementAction
-} from '$lib/routing/refinement/types';
+} from '#lib/routing/refinement/types.js';
 
 type RouteRefinementSources = {
 	getRouteGeometry: () => LineString | null;

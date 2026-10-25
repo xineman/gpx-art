@@ -3,8 +3,8 @@ import {
 	distanceLabelFromFeatures,
 	featuresPointCount,
 	pointLabelFromCount
-} from '$lib/geometry/stats';
-import { pointer } from '$lib/util/pointer.svelte';
+} from '#lib/geometry/stats.js';
+import { pointer } from '#lib/util/pointer.svelte.js';
 import { drawings } from './drawings.svelte';
 import { toolById, tools, type ToolId } from './tools.svelte';
 

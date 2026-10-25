@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { ToolId } from '$lib/state/tools.svelte';
-	import { tools } from '$lib/state/tools.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
+	import type { ToolId } from '#lib/state/tools.svelte.js';
+	import { tools } from '#lib/state/tools.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
 
 	interface Props {
 		id: ToolId;

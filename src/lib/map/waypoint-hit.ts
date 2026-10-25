@@ -1,5 +1,5 @@
 import type { Map as MaplibreMap, PointLike } from 'maplibre-gl';
-import { ROUTE_WAYPOINTS } from '$lib/drawing/layers';
+import { ROUTE_WAYPOINTS } from '#lib/drawing/layers.js';
 
 export const ROUTE_WAYPOINT_HIT_RADIUS_PX = 20;
 

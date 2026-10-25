@@ -5,15 +5,15 @@
 	import Navigation2 from '@lucide/svelte/icons/navigation-2';
 	import RefreshCcw from '@lucide/svelte/icons/refresh-ccw';
 	import RouteIcon from '@lucide/svelte/icons/route';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { route } from '$lib/state/route.svelte';
-	import { routingOptions } from '$lib/state/routing-options.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { tools } from '$lib/state/tools.svelte';
-	import { isSupersededFailure, type RouteFailure } from '$lib/routing/shared/failure';
-	import { dismissibleLayer } from '$lib/util/dismissible-layer';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { route } from '#lib/state/route.svelte.js';
+	import { routingOptions } from '#lib/state/routing-options.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { tools } from '#lib/state/tools.svelte.js';
+	import { isSupersededFailure, type RouteFailure } from '#lib/routing/shared/failure.js';
+	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 	import { routeActionModel } from './route-action';
 
 	const hasSketch = $derived(drawings.features.length > 0);

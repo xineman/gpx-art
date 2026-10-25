@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import type { Map as MaplibreMap } from 'maplibre-gl';
-	import { useMap } from '$lib/map/context';
-	import { tools } from '$lib/state/tools.svelte';
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { DrawingController } from '$lib/drawing/controller';
-	import { isClosedLineString } from '$lib/drawing/geo';
-	import { DRAWINGS_SOURCE, ensureDrawingLayers, setSourceData } from '$lib/drawing/layers';
+	import { useMap } from '#lib/map/context.js';
+	import { tools } from '#lib/state/tools.svelte.js';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { DrawingController } from '#lib/drawing/controller.js';
+	import { isClosedLineString } from '#lib/drawing/geo.js';
+	import { DRAWINGS_SOURCE, ensureDrawingLayers, setSourceData } from '#lib/drawing/layers.js';
 
 	const mapHandle = useMap();
 

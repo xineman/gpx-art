@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
-import type { DrawingFeature } from '$lib/state/drawings.svelte';
+import type { DrawingFeature } from '#lib/state/drawings.svelte.js';
 
 export type ParseDrawingsResult =
 	{ ok: true; features: DrawingFeature[] } | { ok: false; error: string };

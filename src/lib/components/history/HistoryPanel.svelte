@@ -1,5 +1,5 @@
 <script lang="ts">
-	import PanelChrome from '$lib/components/ui/PanelChrome.svelte';
+	import PanelChrome from '#lib/components/ui/PanelChrome.svelte';
 	import ClearSketchButton from './ClearSketchButton.svelte';
 	import DownloadGpxButton from './DownloadGpxButton.svelte';
 	import DrawingIOMenu from './DrawingIOMenu.svelte';

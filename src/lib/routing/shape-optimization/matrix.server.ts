@@ -1,4 +1,4 @@
-import { MAX_VIAS, MIN_VIAS } from '$lib/config/routing';
+import { MAX_VIAS, MIN_VIAS } from '#lib/config/routing.js';
 import type { MatrixRequest } from './types';
 import { coordinateSchema, isCoordinateRangeIssue } from '../shared/schemas.server';
 import { z } from 'zod';

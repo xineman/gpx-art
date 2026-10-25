@@ -7,12 +7,12 @@
 		exportFilename,
 		parseDrawingCollection,
 		serializeDrawings
-	} from '$lib/drawing/io';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { dismissibleLayer } from '$lib/util/dismissible-layer';
-	import { pointer } from '$lib/util/pointer.svelte';
+	} from '#lib/drawing/io.js';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	let open = $state(false);
 	let triggerBtn = $state<HTMLButtonElement | null>(null);

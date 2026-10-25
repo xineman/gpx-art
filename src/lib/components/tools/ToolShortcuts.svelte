@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { tools, type ToolId } from '$lib/state/tools.svelte';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { tools, type ToolId } from '#lib/state/tools.svelte.js';
 
 	/**
 	 * Global tool letter shortcuts, Space-to-pan, and undo/redo.

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import type { Map as MaplibreMap, MapMouseEvent } from 'maplibre-gl';
-	import { useMap } from '$lib/map/context';
-	import { drawings } from '$lib/state/drawings.svelte';
-	import { route } from '$lib/state/route.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { tools } from '$lib/state/tools.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
-	import { routeWaypointAtPoint } from '$lib/map/waypoint-hit';
-	import { ROUTE_SOURCE, ensureRouteLayers, setSourceData } from '$lib/drawing/layers';
+	import { useMap } from '#lib/map/context.js';
+	import { drawings } from '#lib/state/drawings.svelte.js';
+	import { route } from '#lib/state/route.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { tools } from '#lib/state/tools.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
+	import { routeWaypointAtPoint } from '#lib/map/waypoint-hit.js';
+	import { ROUTE_SOURCE, ensureRouteLayers, setSourceData } from '#lib/drawing/layers.js';
 
 	const mapHandle = useMap();
 

@@ -1,8 +1,7 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { generateRoute, parseRouteRequest } from '$lib/routing/matching/route.server';
-import { resolveValhallaConfig } from '$lib/routing/providers/valhalla/config.server';
-import type { RouteFailure } from '$lib/routing/shared/failure';
+import { generateRoute, parseRouteRequest } from '#lib/routing/matching/route.server.js';
+import { resolveValhallaConfig } from '#lib/routing/providers/valhalla/config.server.js';
+import type { RouteFailure } from '#lib/routing/shared/failure.js';
 
 function routeFailureHttpStatus(failure: RouteFailure): number {
 	if (failure.status === 400) return 400;
@@ -16,17 +15,17 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		body = await request.json();
 	} catch {
-		return json({ ok: false, error: 'Request body must be JSON.' }, { status: 400 });
+		return Response.json({ ok: false, error: 'Request body must be JSON.' }, { status: 400 });
 	}
 
 	const parsed = parseRouteRequest(body);
 	if (!parsed.ok) {
-		return json(parsed, { status: 400 });
+		return Response.json(parsed, { status: 400 });
 	}
 
 	const valhalla = resolveValhallaConfig();
 	if (!valhalla.ok) {
-		return json(valhalla, { status: 503 });
+		return Response.json(valhalla, { status: 503 });
 	}
 
 	const result = await generateRoute(parsed.request, {
@@ -34,8 +33,8 @@ export const POST: RequestHandler = async ({ request }) => {
 	});
 
 	if (!result.ok) {
-		return json(result, { status: routeFailureHttpStatus(result) });
+		return Response.json(result, { status: routeFailureHttpStatus(result) });
 	}
 
-	return json(result);
+	return Response.json(result);
 };

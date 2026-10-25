@@ -1,7 +1,7 @@
 import type { Map as MaplibreMap, MapMouseEvent, MapTouchEvent } from 'maplibre-gl';
 import type { Geometry, Position } from 'geojson';
-import type { ToolId } from '$lib/state/tools.svelte';
-import { routeWaypointAtPoint } from '$lib/map/waypoint-hit';
+import type { ToolId } from '#lib/state/tools.svelte.js';
+import { routeWaypointAtPoint } from '#lib/map/waypoint-hit.js';
 import { closedLineString, lineString, rectangleLineString, shouldSample } from './geo';
 import { PREVIEW_SOURCE, previewCollection, setSourceData } from './layers';
 import { isDoubleTap, isWithinPx, resolveVertexClick, toLngLat, type ScreenPoint } from './tap';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Position } from 'geojson';
-import { MAX_VIAS } from '$lib/config/routing';
-import { distanceBetween } from '$lib/geometry/distance';
+import { MAX_VIAS } from '#lib/config/routing.js';
+import { distanceBetween } from '#lib/geometry/distance.js';
 import { densifySegments, guideToVias, simplifyRdp, strideToMax } from './vias';
 
 function denseLine(n: number): Position[] {

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import MapPinned from '@lucide/svelte/icons/map-pinned';
-	import { status } from '$lib/state/status.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import { status } from '#lib/state/status.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 	import SketchDistancePill from './SketchDistancePill.svelte';
 
 	interface Props {

@@ -47,7 +47,7 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 - **@lucide/svelte** for tool icons.
 - **Vitest** for unit + component tests (`src/**/*.{test,spec}.{js,ts}`; `*.svelte.spec.ts` runs in browser via Playwright provider).
 - **Prettier**: tabs, single quotes, no trailing commas, 100-col width (`prettier.config.js`). Tailwind class sorting via `prettier-plugin-tailwindcss`.
-- **Path alias**: `$lib` → `src/lib`.
+- **Path alias**: `#lib` → `src/lib`.
 
 ## Layout
 

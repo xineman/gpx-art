@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_VIAS } from '$lib/config/routing';
+import { MAX_VIAS } from '#lib/config/routing.js';
 import { parseMatrixRequest } from './matrix.server';
 
 describe('parseMatrixRequest', () => {

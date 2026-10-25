@@ -3,13 +3,13 @@
 	import Map from './Map.svelte';
 	import DrawingLayer from './DrawingLayer.svelte';
 	import RouteLayer from './RouteLayer.svelte';
-	import HistoryPanel from '$lib/components/history/HistoryPanel.svelte';
-	import RouteRoadRibbon from '$lib/components/route/RouteRoadRibbon.svelte';
-	import StatusBar from '$lib/components/status/StatusBar.svelte';
-	import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
-	import ToolShortcuts from '$lib/components/tools/ToolShortcuts.svelte';
-	import { MAP_STYLE_URL, WARSAW_BOUNDS, WARSAW_CENTER, WARSAW_ZOOM } from '$lib/config/map';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import HistoryPanel from '#lib/components/history/HistoryPanel.svelte';
+	import RouteRoadRibbon from '#lib/components/route/RouteRoadRibbon.svelte';
+	import StatusBar from '#lib/components/status/StatusBar.svelte';
+	import ToolsPanel from '#lib/components/tools/ToolsPanel.svelte';
+	import ToolShortcuts from '#lib/components/tools/ToolShortcuts.svelte';
+	import { MAP_STYLE_URL, WARSAW_BOUNDS, WARSAW_CENTER, WARSAW_ZOOM } from '#lib/config/map.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	interface Props {
 		center?: [number, number];

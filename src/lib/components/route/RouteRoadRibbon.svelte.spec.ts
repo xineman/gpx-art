@@ -61,7 +61,7 @@ const mocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock('$lib/state/route.svelte', () => ({ route: mocks.route }));
+vi.mock('#lib/state/route.svelte.js', () => ({ route: mocks.route }));
 
 import RouteRoadRibbon from './RouteRoadRibbon.svelte';
 

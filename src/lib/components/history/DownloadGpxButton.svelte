@@ -1,9 +1,9 @@
 <script lang="ts">
 	import Download from '@lucide/svelte/icons/download';
-	import TooltipArrow from '$lib/components/ui/TooltipArrow.svelte';
-	import { route } from '$lib/state/route.svelte';
-	import { status } from '$lib/state/status.svelte';
-	import { pointer } from '$lib/util/pointer.svelte';
+	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
+	import { route } from '#lib/state/route.svelte.js';
+	import { status } from '#lib/state/status.svelte.js';
+	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	const showHoverTip = $derived(pointer.ready && pointer.fineHover);
 	const canDownload = $derived(route.isReady);
