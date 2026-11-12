@@ -63,7 +63,10 @@ src/
     config/map.ts         # style URL, Warsaw center/bounds/zoom
     config/routing.ts     # via caps / simplify tolerances (client-safe)
     drawing/              # framework-agnostic MapLibre draw logic
-      controller.ts       # pointer/keyboard interaction → draft/commit
+      controller.ts       # applies drawing updates to MapLibre and the editor
+      map-input.ts        # MapLibre and window listeners → drawing events
+      session.ts          # gesture state, draft updates, and commit rules
+      draft.ts            # draft types and preview/status projection
       geo.ts              # Open / closed LineString helpers, sampling
       layers.ts           # sketch + preview + route/detour GeoJSON layers
       io.ts               # GeoJSON sketch parse/serialize/download
@@ -105,7 +108,7 @@ src/
 **Drawing pipeline.**
 
 1. `tools` / `drawings` / `status` are **module-level runes** (shared singletons). Every importer sees the same signals — use this pattern for cross-tree UI state, not classes with per-import instances.
-2. `DrawingController` is framework-agnostic MapLibre event code. `DrawingLayer.svelte` wires it to runes via `$effect`, commits with `drawings.add(...)`, and feeds live draft geometry into `status` for the status bar.
+2. `MapDrawingInput` translates MapLibre and window events. `DrawingSession` owns drag and vertex gestures and returns updates for `DrawingController` to apply. `DrawingLayer.svelte` wires the controller to runes via `$effect`, commits with `drawings.add(...)`, and feeds live draft geometry into `status`.
 3. `layers.ts` owns source/layer IDs and paint; colors come from `layout.css` theme tokens, not hardcoded hex. Keep pure geometry in `geo.ts` / `geometry/`.
 4. `FullscreenMap` owns overlay placement (status + tools stack + bottom history) and mounts `ToolShortcuts` once. Tool/history chrome should not self-position with absolute insets or register global keys.
 5. `pointer.fineHover` defaults touch-safe (`false`) until client `matchMedia`; status uses long touch hints when coarse, tooltips only when `pointer.ready && fineHover`.

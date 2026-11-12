@@ -60,7 +60,7 @@ describe('DrawingController', () => {
 	let map: FakeMap;
 	let commits: Array<{ geometry: Geometry; tool: string }>;
 	let drafts: Array<DraftSnapshot | null>;
-	let windowHandlers: Map<string, (event: KeyboardEvent) => void>;
+	let windowHandlers: Map<string, Handler>;
 	let controller: DrawingController;
 
 	beforeEach(() => {
@@ -69,7 +69,7 @@ describe('DrawingController', () => {
 		drafts = [];
 		windowHandlers = new Map();
 		vi.stubGlobal('window', {
-			addEventListener: vi.fn((name: string, handler: (event: KeyboardEvent) => void) => {
+			addEventListener: vi.fn((name: string, handler: Handler) => {
 				windowHandlers.set(name, handler);
 			}),
 			removeEventListener: vi.fn((name: string) => windowHandlers.delete(name))
@@ -93,7 +93,11 @@ describe('DrawingController', () => {
 	}
 
 	function pressEnter() {
-		windowHandlers.get('keydown')?.({ key: 'Enter' } as KeyboardEvent);
+		emitWindow('keydown', { key: 'Enter' });
+	}
+
+	function emitWindow(name: string, event: unknown) {
+		windowHandlers.get(name)?.(event as never);
 	}
 
 	it('commits a near-closed pencil stroke as a closed LineString', () => {
@@ -109,6 +113,54 @@ describe('DrawingController', () => {
 			[100, 0],
 			[5, 5],
 			[0, 0]
+		]);
+	});
+
+	it('finishes a mouse stroke released outside the map exactly once', () => {
+		map.emit('mousedown', mouseEvent(0, 0));
+		emitWindow('mousemove', { clientX: 100, clientY: 10 });
+		emitWindow('mouseup', { clientX: 150, clientY: 20 });
+		map.emit('mouseup', mouseEvent(150, 20));
+
+		expect(commits).toHaveLength(1);
+		expect(commits[0]?.geometry).toHaveProperty('coordinates', [
+			[0, 0],
+			[100, 10],
+			[150, 20]
+		]);
+		expect(windowHandlers.has('mousemove')).toBe(false);
+		expect(windowHandlers.has('mouseup')).toBe(false);
+	});
+
+	it.each(['map', 'window'])('discards a touch stroke cancelled on the %s', (target) => {
+		map.emit('touchstart', { ...mouseEvent(0, 0), points: [{ x: 0, y: 0 }] });
+		map.emit('touchmove', mouseEvent(100, 10));
+		expect(drafts.at(-1)?.vertexCount).toBe(2);
+
+		if (target === 'map') map.emit('touchcancel', {});
+		else
+			emitWindow('touchcancel', { touches: [], changedTouches: [{ clientX: 110, clientY: 20 }] });
+
+		expect(commits).toHaveLength(0);
+		expect(drafts.at(-1)).toBeNull();
+		expect(windowHandlers.has('touchmove')).toBe(false);
+		expect(windowHandlers.has('touchcancel')).toBe(false);
+	});
+
+	it('preserves a polyline draft while the map is temporarily pannable', () => {
+		controller.setTool('polyline');
+		click(0, 0);
+		controller.setPanning(true);
+		expect(map.dragPan.enable).toHaveBeenCalled();
+		click(100, 100);
+		controller.setPanning(false);
+		click(100, 0);
+		pressEnter();
+
+		expect(commits).toHaveLength(1);
+		expect(commits[0]?.geometry).toHaveProperty('coordinates', [
+			[0, 0],
+			[100, 0]
 		]);
 	});
 
