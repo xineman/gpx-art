@@ -88,6 +88,62 @@ describe('buildTopologyGraph', () => {
 		expect(junction && degree(graph, junction.id)).toBe(3);
 	});
 
+	it('preserves an exact T-junction when a nearby stroke also needs to snap', () => {
+		const spur = open([0.00012, 0], [0.00012, 0.001]);
+		const host = open([0, 0], [0.002, 0]);
+		const approach = open([-0.00002, -0.00007], [-0.00002, -0.001]);
+
+		for (const guides of [
+			[spur, host, approach],
+			[host, spur, approach],
+			[approach, host, spur]
+		]) {
+			const graph = graphFor(guides);
+			const junction = nodeAt(graph, [0.00012, 0]);
+			expect(graph.nodes).toHaveLength(5);
+			expect(graph.edges).toHaveLength(4);
+			expect(junction && degree(graph, junction.id)).toBe(3);
+		}
+	});
+
+	it('splits a sloped host at the accepted snap even when the projection rounds off the line', () => {
+		const graph = graphFor([
+			open([21.01001237, 52.2300131], [21.01032347, 52.2301544]),
+			open([21.01015237, 52.2301031], [21.01018237, 52.2310131])
+		]);
+
+		expect(graph.edges).toHaveLength(3);
+		expect(graph.nodes.filter(({ id }) => degree(graph, id) === 3)).toHaveLength(1);
+	});
+
+	it.each([
+		['collapse', open([0.001, 0.00002], [0.001, 0.00006])],
+		['overlap', open([0.0005, 0.00003], [0.0015, 0.00003])]
+	])('keeps both strokes when snapping would cause %s', (_, stroke) => {
+		const guides = [open([0, 0], [0.002, 0]), stroke];
+		expect(graphFor(guides)).toEqual(graphFor(guides, { snapToleranceM: 0 }));
+	});
+
+	it('keeps the original geometry when moving one end would overlap another edge', () => {
+		const guides = [
+			open([0, 0], [0.002, 0]),
+			open([0.001, 0.00005], [0.003, 0]),
+			open([0.002, 0], [0.003, 0])
+		];
+		expect(graphFor(guides)).toEqual(graphFor(guides, { snapToleranceM: 0 }));
+	});
+
+	it('splits an additional crossing created by an accepted snap', () => {
+		const graph = graphFor([
+			closed([-0.0005, 0], [0.0005, 0], [0.0005, -0.001], [-0.0005, -0.001]),
+			open([0, 0.00006], [0.003, 0.00006]),
+			open([0.0015, 0.00002], [0.0015, 0.00004])
+		]);
+
+		expect(graph.edges).toHaveLength(9);
+		expect(graph.nodes.filter(({ id }) => degree(graph, id) === 4)).toHaveLength(1);
+	});
+
 	it('honors custom, disabled, and default snapping tolerances', () => {
 		const nearGuides = [open([0, 0], [0.002, 0]), open([0.001, 0.00005], [0.001, 0.001])];
 		expect(graphFor(nearGuides, { snapToleranceM: 5 }).edges).toHaveLength(2);

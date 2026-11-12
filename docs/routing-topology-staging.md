@@ -33,6 +33,11 @@ does not choose a traversal.
 Extend graph construction to strokes whose endpoints nearly touch another path. Project and snap
 the endpoint onto the path, create a junction, and split the path there.
 
+Split exact intersections first, then consider only free endpoints for snapping. An accepted snap
+records a junction on the host segment and keeps that segment fixed for subsequent snaps. If moving
+either or both endpoints of a segment would collapse it or introduce an overlap, keep the segment
+in its original position.
+
 This is an enhancement to exact noding. Exactly connected drawings can work without it, while
 freehand sketches and imported geometry will usually need a configurable snapping tolerance.
 
