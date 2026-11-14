@@ -40,7 +40,7 @@ export type TopologyGraph = {
 };
 
 export type TopologyBuildOptions = {
-	/** Gaps up to this length are closed, and dead-end stubs up to it are trimmed. */
+	/** Gaps up to this length are closed. Drawn branches are retained regardless of length. */
 	snapToleranceM?: number;
 };
 
@@ -708,59 +708,8 @@ function snapFreeEnds(pieces: Segment[], toleranceM: number): Segment[] {
 }
 
 /**
- * Remove dead-end chains no longer than the tolerance that hang off a junction: overshoots past a
- * crossing. Shortest chains go first, and a chain stays once its junction no longer is one, so an
- * isolated short stroke is never deleted.
- */
-function trimStubs(pieces: Segment[], toleranceM: number): Segment[] {
-	if (!Number.isFinite(toleranceM) || toleranceM <= 0) return pieces;
-
-	const keys = pieces.map(({ start, end }) => [positionKey(start), positionKey(end)] as const);
-	const incident = new Map<string, number[]>();
-	for (const [piece, pieceKeys] of keys.entries()) {
-		for (const key of pieceKeys) {
-			const pieceIds = incident.get(key);
-			if (pieceIds) pieceIds.push(piece);
-			else incident.set(key, [piece]);
-		}
-	}
-
-	const stubs: { tip: Position; junction: string; pieces: number[]; lengthM: number }[] = [];
-	for (const [tipKey, tipPieces] of incident) {
-		if (tipPieces.length !== 1) continue;
-		let piece = tipPieces[0]!;
-		const tip = keys[piece]![0] === tipKey ? pieces[piece]!.start : pieces[piece]!.end;
-		const chain: number[] = [];
-		let node = tipKey;
-		let lengthM = 0;
-		for (;;) {
-			chain.push(piece);
-			lengthM += distanceBetween(pieces[piece]!.start, pieces[piece]!.end);
-			if (lengthM > toleranceM) break;
-			const [startKey, endKey] = keys[piece]!;
-			node = node === startKey ? endKey : startKey;
-			const next = incident.get(node)!;
-			if (next.length >= 3) stubs.push({ tip, junction: node, pieces: chain, lengthM });
-			if (next.length !== 2) break;
-			piece = next[0] === piece ? next[1]! : next[0]!;
-		}
-	}
-	stubs.sort(
-		(left, right) => left.lengthM - right.lengthM || comparePositions(left.tip, right.tip)
-	);
-
-	const removed = new Set<number>();
-	for (const { junction, pieces: chain } of stubs) {
-		const junctionPieces = incident.get(junction)!.filter((piece) => !removed.has(piece));
-		if (junctionPieces.length < 3) continue;
-		for (const piece of chain) removed.add(piece);
-	}
-	return removed.size ? pieces.filter((_, piece) => !removed.has(piece)) : pieces;
-}
-
-/**
  * Build an undirected graph from exact intersections, merged collinear overlaps, and inferred near
- * connections, without short dead-end stubs that hang off junctions.
+ * connections. Preserve short branches: their length does not distinguish details from overshoots.
  */
 export function buildTopologyGraph(
 	guides: GuidePath[],
@@ -780,10 +729,7 @@ export function buildTopologyGraph(
 	}
 
 	const toleranceM = options.snapToleranceM ?? TOPOLOGY_SNAP_TOLERANCE_M;
-	const pieces = trimStubs(
-		snapFreeEnds(splitSegments(segments, positions), toleranceM),
-		toleranceM
-	);
+	const pieces = snapFreeEnds(splitSegments(segments, positions), toleranceM);
 	const nodes: TopologyNode[] = [];
 	const nodeIds = new Map<string, number>();
 	const nodeId = (position: Position) => {

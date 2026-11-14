@@ -180,7 +180,7 @@ describe('buildTopologyGraph', () => {
 		expect(nodesOfDegree(graph, 4)).toHaveLength(2);
 	});
 
-	it('trims a short overshoot past a crossing but keeps an isolated short stroke', () => {
+	it('preserves a short chain past a crossing and an isolated short stroke', () => {
 		const graph = buildTopologyGraph([
 			open(at(0, 0), at(4, 0)),
 			open(at(2, -2), at(2, 0.01), at(2.01, 0.02), at(2, 0.03)),
@@ -188,16 +188,16 @@ describe('buildTopologyGraph', () => {
 		]);
 		const crossing = nodeNear(graph, at(2, 0));
 
-		expect(crossing && degree(graph, crossing.id)).toBe(3);
-		expect(nodesOfDegree(graph, 1)).toHaveLength(5);
-		expect(nodeNear(graph, at(2, 0.03))).toBeUndefined();
+		expect(crossing && degree(graph, crossing.id)).toBe(4);
+		expect(nodesOfDegree(graph, 1)).toHaveLength(6);
+		expect(nodeNear(graph, at(2, 0.03))).toBeDefined();
 		expect(nodeAt(graph, at(10, 10.05))).toBeDefined();
 	});
 
-	it('trims both sides of a short stroke crossing a line', () => {
+	it('preserves both sides of a short stroke crossing a line', () => {
 		const graph = buildTopologyGraph([open(at(0, 0), at(4, 0)), open(at(2, -0.03), at(2, 0.04))]);
-		expect(graph.edges).toHaveLength(2);
-		expect(nodesOfDegree(graph, 1)).toHaveLength(2);
+		expect(graph.edges).toHaveLength(4);
+		expect(nodesOfDegree(graph, 1)).toHaveLength(4);
 	});
 
 	it('honors custom, disabled, and default snapping tolerances', () => {

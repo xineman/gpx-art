@@ -45,13 +45,13 @@ fixed junction on its host, and a host whose own end also moves bends through th
 moving either or both endpoints of a segment would collapse it or introduce an overlap, keep that
 segment in its original position and plan the rest again.
 
-After snapping, remove dead-end chains no longer than the tolerance that hang off a junction: a
-stroke that overshoots a crossing would otherwise force a retraced spur. An isolated short stroke
-is kept.
+Keep short dead-end chains after snapping. Length alone cannot distinguish an accidental
+overshoot from an intentional tick or serif, so both remain part of the traversal. Removing
+overshoots would require an explicit editing action or a user-visible review.
 
 This is an enhancement to exact noding. Exactly connected drawings can work without it, while
-freehand sketches and imported geometry will usually need a configurable tolerance. The same
-tolerance bounds both the gaps that are closed and the stubs that are trimmed.
+freehand sketches and imported geometry will usually need a configurable tolerance. This
+tolerance bounds the gaps that are closed; it does not authorize deleting drawn branches.
 
 ## Phase B: Plan a traversal inside each connected component
 
@@ -96,7 +96,7 @@ of required samples.
 
 ```text
 Done (Phase A + B + C, wired into Route):
-  Exact noding + overlap merging → near-endpoint snapping → stub trimming → Chinese Postman
+  Exact noding + overlap merging → near-endpoint snapping → Chinese Postman
   → walk per component → global via allocation → component ordering → map matching
 ```
 

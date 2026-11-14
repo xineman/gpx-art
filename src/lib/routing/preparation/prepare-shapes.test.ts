@@ -106,17 +106,29 @@ describe('prepareRouteShapes', () => {
 		expect(vias).toHaveLength(7);
 	});
 
-	it('retraces a short spur to its dead-end tip even within the simplify tolerance', () => {
-		const result = prepareRouteShapes([line(at(0, 0), at(2, 0)), line(at(1, 0), at(1, 0.2))], {
-			maxVias: 6
-		});
+	it.each([0.05, 0.2])(
+		'retraces a short spur (height %s) even within the simplify tolerance',
+		(height) => {
+			const result = prepareRouteShapes([line(at(0, 0), at(2, 0)), line(at(1, 0), at(1, height))], {
+				maxVias: 6
+			});
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.shapes).toHaveLength(1);
+			const { vias } = result.shapes[0]!;
+			expect(visits(vias, at(1, height))).toBe(1);
+			expect(visits(vias, at(1, 0))).toBe(2);
+			expect(vias).toHaveLength(5);
+		}
+	);
+
+	it('retains both tips of a short crossing stroke in route vias', () => {
+		const tips = [at(1, -0.03), at(1, 0.04)];
+		const result = prepareRouteShapes([line(at(0, 0), at(2, 0)), line(...tips)]);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.shapes).toHaveLength(1);
-		const { vias } = result.shapes[0]!;
-		expect(visits(vias, at(1, 0.2))).toBe(1);
-		expect(visits(vias, at(1, 0))).toBe(2);
-		expect(vias).toHaveLength(5);
+		for (const tip of tips) expect(visits(result.shapes[0]!.vias, tip)).toBe(1);
 	});
 
 	it('starts a closed walk at its junction so the loop start costs no extra via', () => {
