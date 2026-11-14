@@ -1,12 +1,11 @@
 import type { Feature, Geometry } from 'geojson';
-import { distanceLabelFromFeatures, featuresPointCount, pointLabelFromCount } from './stats.js';
+import { distanceLabelFromFeatures, featuresPointCount, pointLabelFromCount } from './stats';
+import { flash } from '#lib/util/flash.svelte.js';
 import { pointer } from '#lib/util/pointer.svelte.js';
 import { drawings } from './drawings.svelte';
 import { toolById } from './tools';
 import { tools } from './tools.svelte';
 import type { ToolId } from './types';
-
-const FLASH_MS = 2200;
 
 function toolLabel(id: string): string {
 	return toolById(id)?.label ?? id.charAt(0).toUpperCase() + id.slice(1);
@@ -27,12 +26,10 @@ function toolReadyStatus(id: ToolId): string {
 }
 
 /**
- * Flash messages sit on top of the live draft and tool baseline.
- * The shared instance owns the timer and tool-change subscription.
+ * Shared flash messages sit on top of the live draft and tool baseline.
+ * The shared instance owns the tool-change subscription that clears them.
  */
 class StatusState {
-	#flash = $state<string | null>(null);
-	#flashTimer: ReturnType<typeof setTimeout> | undefined;
 	#draftGeometry = $state<Geometry | null>(null);
 	#draftTool = $state<ToolId | null>(null);
 	#draftVertexCount = $state(0);
@@ -44,7 +41,7 @@ class StatusState {
 	}
 
 	get message() {
-		return this.#flash ?? this.#baselineStatus();
+		return flash.message ?? this.#baselineStatus();
 	}
 
 	get distanceLabel() {
@@ -72,19 +69,12 @@ class StatusState {
 	}
 
 	/** Short-lived override; the baseline resumes when it expires. */
-	flash(message: string, ms = FLASH_MS) {
-		clearTimeout(this.#flashTimer);
-		this.#flash = message;
-		this.#flashTimer = setTimeout(() => {
-			this.#flash = null;
-			this.#flashTimer = undefined;
-		}, ms);
+	flash(message: string, ms?: number) {
+		flash.show(message, ms);
 	}
 
 	clearFlash() {
-		clearTimeout(this.#flashTimer);
-		this.#flashTimer = undefined;
-		this.#flash = null;
+		flash.clear();
 	}
 
 	/** Acknowledge a committed drawing. */

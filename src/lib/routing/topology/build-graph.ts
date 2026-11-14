@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import { TOPOLOGY_SNAP_TOLERANCE_M } from '../config.js';
+import { TOPOLOGY_SNAP_TOLERANCE_M } from '../config';
 import type { GuidePath } from '../preparation/types';
 
 const NUMERIC_EPSILON = 1e-12;

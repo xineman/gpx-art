@@ -2,11 +2,11 @@
 	import Files from '@lucide/svelte/icons/files';
 	import FileDown from '@lucide/svelte/icons/file-down';
 	import FileUp from '@lucide/svelte/icons/file-up';
-	import { exportFilename, parseDrawingCollection, serializeDrawings } from '../io.js';
+	import { exportFilename, parseDrawingCollection, serializeDrawings } from '../io';
 	import { downloadTextFile } from '#lib/util/download.js';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '../drawings.svelte.js';
-	import { status } from '../status.svelte.js';
+	import { drawings } from '../drawings.svelte';
+	import { status } from '../status.svelte';
 	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 

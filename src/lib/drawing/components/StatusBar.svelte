@@ -1,6 +1,6 @@
 <script lang="ts">
 	import MapPinned from '@lucide/svelte/icons/map-pinned';
-	import { status } from '../status.svelte.js';
+	import { status } from '../status.svelte';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import SketchDistancePill from './SketchDistancePill.svelte';
 

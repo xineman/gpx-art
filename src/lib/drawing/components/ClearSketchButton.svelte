@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '../drawings.svelte.js';
-	import { status } from '../status.svelte.js';
+	import { drawings } from '../drawings.svelte';
+	import { status } from '../status.svelte';
 	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 

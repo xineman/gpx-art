@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { ToolId } from '../types.js';
-	import { tools } from '../tools.svelte.js';
+	import type { ToolId } from '../types';
+	import { tools } from '../tools.svelte';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
 

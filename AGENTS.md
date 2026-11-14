@@ -47,7 +47,7 @@ Package manager is **pnpm** only (`.npmrc` has `engine-strict=true`). Prefer `pn
 - **@lucide/svelte** for tool icons.
 - **Vitest** for unit + component tests (`src/**/*.{test,spec}.{js,ts}`; `*.svelte.spec.ts` runs in browser via Playwright provider).
 - **Prettier**: tabs, single quotes, no trailing commas, 100-col width (`prettier.config.js`). Tailwind class sorting via `prettier-plugin-tailwindcss`.
-- **Path alias**: `#lib` → `src/lib`.
+- **Path alias**: `#lib` → `src/lib`. Import within a feature (`drawing/`, `routing/`, `map/`) with extensionless relative paths (`'./types'`, `'../route.svelte'`); import across features or from shared folders with `#lib/…` and a `.js` extension (`'#lib/util/pointer.svelte.js'`).
 
 ## Layout
 
@@ -60,7 +60,7 @@ src/
     drawing/              # sketch feature: state, tools, gestures, I/O, and statistics
       drawings.svelte.ts  # completed features + snapshot undo/redo
       tools.svelte.ts     # active tool + Space-to-pan
-      status.svelte.ts    # live sketch status + flash messages + statistics labels
+      status.svelte.ts    # live sketch status (shared flash over draft/tool baseline) + statistics labels
       types.ts           # DrawingFeature + ToolId (no reactive dependencies)
       tools.ts           # tool definitions, hints, and shortcut labels
       components/        # DrawingLayer, tools, sketch actions, status, distance pill
@@ -97,7 +97,7 @@ src/
       theme.ts           # resolve CSS theme colors for map paint
     geometry/            # shared distance calculations (pure)
     components/ui/       # reusable PanelChrome + TooltipArrow
-    util/                # shared pointer, dismissible-layer, and download helpers
+    util/                # shared pointer, flash message, dismissible-layer, and download helpers
   routes/
     +layout.svelte
     +page.svelte         # mounts editor/FullscreenMap
@@ -120,7 +120,7 @@ OpenAPI endpoint, which generates the spec with `zod-openapi`.
 
 **Drawing pipeline.**
 
-1. Reactive application state uses **classes with private mutable rune fields** in `.svelte.ts` modules. Expose computed values as public `readonly $derived` fields instead of forwarding getters; keep getters for mutable state and simple projections. Export one shared instance (`tools`, `drawings`, `route`, `status`, `routingOptions`, `pointer`); consumers import it rather than constructing their own. Keep feature state, components, configuration, and tests under `drawing/` or `routing/`; `editor/` composes the features. Ordinary drawing functions import domain types from `drawing/types.ts`, not reactive state modules. Keep cohesive owned state separate: `RouteState` composes `RouteRefinementState` in `routing/refinement/`, which owns waypoint selections, refinement plans, and move-review focus. Pure calculations remain ordinary functions.
+1. Reactive application state uses **classes with private mutable rune fields** in `.svelte.ts` modules. Expose computed values as public `readonly $derived` fields instead of forwarding getters; keep getters for mutable state and simple projections. Export one shared instance (`tools`, `drawings`, `route`, `status`, `flash`, `routingOptions`, `pointer`); consumers import it rather than constructing their own. Keep feature state, components, configuration, and tests under `drawing/` or `routing/`; `editor/` composes the features. Ordinary drawing functions import domain types from `drawing/types.ts`, not reactive state modules. Routing raises status-bar messages through `util/flash.svelte.ts`, never `drawing/status.svelte.ts`. Keep cohesive owned state separate: `RouteState` composes `RouteRefinementState` in `routing/refinement/`, which owns waypoint selections, refinement plans, and move-review focus. Pure calculations remain ordinary functions.
 2. `MapDrawingInput` translates MapLibre and window events. `DrawingSession` owns drag and vertex gestures and returns updates for `DrawingController` to apply. `DrawingLayer.svelte` wires the controller to runes via `$effect`, commits with `drawings.add(...)`, and feeds live draft geometry into `status`.
 3. `drawing/map/layers.ts` owns sketch/preview paint; `routing/map/layers.ts` owns route/detour paint and sprites. Both use shared `map/sources.ts` and `map/theme.ts` helpers. Colors come from `layout.css` theme tokens. Keep pure geometry in `geo.ts` / `geometry/`.
 4. `editor/FullscreenMap` owns overlay placement, mounts `ToolShortcuts` once, and supplies drawing hit filtering so route waypoint interactions take priority. It mounts `DrawingLayer` before `RouteLayer` to preserve overlay order. `EditorToolbar` composes sketch and route controls. Tool/action chrome should not self-position with absolute insets or register global keys.

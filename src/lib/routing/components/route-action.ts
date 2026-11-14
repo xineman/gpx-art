@@ -1,5 +1,5 @@
-import { MIN_VIAS } from '../config.js';
-import type { RouteLoadingAction, RouteStatus } from '../route.svelte.js';
+import { MIN_VIAS } from '../config';
+import type { RouteLoadingAction, RouteStatus } from '../route.svelte';
 
 export type RouteActionKind = 'route' | 'refine' | 'ready' | 'keep' | 'loading';
 

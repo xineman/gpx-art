@@ -5,8 +5,8 @@
 	import Square from '@lucide/svelte/icons/square';
 	import Hand from '@lucide/svelte/icons/hand';
 	import PanelChrome from '#lib/components/ui/PanelChrome.svelte';
-	import { TOOLS } from '../tools.js';
-	import type { ToolId } from '../types.js';
+	import { TOOLS } from '../tools';
+	import type { ToolId } from '../types';
 	import ToolButton from './ToolButton.svelte';
 
 	interface Props {

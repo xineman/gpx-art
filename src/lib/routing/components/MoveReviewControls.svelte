@@ -1,8 +1,8 @@
 <script lang="ts">
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import { route } from '../route.svelte.js';
-	import { status } from '#lib/drawing/status.svelte.js';
+	import { route } from '../route.svelte';
+	import { flash } from '#lib/util/flash.svelte.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	const waypointIndexes = $derived(route.moveWaypointIndexes);
@@ -14,7 +14,7 @@
 		const waypointIndex = route.reviewMoveWaypoint(offset);
 		if (waypointIndex == null) return;
 		const position = route.moveWaypointIndexes.indexOf(waypointIndex) + 1;
-		status.flash(`Showing proposed move ${position} of ${route.moveWaypointCount}.`);
+		flash.show(`Showing proposed move ${position} of ${route.moveWaypointCount}.`);
 	}
 </script>
 

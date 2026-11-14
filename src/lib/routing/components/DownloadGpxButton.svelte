@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Download from '@lucide/svelte/icons/download';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
-	import { route } from '../route.svelte.js';
-	import { status } from '#lib/drawing/status.svelte.js';
+	import { route } from '../route.svelte';
+	import { flash } from '#lib/util/flash.svelte.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	const showHoverTip = $derived(pointer.ready && pointer.fineHover);
@@ -11,7 +11,7 @@
 	function onDownload() {
 		if (!canDownload) return;
 		route.downloadGpx();
-		status.flash('GPX downloaded.');
+		flash.show('GPX downloaded.');
 	}
 </script>
 

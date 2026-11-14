@@ -2,7 +2,7 @@
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import Redo2 from '@lucide/svelte/icons/redo-2';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '../drawings.svelte.js';
+	import { drawings } from '../drawings.svelte';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 
 	/**

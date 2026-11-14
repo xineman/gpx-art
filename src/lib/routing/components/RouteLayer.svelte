@@ -3,12 +3,12 @@
 	import type { Map as MaplibreMap, MapMouseEvent } from 'maplibre-gl';
 	import { useMap } from '#lib/map/context.js';
 	import { drawings } from '#lib/drawing/drawings.svelte.js';
-	import { route } from '../route.svelte.js';
-	import { status } from '#lib/drawing/status.svelte.js';
+	import { route } from '../route.svelte';
+	import { flash } from '#lib/util/flash.svelte.js';
 	import { tools } from '#lib/drawing/tools.svelte.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
-	import { routeWaypointAtPoint } from '../map/waypoint-hit.js';
-	import { ROUTE_SOURCE, ensureRouteLayers } from '../map/layers.js';
+	import { routeWaypointAtPoint } from '../map/waypoint-hit';
+	import { ROUTE_SOURCE, ensureRouteLayers } from '../map/layers';
 	import { setSourceData } from '#lib/map/sources.js';
 
 	const mapHandle = useMap();
@@ -62,7 +62,7 @@
 						? 'Remove waypoint selected'
 						: 'Waypoint kept';
 			const keepMinimum = route.pendingWaypointCount > 0 && !route.canRefineRoute;
-			status.flash(
+			flash.show(
 				keepMinimum ? `${message} · keep at least 2 waypoints to refine the route.` : `${message}.`
 			);
 		}

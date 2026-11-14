@@ -1,6 +1,6 @@
 import type { Geometry } from 'geojson';
 import type { Map as MaplibreMap } from 'maplibre-gl';
-import type { ToolId } from './types.js';
+import type { ToolId } from './types';
 import { projectDraft, type DraftSnapshot } from './draft';
 import { PREVIEW_SOURCE, previewCollection } from './map/layers';
 import { setSourceData } from '#lib/map/sources.js';

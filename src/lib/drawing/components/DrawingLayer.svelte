@@ -2,12 +2,12 @@
 	import { onDestroy } from 'svelte';
 	import type { Map as MaplibreMap, PointLike } from 'maplibre-gl';
 	import { useMap } from '#lib/map/context.js';
-	import { tools } from '../tools.svelte.js';
-	import { drawings } from '../drawings.svelte.js';
-	import { status } from '../status.svelte.js';
-	import { DrawingController } from '../controller.js';
-	import { isClosedLineString } from '../geo.js';
-	import { DRAWINGS_SOURCE, ensureDrawingLayers } from '../map/layers.js';
+	import { tools } from '../tools.svelte';
+	import { drawings } from '../drawings.svelte';
+	import { status } from '../status.svelte';
+	import { DrawingController } from '../controller';
+	import { isClosedLineString } from '../geo';
+	import { DRAWINGS_SOURCE, ensureDrawingLayers } from '../map/layers';
 	import { setSourceData } from '#lib/map/sources.js';
 
 	let { ignorePoint }: { ignorePoint?: (map: MaplibreMap, point: PointLike) => boolean } = $props();

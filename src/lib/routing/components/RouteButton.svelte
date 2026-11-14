@@ -7,11 +7,11 @@
 	import RouteIcon from '@lucide/svelte/icons/route';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
 	import { drawings } from '#lib/drawing/drawings.svelte.js';
-	import { route } from '../route.svelte.js';
-	import { routingOptions } from '../routing-options.svelte.js';
-	import { status } from '#lib/drawing/status.svelte.js';
+	import { route } from '../route.svelte';
+	import { routingOptions } from '../routing-options.svelte';
+	import { flash } from '#lib/util/flash.svelte.js';
 	import { tools } from '#lib/drawing/tools.svelte.js';
-	import { isSupersededFailure, type RouteFailure } from '../api/failure.js';
+	import { isSupersededFailure, type RouteFailure } from '../api/failure';
 	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import { routeActionModel } from './route-action';
@@ -45,10 +45,10 @@
 
 	function handleFailure(failure: RouteFailure) {
 		if (isSupersededFailure(failure)) {
-			status.clearFlash();
+			flash.clear();
 			return;
 		}
-		status.flash(failure.error);
+		flash.show(failure.error);
 	}
 
 	async function onPrimary() {
@@ -56,7 +56,7 @@
 		if (kind !== 'route' && kind !== 'refine') return;
 
 		closeOptions();
-		status.flash(kind === 'refine' ? 'Refining route…' : 'Routing…', 60_000);
+		flash.show(kind === 'refine' ? 'Refining route…' : 'Routing…', 60_000);
 		const result =
 			kind === 'refine'
 				? await route.refineRoute()
@@ -69,13 +69,13 @@
 		}
 
 		tools.select('pan');
-		status.flash(resultMessage(kind === 'refine' ? 'Route refined' : 'Route ready'));
+		flash.show(resultMessage(kind === 'refine' ? 'Route refined' : 'Route ready'));
 	}
 
 	function toggleAutoRefine() {
 		const next = !routingOptions.autoRefineOnGenerate;
 		routingOptions.setAutoRefineOnGenerate(next);
-		status.flash(`Automatic refinement ${next ? 'on' : 'off'}.`);
+		flash.show(`Automatic refinement ${next ? 'on' : 'off'}.`);
 	}
 
 	function closeOptions() {
@@ -92,7 +92,7 @@
 
 	async function onReset() {
 		if (!route.hasRefinedRoute || route.isLoading) return;
-		status.flash('Restoring sketch route…', 60_000);
+		flash.show('Restoring sketch route…', 60_000);
 		const result = await route.resetFromSketch(drawings.features, drawings.revision);
 		if (!result.ok) {
 			handleFailure(result);
@@ -100,7 +100,7 @@
 		}
 
 		tools.select('pan');
-		status.flash(resultMessage('Sketch route restored'));
+		flash.show(resultMessage('Sketch route restored'));
 	}
 
 	const baseSegment = [

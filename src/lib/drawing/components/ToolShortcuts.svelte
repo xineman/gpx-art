@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { drawings } from '../drawings.svelte.js';
-	import { tools } from '../tools.svelte.js';
-	import type { ToolId } from '../types.js';
+	import { drawings } from '../drawings.svelte';
+	import { tools } from '../tools.svelte';
+	import type { ToolId } from '../types';
 
 	/**
 	 * Global tool letter shortcuts, Space-to-pan, and undo/redo.

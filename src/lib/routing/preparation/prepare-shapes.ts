@@ -1,5 +1,5 @@
 import type { Feature } from 'geojson';
-import { MAX_VIAS, MIN_VIAS } from '../config.js';
+import { MAX_VIAS, MIN_VIAS } from '../config';
 import { pathLength } from '#lib/geometry/distance.js';
 import { extractGuidePaths } from './extract';
 import type { GuidePath, PreparedRouteShape } from './types';

@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
-import type { DrawingFeature } from './types.js';
+import type { DrawingFeature } from './types';
 
 export type ParseDrawingsResult =
 	{ ok: true; features: DrawingFeature[] } | { ok: false; error: string };
