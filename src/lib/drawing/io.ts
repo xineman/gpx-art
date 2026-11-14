@@ -31,15 +31,9 @@ function normalizeFeature(raw: unknown, index: number): DrawingFeature | { error
 	const tool =
 		typeof props.tool === 'string' && props.tool.trim() ? props.tool.trim() : DEFAULT_TOOL;
 
-	const idFromProps = typeof props.id === 'string' && props.id.trim() ? props.id.trim() : null;
-	const idFromFeature =
-		typeof raw.id === 'string' || typeof raw.id === 'number' ? String(raw.id) : null;
-	const id = idFromProps ?? idFromFeature ?? crypto.randomUUID();
-
 	const feature: DrawingFeature = {
 		type: 'Feature',
-		id,
-		properties: { tool, id },
+		properties: { tool },
 		geometry: raw.geometry
 	};
 	return feature;

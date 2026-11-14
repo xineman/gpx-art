@@ -59,10 +59,6 @@ class StatusState {
 		return pointLabelFromCount(committed + this.#draftVertexCount);
 	}
 
-	get draftActive() {
-		return this.#draftTool != null;
-	}
-
 	/** Report a live draft; pass `tool: null` to clear it. */
 	setDraft(
 		tool: ToolId | null,
@@ -162,7 +158,7 @@ class StatusState {
 			...committed,
 			{
 				type: 'Feature',
-				properties: { tool: this.#draftTool, id: '__draft__' },
+				properties: { tool: this.#draftTool },
 				geometry: this.#draftGeometry
 			}
 		];

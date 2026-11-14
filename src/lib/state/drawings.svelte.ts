@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 
-export type DrawingFeature = Feature<Geometry, { tool: string; id: string }>;
+export type DrawingFeature = Feature<Geometry, { tool: string }>;
 
 /**
  * Completed drawings as a GeoJSON FeatureCollection.
@@ -44,11 +44,9 @@ class DrawingsState {
 		return this.#future.length > 0;
 	}
 	add(geometry: Geometry, tool: string) {
-		const id = crypto.randomUUID();
 		const feature: DrawingFeature = {
 			type: 'Feature',
-			id,
-			properties: { tool, id },
+			properties: { tool },
 			geometry
 		};
 		this.#commit([...this.#features, feature]);
@@ -91,12 +89,6 @@ class DrawingsState {
 		this.#past = [];
 		this.#future = [];
 		this.#revision += 1;
-	}
-	remove(id: string) {
-		const next = this.#features.filter((f) => f.properties.id !== id);
-		if (next.length === this.#features.length) return;
-		// Non-baseline wipe of one id — still one history step so stacks stay coherent.
-		this.#commit(next);
 	}
 }
 

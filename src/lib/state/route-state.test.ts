@@ -16,7 +16,7 @@ import { route } from './route.svelte';
 
 const line: Feature = {
 	type: 'Feature',
-	properties: { id: 'line', tool: 'polyline' },
+	properties: { tool: 'polyline' },
 	geometry: {
 		type: 'LineString',
 		coordinates: [
@@ -269,7 +269,6 @@ describe('route state', () => {
 		expect(routeGeometry()).toEqual(success.geometry);
 		expect(waypointCoordinates()).toEqual(success.waypoints);
 		expect(route.distanceLabel).toBe('1.3 km');
-		expect(route.roadEdges).toEqual([]);
 		expect(route.roadSpans).toEqual([]);
 	});
 

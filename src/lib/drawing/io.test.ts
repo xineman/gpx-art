@@ -10,7 +10,7 @@ const line = {
 };
 
 describe('parseDrawingCollection', () => {
-	it('accepts a FeatureCollection and normalizes ids/tools', () => {
+	it('accepts a FeatureCollection, normalizes tools, and discards legacy ids', () => {
 		const result = parseDrawingCollection({
 			type: 'FeatureCollection',
 			features: [
@@ -31,11 +31,10 @@ describe('parseDrawingCollection', () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 
-		expect(result.features).toHaveLength(2);
-		expect(result.features[0]!.properties).toEqual({ tool: 'polyline', id: 'a1' });
-		expect(result.features[1]!.properties.tool).toBe('imported');
-		expect(result.features[1]!.properties.id).toBe('42');
-		expect(result.features[1]!.id).toBe('42');
+		expect(result.features).toEqual([
+			{ type: 'Feature', properties: { tool: 'polyline' }, geometry: line },
+			{ type: 'Feature', properties: { tool: 'imported' }, geometry: line }
+		]);
 	});
 
 	it('accepts a single Feature', () => {
@@ -49,7 +48,6 @@ describe('parseDrawingCollection', () => {
 		if (!result.ok) return;
 		expect(result.features).toHaveLength(1);
 		expect(result.features[0]!.properties.tool).toBe('pencil');
-		expect(result.features[0]!.properties.id.length).toBeGreaterThan(0);
 	});
 
 	it('rejects non-geojson roots', () => {
@@ -82,8 +80,7 @@ describe('serializeDrawings', () => {
 			features: [
 				{
 					type: 'Feature',
-					id: 'x',
-					properties: { tool: 'polyline', id: 'x' },
+					properties: { tool: 'polyline' },
 					geometry: line
 				}
 			]

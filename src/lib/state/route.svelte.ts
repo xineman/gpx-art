@@ -3,11 +3,7 @@ import { MIN_VIAS } from '#lib/config/routing.js';
 import { downloadTextFile } from '#lib/drawing/io.js';
 import { formatDistance } from '#lib/geometry/distance.js';
 import { requestRouteAttributes } from '#lib/routing/attribution/client.js';
-import type {
-	AttributedRouteEdge,
-	RouteAttributionSuccess,
-	RouteRoadSpan
-} from '#lib/routing/attribution/types.js';
+import type { RouteAttributionSuccess, RouteRoadSpan } from '#lib/routing/attribution/types.js';
 import { lineStringToGpx, routeGpxFilename } from '#lib/routing/export/gpx.js';
 import { requestOptimizedRoute } from '#lib/routing/generate-route.js';
 import { requestRoute } from '#lib/routing/matching/client.js';
@@ -52,7 +48,6 @@ class RouteState {
 	#waypoints: Position[] = $derived(this.#acceptedRoute?.waypoints ?? []);
 	#distanceM = $derived(this.#attribution?.distanceM ?? this.#acceptedRoute?.distanceM ?? 0);
 	readonly hasRefinedRoute = $derived(this.#acceptedRoute?.refined ?? false);
-	readonly roadEdges: AttributedRouteEdge[] = $derived(this.#attribution?.roadEdges ?? []);
 	readonly roadSpans: RouteRoadSpan[] = $derived(this.#attribution?.roadSpans ?? []);
 	#activeRoadSpan: RouteRoadSpan | null = $derived(
 		this.#activeRoadSpanIndex === null ? null : (this.roadSpans[this.#activeRoadSpanIndex] ?? null)
@@ -175,9 +170,6 @@ class RouteState {
 	}
 	get pendingWaypointCount() {
 		return this.#refinement.actionCounts.pending;
-	}
-	get activeRoadSpanIndex() {
-		return this.#activeRoadSpanIndex;
 	}
 	inspectRoadSpan(index: number | null) {
 		this.#activeRoadSpanIndex =

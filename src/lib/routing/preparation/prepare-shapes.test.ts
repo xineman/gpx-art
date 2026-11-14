@@ -7,7 +7,7 @@ describe('prepareRouteShapes', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { id: 'a', tool: 'polyline' },
+				properties: { tool: 'polyline' },
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -29,7 +29,7 @@ describe('prepareRouteShapes', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { id: 'poly', tool: 'polygon' },
+				properties: { tool: 'polygon' },
 				geometry: {
 					type: 'Polygon',
 					coordinates: [
@@ -63,7 +63,7 @@ describe('prepareRouteShapes', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { id: '1' },
+				properties: {},
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -74,7 +74,7 @@ describe('prepareRouteShapes', () => {
 			},
 			{
 				type: 'Feature',
-				properties: { id: '2' },
+				properties: {},
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -109,7 +109,7 @@ describe('prepareRouteShapes', () => {
 		const features: Feature[] = [
 			{
 				type: 'Feature',
-				properties: { id: 'line' },
+				properties: {},
 				geometry: {
 					type: 'LineString',
 					coordinates: [
@@ -121,7 +121,7 @@ describe('prepareRouteShapes', () => {
 			},
 			{
 				type: 'Feature',
-				properties: { id: 'loop' },
+				properties: {},
 				geometry: {
 					type: 'Polygon',
 					coordinates: [
@@ -149,7 +149,7 @@ describe('prepareRouteShapes', () => {
 	it('allocates tied sampling budgets independently of feature order', () => {
 		const features: Feature[] = [0, 1, 2].map((index) => ({
 			type: 'Feature',
-			properties: { id: String(index) },
+			properties: {},
 			geometry: {
 				type: 'LineString',
 				coordinates: [
@@ -167,7 +167,7 @@ describe('prepareRouteShapes', () => {
 	it('rejects sketches whose route-wide minimum exceeds the via cap', () => {
 		const features: Feature[] = Array.from({ length: 21 }, (_, index) => ({
 			type: 'Feature',
-			properties: { id: String(index) },
+			properties: {},
 			geometry: {
 				type: 'Polygon',
 				coordinates: [

@@ -26,11 +26,10 @@ const lineC: Geometry = {
 	]
 };
 
-function feature(geometry: Geometry, tool: string, id: string): DrawingFeature {
+function feature(geometry: Geometry, tool: string): DrawingFeature {
 	return {
 		type: 'Feature',
-		id,
-		properties: { tool, id },
+		properties: { tool },
 		geometry
 	};
 }
@@ -61,20 +60,19 @@ describe('drawings history', () => {
 
 		drawings.undo();
 		expect(drawings.features).toHaveLength(1);
-		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+		expect(drawings.features[0]).toEqual(a);
 		expect(drawings.canUndo).toBe(true);
 		expect(drawings.canRedo).toBe(true);
 	});
 
-	it('redo restores the same feature id and geometry', () => {
+	it('redo restores the same feature', () => {
 		const a = drawings.add(lineA, 'polyline');
 		drawings.undo();
 		expect(drawings.features).toHaveLength(0);
 
 		drawings.redo();
 		expect(drawings.features).toHaveLength(1);
-		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
-		expect(drawings.features[0]!.geometry).toEqual(lineA);
+		expect(drawings.features[0]).toEqual(a);
 		expect(drawings.canRedo).toBe(false);
 		expect(drawings.canUndo).toBe(true);
 	});
@@ -121,7 +119,7 @@ describe('drawings history', () => {
 
 		drawings.undo();
 		expect(drawings.features).toHaveLength(2);
-		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+		expect(drawings.features[0]).toEqual(a);
 	});
 
 	it('clearSketch is a no-op when empty', () => {
@@ -144,17 +142,6 @@ describe('drawings history', () => {
 		drawings.clearSketch();
 		expect(drawings.revision).toBe(initialRevision + 4);
 	});
-
-	it('remove drops redo history', () => {
-		const a = drawings.add(lineA, 'polyline');
-		drawings.add(lineB, 'pencil');
-		drawings.undo();
-		expect(drawings.canRedo).toBe(true);
-
-		drawings.remove(a.properties.id);
-		expect(drawings.features).toHaveLength(0);
-		expect(drawings.canRedo).toBe(false);
-	});
 });
 
 describe('drawings.replaceAll', () => {
@@ -163,7 +150,7 @@ describe('drawings.replaceAll', () => {
 		drawings.add(lineB, 'pencil');
 		expect(drawings.features).toHaveLength(2);
 
-		const imported = [feature(lineC, 'imported', 'import-1')];
+		const imported = [feature(lineC, 'imported')];
 		drawings.replaceAll(imported);
 
 		expect(drawings.features).toEqual(imported);
@@ -171,7 +158,7 @@ describe('drawings.replaceAll', () => {
 
 		drawings.undo();
 		expect(drawings.features).toHaveLength(2);
-		expect(drawings.features[0]!.properties.id).toBe(a.properties.id);
+		expect(drawings.features[0]).toEqual(a);
 		expect(drawings.canRedo).toBe(true);
 
 		drawings.redo();
@@ -179,7 +166,7 @@ describe('drawings.replaceAll', () => {
 	});
 
 	it('can undo empty → imported back to empty', () => {
-		const imported = [feature(lineA, 'imported', 'only')];
+		const imported = [feature(lineA, 'imported')];
 		drawings.replaceAll(imported);
 		expect(drawings.features).toHaveLength(1);
 		expect(drawings.canUndo).toBe(true);
@@ -194,7 +181,7 @@ describe('drawings.replaceAll', () => {
 		drawings.undo();
 		expect(drawings.canRedo).toBe(true);
 
-		drawings.replaceAll([feature(lineB, 'imported', 'x')]);
+		drawings.replaceAll([feature(lineB, 'imported')]);
 		expect(drawings.canRedo).toBe(false);
 		expect(drawings.features).toHaveLength(1);
 	});
