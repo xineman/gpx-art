@@ -5,9 +5,9 @@ import { matrixSuccessSchema } from '#lib/routing/shape-optimization/matrix-resp
 import {
 	apiStatus,
 	defineJsonPost,
-	failureResponse,
 	jsonRequest,
-	jsonResponse
+	jsonResponse,
+	providerFailureResponses
 } from '../contract.server';
 
 const matrixRequestSchema = z.object(
@@ -52,11 +52,9 @@ export const { readBody, json, openApiPost } = defineJsonPost({
 				[850, 0]
 			]
 		}),
-		[apiStatus.badRequest]: failureResponse('Invalid request or rejected by the routing provider.'),
-		[apiStatus.rateLimited]: failureResponse('The routing provider rate limited the request.'),
-		[apiStatus.badGateway]: failureResponse(
-			'The routing provider could not return a usable matrix.'
-		),
-		[apiStatus.unavailable]: failureResponse('Routing is not configured.')
+		...providerFailureResponses({
+			badRequest: 'Invalid request or rejected by the routing provider.',
+			badGateway: 'The routing provider could not return a usable matrix.'
+		})
 	}
 });

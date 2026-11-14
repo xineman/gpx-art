@@ -387,4 +387,53 @@ describe('fetchValhallaTrace', () => {
 		if (result.ok) return;
 		expect(result.error).toMatch(/reach the routing/i);
 	});
+
+	it('matches multiple shapes in one ordered Valhalla request', async () => {
+		let requestedBody = '';
+		const fetchFn = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+			requestedBody = String(init?.body);
+			return Promise.resolve(Response.json({ shape: '????', edges: [{ length: 1.5 }] }));
+		});
+		const locations = [
+			[21, 52],
+			[21.01, 52.01],
+			[21.02, 52.02],
+			[21.03, 52.03]
+		];
+
+		const result = await fetchValhallaTrace(
+			{ vias: locations.map((location) => ({ location })) },
+			{
+				baseUrl: 'https://valhalla.example',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(requestedBody).shape).toEqual(locations.map(([lon, lat]) => ({ lat, lon })));
+		expect(result).toMatchObject({ ok: true, distanceM: 1_500 });
+	});
+
+	it('fails the complete route when Valhalla cannot match the combined trace', async () => {
+		const fetchFn = vi.fn(async () =>
+			Response.json({ error: 'No path could be found for input' }, { status: 400 })
+		);
+
+		const result = await fetchValhallaTrace(
+			{ vias },
+			{
+				baseUrl: 'https://valhalla.example',
+				userAgent: 'test',
+				fetchFn: fetchFn as unknown as typeof fetch
+			}
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'No bike route found near that sketch — try closer to roads.',
+			status: 400
+		});
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+	});
 });

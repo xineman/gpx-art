@@ -1,14 +1,32 @@
 import type { z } from 'zod';
 import type { ZodOpenApiOperationObject } from 'zod-openapi';
-import { apiFailureSchema } from '#lib/routing/api/api-response.js';
+import { apiFailureSchema, type ApiFailure } from '#lib/routing/api/api-response.js';
 
 export const apiStatus = {
 	ok: 200,
 	badRequest: 400,
 	rateLimited: 429,
-	badGateway: 502,
-	unavailable: 503
+	badGateway: 502
 } as const;
+
+/**
+ * HTTP status for a routing-provider failure. Failures without a provider status come from local
+ * validation of the request or the provider's answer.
+ */
+export function providerFailureStatus(failure: ApiFailure) {
+	if (failure.status === 429) return apiStatus.rateLimited;
+	if (failure.status == null || failure.status === 400) return apiStatus.badRequest;
+	return apiStatus.badGateway;
+}
+
+/** The provider failure responses every routing endpoint can return. */
+export function providerFailureResponses(descriptions: { badRequest: string; badGateway: string }) {
+	return {
+		[apiStatus.badRequest]: failureResponse(descriptions.badRequest),
+		[apiStatus.rateLimited]: failureResponse('The routing provider rate limited the request.'),
+		[apiStatus.badGateway]: failureResponse(descriptions.badGateway)
+	};
+}
 
 export function jsonRequest<S extends z.ZodType>(
 	schema: S,
