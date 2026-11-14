@@ -1,4 +1,4 @@
-import type { RouteFailure } from '../shared/failure';
+import type { RouteFailure } from '../api/failure';
 import type { RouteAttributionSuccess } from './attributes-response';
 
 export type {

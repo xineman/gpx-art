@@ -1,4 +1,4 @@
-import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '#lib/config/routing.js';
+import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '../config.js';
 import type { RouteRequest, RouteResponse, RouteSuccess } from '../matching/types';
 import { analyzeRouteDetours } from './detours';
 import { applySelectionsToWaypointAnalysis } from './detour-coverage';

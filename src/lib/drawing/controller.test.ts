@@ -62,11 +62,13 @@ describe('DrawingController', () => {
 	let drafts: Array<DraftSnapshot | null>;
 	let windowHandlers: Map<string, Handler>;
 	let controller: DrawingController;
+	let ignorePoint: boolean;
 
 	beforeEach(() => {
 		map = new FakeMap();
 		commits = [];
 		drafts = [];
+		ignorePoint = false;
 		windowHandlers = new Map();
 		vi.stubGlobal('window', {
 			addEventListener: vi.fn((name: string, handler: Handler) => {
@@ -77,7 +79,8 @@ describe('DrawingController', () => {
 		controller = new DrawingController(
 			map as unknown as MaplibreMap,
 			(geometry, tool) => commits.push({ geometry, tool }),
-			(draft) => drafts.push(draft)
+			(draft) => drafts.push(draft),
+			() => ignorePoint
 		);
 		controller.attach();
 	});
@@ -99,6 +102,48 @@ describe('DrawingController', () => {
 	function emitWindow(name: string, event: unknown) {
 		windowHandlers.get(name)?.(event as never);
 	}
+
+	it('leaves mouse presses on editor-owned interactive points out of the sketch', () => {
+		ignorePoint = true;
+		map.emit('mousedown', mouseEvent(0, 0));
+		map.emit('mousemove', mouseEvent(100, 0));
+		map.emit('mouseup', mouseEvent(100, 0));
+		expect(commits).toHaveLength(0);
+		expect(drafts).toHaveLength(0);
+
+		ignorePoint = false;
+		map.emit('mousedown', mouseEvent(0, 0));
+		map.emit('mouseup', mouseEvent(100, 0));
+		expect(commits).toHaveLength(1);
+	});
+
+	it('preserves an open vertex draft while clicking editor-owned interactive points', () => {
+		controller.setTool('polyline');
+		click(0, 0);
+		ignorePoint = true;
+		click(50, 50);
+		map.emit('dblclick', mouseEvent(50, 50));
+		expect(commits).toHaveLength(0);
+		expect(drafts.at(-1)?.vertexCount).toBe(1);
+
+		ignorePoint = false;
+		click(100, 0);
+		pressEnter();
+		expect(commits).toHaveLength(1);
+		expect(commits[0]?.geometry).toHaveProperty('coordinates', [
+			[0, 0],
+			[100, 0]
+		]);
+	});
+
+	it('leaves touch gestures on editor-owned interactive points out of the sketch', () => {
+		ignorePoint = true;
+		map.emit('touchstart', { ...mouseEvent(0, 0), points: [{ x: 0, y: 0 }] });
+		map.emit('touchmove', mouseEvent(100, 10));
+		map.emit('touchend', { ...mouseEvent(100, 10), originalEvent: { touches: [] } });
+		expect(commits).toHaveLength(0);
+		expect(drafts).toHaveLength(0);
+	});
 
 	it('commits a near-closed pencil stroke as a closed LineString', () => {
 		map.emit('mousedown', mouseEvent(0, 0));

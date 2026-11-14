@@ -1,10 +1,5 @@
 import type { Position } from 'geojson';
-import {
-	MAX_VIAS,
-	MIN_VIAS,
-	VIA_SAMPLE_SPACING_M,
-	VIA_SIMPLIFY_TOLERANCE_M
-} from '#lib/config/routing.js';
+import { MAX_VIAS, MIN_VIAS, VIA_SAMPLE_SPACING_M, VIA_SIMPLIFY_TOLERANCE_M } from '../config.js';
 import { distanceBetween } from '#lib/geometry/distance.js';
 import type { GuidePath } from './types';
 

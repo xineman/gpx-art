@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import type { RouteFailure } from '../shared/failure';
+import type { RouteFailure } from '../api/failure';
 import type { MatrixSuccess } from './matrix-response';
 
 export type MatrixRequest = {

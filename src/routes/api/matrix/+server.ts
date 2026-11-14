@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { resolveValhallaConfig } from '#lib/routing/providers/valhalla/config.server.js';
 import { fetchValhallaDistanceMatrix } from '#lib/routing/providers/valhalla/matrix.server.js';
-import type { ApiFailure } from '#lib/routing/shared/api-response.js';
+import type { ApiFailure } from '#lib/routing/api/api-response.js';
 import { apiStatus } from '../contract.server';
 import { json, readBody } from './contract.server';
 

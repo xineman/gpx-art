@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { generateRoute } from '#lib/routing/matching/route.server.js';
 import { resolveValhallaConfig } from '#lib/routing/providers/valhalla/config.server.js';
-import type { RouteFailure } from '#lib/routing/shared/failure.js';
+import type { RouteFailure } from '#lib/routing/api/failure.js';
 import { apiStatus } from '../contract.server';
 import { json, readBody } from './contract.server';
 

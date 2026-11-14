@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { geoJsonPositionSchema } from '#lib/routing/shared/schemas.server.js';
+import { geoJsonPositionSchema } from '#lib/routing/api/schemas.server.js';
 import {
 	routeAttributionSuccessSchema,
 	type AttributedRouteEdge
 } from '#lib/routing/attribution/attributes-response.js';
-import { apiFailureSchema } from '#lib/routing/shared/api-response.js';
+import { apiFailureSchema } from '#lib/routing/api/api-response.js';
 import { apiStatus, defineJsonPost, jsonRequest, jsonResponse } from '../contract.server';
 
 const MAX_ROUTE_SHAPE_POINTS = 100_000;

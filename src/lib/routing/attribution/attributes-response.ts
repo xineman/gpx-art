@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { routeLineStringSchema, routePositionSchema } from '../shared/api-response';
+import { routeLineStringSchema, routePositionSchema } from '../api/api-response';
 
 const roadKindSchema = z.enum(['national', 'voivodeship', 'county', 'municipal', 'other']);
 
