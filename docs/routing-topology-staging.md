@@ -39,7 +39,7 @@ the endpoint onto the path, create a junction, and split the path there.
 Split exact intersections first, then consider only free endpoints for snapping. Plan every free
 end's destination against the unmoved geometry, ignoring geometry reachable within twice the
 tolerance along the drawing (the stroke's own tail). Free ends within tolerance of each other meet
-at one shared point — their midpoint, or its projection onto a path all of them reach — and any
+at one shared point — their centroid, or its projection onto a path all of them reach — and any
 other free end projects onto the nearest path. Apply all moves together: each projection becomes a
 fixed junction on its host, and a host whose own end also moves bends through that junction. If
 moving either or both endpoints of a segment would collapse it or introduce an overlap, keep that
@@ -50,7 +50,8 @@ stroke that overshoots a crossing would otherwise force a retraced spur. An isol
 is kept.
 
 This is an enhancement to exact noding. Exactly connected drawings can work without it, while
-freehand sketches and imported geometry will usually need a configurable snapping tolerance.
+freehand sketches and imported geometry will usually need a configurable tolerance. The same
+tolerance bounds both the gaps that are closed and the stubs that are trimmed.
 
 ## Phase B: Plan a traversal inside each connected component
 
@@ -91,20 +92,15 @@ then send the ordered trace to Valhalla.
 Traversal must be assembled before via allocation because duplicated branches increase the number
 of required samples.
 
-## Recommended implementation order
+## Implementation status
 
 ```text
-Exact graph construction
-        ↓
-Chinese Postman
-        ↓
-Route emission and map matching
-        ↓
-Near-endpoint snapping
-        ↓
-Disconnected-component optimization
+Done (Phase A + B, not yet wired into Route):
+  Exact noding + overlap merging → near-endpoint snapping → stub trimming → Chinese Postman
+
+Next (Phase C):
+  Route emission and map matching (stage 5) → disconnected-component ordering (stage 4)
 ```
 
-The first functional vertical slice is exact graph construction, Chinese Postman planning, and route
-emission. Near snapping and disconnected-component ordering can then improve that working
-foundation independently.
+The first functional vertical slice adds route emission for a single component. Ordering
+disconnected components can then improve that working pipeline independently.
