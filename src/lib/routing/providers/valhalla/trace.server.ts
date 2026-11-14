@@ -3,8 +3,12 @@ import { pathLength } from '#lib/geometry/distance.js';
 import { samePosition } from '#lib/geometry/position.js';
 import type { RouteRequest } from '../../matching/types';
 import { decodePolyline6 } from './polyline';
+import {
+	postValhalla,
+	PROVIDER_UNAVAILABLE_STATUS,
+	type ValhallaFailureReply
+} from './http.server';
 import type { ValhallaConfig } from './types.server';
-import { buildValhallaRouteUrl, buildValhallaTraceUrl } from './urls';
 
 const TRACE_ATTRIBUTES = [
 	'edge.length',
@@ -28,9 +32,6 @@ type ValhallaMatchedPoint = {
 };
 
 type ValhallaTraceResponse = {
-	error?: string;
-	error_code?: number;
-	status_code?: number;
 	units?: string;
 	shape?: string;
 	edges?: Array<{ length?: number; begin_shape_index?: number; end_shape_index?: number }>;
@@ -64,22 +65,22 @@ function isNoMatchError(message: string) {
 	return /no path|no suitable edges|unreachable|discontinu/i.test(message);
 }
 
-async function readJsonBody<T>(response: Response): Promise<T | null> {
-	try {
-		return (await response.json()) as T;
-	} catch {
-		return null;
-	}
-}
+type ValhallaFetchFailure = Extract<ValhallaFetchResult, { ok: false }>;
 
-function unreadableResponse(response: Response): Extract<ValhallaFetchResult, { ok: false }> {
-	return response.ok
-		? { ok: false, error: 'Routing server returned invalid JSON.', status: 502 }
-		: {
-				ok: false,
-				error: `Routing server error (${response.status}).`,
-				status: response.status
-			};
+/** Transport failures shared by trace and gap-repair requests. */
+function transportFailure(
+	reply: Exclude<ValhallaFailureReply, { reason: 'rejected' }>
+): ValhallaFetchFailure {
+	if (reply.reason === 'unreachable') {
+		return { ok: false, error: 'Couldn’t reach the routing server.', status: reply.status };
+	}
+	return {
+		ok: false,
+		error: reply.httpOk
+			? 'Routing server returned invalid JSON.'
+			: `Routing server error (${reply.httpStatus}).`,
+		status: reply.status
+	};
 }
 
 /** Build the Valhalla map-matching body from an already validated route request. */
@@ -139,46 +140,30 @@ async function fetchGapRoute(
 	end: Position,
 	config: ValhallaConfig
 ): Promise<ValhallaFetchResult> {
-	const fetchFn = config.fetchFn ?? fetch;
-	let response: Response;
-	try {
-		response = await fetchFn(buildValhallaRouteUrl(config.baseUrl), {
-			method: 'POST',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				'User-Agent': config.userAgent
-			},
-			body: JSON.stringify({
-				locations: [
-					{ lat: start[1], lon: start[0], type: 'break' },
-					{ lat: end[1], lon: end[0], type: 'break' }
-				],
-				costing: 'bicycle',
-				units: 'kilometers',
-				format: 'osrm',
-				shape_format: 'geojson'
-			})
-		});
-	} catch {
-		return { ok: false, error: 'Couldn’t reach the routing server.', status: 502 };
-	}
+	const reply = await postValhalla<ValhallaRouteResponse>(config, 'route', {
+		locations: [
+			{ lat: start[1], lon: start[0], type: 'break' },
+			{ lat: end[1], lon: end[0], type: 'break' }
+		],
+		costing: 'bicycle',
+		units: 'kilometers',
+		format: 'osrm',
+		shape_format: 'geojson'
+	});
+	if (!reply.ok && reply.reason !== 'rejected') return transportFailure(reply);
 
-	const body = await readJsonBody<ValhallaRouteResponse>(response);
-	if (!body) return unreadableResponse(response);
-
-	const route = body.routes?.[0];
+	const route = reply.ok ? reply.body.routes?.[0] : undefined;
 	const geometry = route?.geometry;
 	if (
-		!response.ok ||
-		body.code !== 'Ok' ||
+		!reply.ok ||
+		reply.body.code !== 'Ok' ||
 		geometry?.type !== 'LineString' ||
 		geometry.coordinates.length < 2
 	) {
 		return {
 			ok: false,
 			error: 'A gap in the sketch could not be connected using bike roads.',
-			status: response.status
+			status: reply.ok ? PROVIDER_UNAVAILABLE_STATUS : reply.status
 		};
 	}
 	const distanceM = isFiniteNumber(route?.distance)
@@ -236,41 +221,26 @@ export async function fetchValhallaTrace(
 		return { ok: false, error: 'Need a longer sketch to route.' };
 	}
 
-	const fetchFn = config.fetchFn ?? fetch;
 	let activeRequest = request;
 	let prunedUnmatchedPoints = false;
 
 	while (true) {
-		let response: Response;
-		try {
-			response = await fetchFn(buildValhallaTraceUrl(config.baseUrl), {
-				method: 'POST',
-				headers: {
-					Accept: 'application/json',
-					'Content-Type': 'application/json',
-					'User-Agent': config.userAgent
-				},
-				body: JSON.stringify(buildValhallaTraceBody(activeRequest))
-			});
-		} catch {
-			return { ok: false, error: 'Couldn’t reach the routing server.', status: 502 };
-		}
-
-		const body = await readJsonBody<ValhallaTraceResponse>(response);
-		if (!body) return unreadableResponse(response);
-
-		if (!response.ok || body.error) {
-			const message = body.error?.trim() ?? '';
-			const status =
-				response.ok && isFiniteNumber(body.status_code) ? body.status_code : response.status;
+		const reply = await postValhalla<ValhallaTraceResponse>(
+			config,
+			'trace_attributes',
+			buildValhallaTraceBody(activeRequest)
+		);
+		if (!reply.ok) {
+			if (reply.reason !== 'rejected') return transportFailure(reply);
 			return {
 				ok: false,
-				error: isNoMatchError(message)
+				error: isNoMatchError(reply.message)
 					? 'No bike route found near that sketch — try closer to roads.'
-					: message || `Routing server error (${response.status}).`,
-				status
+					: reply.message || `Routing server error (${reply.httpStatus}).`,
+				status: reply.status
 			};
 		}
+		const body = reply.body;
 
 		if (body.alternate_paths?.length) {
 			return { ok: false, error: 'The sketch crosses a gap in the bike network.' };

@@ -1,23 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodePolyline6 } from './polyline';
 import { buildValhallaTraceBody, fetchValhallaTrace } from './trace.server';
-import { buildValhallaRouteUrl, buildValhallaTraceUrl } from './urls';
 
 const vias = [{ location: [21, 52] }, { location: [21.01, 52.01] }];
 
 describe('Valhalla trace request', () => {
-	it('uses the trace_attributes endpoint', () => {
-		expect(buildValhallaTraceUrl('https://valhalla.example/')).toBe(
-			'https://valhalla.example/trace_attributes'
-		);
-	});
-
-	it('uses the route endpoint for local gap repairs', () => {
-		expect(buildValhallaRouteUrl('https://valhalla.example/')).toBe(
-			'https://valhalla.example/route'
-		);
-	});
-
 	it('builds a bicycle map-matching body with optional point constraints', () => {
 		const body = buildValhallaTraceBody({
 			vias: [
