@@ -24,11 +24,28 @@ function nodeAt(graph: TopologyGraph, position: Position) {
 	);
 }
 
+function nodeNear(graph: TopologyGraph, position: Position) {
+	return graph.nodes.find(
+		(node) =>
+			Math.abs(node.position[0]! - position[0]!) < 1e-9 &&
+			Math.abs(node.position[1]! - position[1]!) < 1e-9
+	);
+}
+
 function degree(graph: TopologyGraph, nodeId: number): number {
 	return graph.edges.reduce(
 		(total, edge) => total + Number(edge.fromNodeId === nodeId) + Number(edge.toNodeId === nodeId),
 		0
 	);
+}
+
+function nodesOfDegree(graph: TopologyGraph, count: number) {
+	return graph.nodes.filter(({ id }) => degree(graph, id) === count);
+}
+
+/** Warsaw-scale position: one unit is 0.001°, roughly 68 m east or 111 m north. */
+function at(x: number, y: number): Position {
+	return [21 + x * 0.001, 52.2 + y * 0.001];
 }
 
 describe('buildTopologyGraph', () => {
@@ -157,11 +174,11 @@ describe('buildTopologyGraph', () => {
 		expect(outsideDefault.edges).toHaveLength(2);
 	});
 
-	it('anchors a near endpoint pair without mutating the guides', () => {
+	it('joins a near endpoint pair at its midpoint without mutating the guides', () => {
 		const guides = [open([0, 0], [0.001, 0]), open([0.00105, 0], [0.002, 0])];
 		const original = guides.map((guide) => guide.points.map((point) => [...point]));
 		const graph = graphFor(guides);
-		const junction = nodeAt(graph, [0.00105, 0]);
+		const junction = nodeNear(graph, [0.001025, 0]);
 
 		expect(graph.nodes).toHaveLength(3);
 		expect(junction && degree(graph, junction.id)).toBe(2);
@@ -198,6 +215,59 @@ describe('buildTopologyGraph', () => {
 
 		expect(nearest && degree(graph, nearest.id)).toBe(3);
 		expect(nodeAt(graph, [0.001, 0.00008])).toBeUndefined();
+	});
+
+	it.each([1, 5, 20, 100])(
+		'snaps the end of a stroke sampled into %i segments onto a host',
+		(segmentCount) => {
+			const stroke = Array.from({ length: segmentCount + 1 }, (_, index) =>
+				at(0, 1 - (0.95 * index) / segmentCount)
+			);
+			const graph = graphFor([open(at(-1, 0), at(1, 0)), open(...stroke)]);
+			const junction = nodeNear(graph, at(0, 0));
+
+			expect(junction && degree(graph, junction.id)).toBe(3);
+			expect(nodesOfDegree(graph, 1)).toHaveLength(3);
+		}
+	);
+
+	it('joins the near-miss apex and crossbar of a letter A', () => {
+		const left = open(at(-2, 0), at(-0.05, 4));
+		const right = open(at(2, 0), at(0, 4.02));
+		const bar = open(at(-0.95, 2), at(0.95, 2));
+
+		for (const guides of [
+			[left, right],
+			[left, right, bar],
+			[bar, right, left]
+		]) {
+			const graph = graphFor(guides);
+			const freeEnds = nodesOfDegree(graph, 1).map(({ position }) => position);
+			expect(freeEnds).toHaveLength(2);
+			expect(freeEnds).toEqual(expect.arrayContaining([at(-2, 0), at(2, 0)]));
+			expect(nodesOfDegree(graph, 3)).toHaveLength(guides.length === 3 ? 2 : 0);
+		}
+	});
+
+	it('makes every link of a near-miss chain in any guide order', () => {
+		const first = open(at(-1, 1), at(-0.05, 1));
+		const second = open(at(0, 2), at(0, 0.05));
+		const third = open(at(-1, 0), at(1, 0));
+
+		for (const guides of [
+			[first, second, third],
+			[first, third, second],
+			[second, first, third],
+			[second, third, first],
+			[third, first, second],
+			[third, second, first]
+		]) {
+			const graph = graphFor(guides);
+			expect(nodesOfDegree(graph, 3)).toHaveLength(2);
+			expect(nodesOfDegree(graph, 1)).toHaveLength(4);
+			expect(nodeNear(graph, at(0, 0))).toBeDefined();
+			expect(nodeNear(graph, at(0, 1))).toBeDefined();
+		}
 	});
 
 	it('supports a single-point collinear touch', () => {
