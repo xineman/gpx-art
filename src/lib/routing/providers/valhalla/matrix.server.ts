@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import type { MatrixResponse } from '../../shape-optimization/types';
+import type { MatrixApiResponse } from '../../shape-optimization/matrix-response';
 import type { ValhallaConfig } from './types.server';
 
 type ValhallaMatrixResponse = {
@@ -60,7 +60,7 @@ function normalizeDistances(value: unknown, size: number): (number | null)[][] |
 export async function fetchValhallaDistanceMatrix(
 	coordinates: Position[],
 	config: ValhallaConfig
-): Promise<MatrixResponse> {
+): Promise<MatrixApiResponse> {
 	const fetchFn = config.fetchFn ?? fetch;
 	let response: Response;
 	try {

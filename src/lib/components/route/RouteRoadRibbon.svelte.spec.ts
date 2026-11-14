@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
 			roadSpans: [
 				{
 					...common,
+					id: '1',
 					wayId: 10,
 					wayIds: [10],
 					refs: ['DK10'],
@@ -41,6 +42,7 @@ const mocks = vi.hoisted(() => {
 				},
 				{
 					...common,
+					id: '2',
 					wayId: 20,
 					wayIds: [20],
 					refs: ['DW296'],

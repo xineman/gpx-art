@@ -74,8 +74,8 @@ src/
     routing/              # feature-oriented route pipeline
       preparation/        # features → guide paths → bounded trace vias
       shape-optimization/ # shape traversal candidates, matrix API, route ordering
-      matching/           # route contracts, client, request validation/orchestration
-      attribution/        # road-edge/span contracts, client, geometry validation
+      matching/           # route response types, client, and server orchestration
+      attribution/        # road-edge/span response types and client
       refinement/         # detour analysis + waypoint refinement plans
       export/             # GPX serialization
       providers/valhalla/ # shared config + Valhalla trace/matrix/attribute adapters
@@ -100,6 +100,11 @@ src/
 ```
 
 **Routing env** (see `.env.example`): `VALHALLA_BASE_URL` (default `https://valhalla1.openstreetmap.de`).
+
+**API reference:** On the dev server, Redoc at `/api/docs` reads `/api/openapi.json`. For each
+routing endpoint, keep request validation in `src/routes/api/<endpoint>/contract.server.ts`. Export
+`readBody` and `json` for the `+server.ts` handler and `openApiPost` for automatic discovery by the
+OpenAPI endpoint, which generates the spec with `zod-openapi`.
 
 ## Architecture notes
 
