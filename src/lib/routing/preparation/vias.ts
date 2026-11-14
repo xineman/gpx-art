@@ -1,9 +1,27 @@
 import type { Position } from 'geojson';
-import { MAX_VIAS, MIN_VIAS, VIA_SAMPLE_SPACING_M, VIA_SIMPLIFY_TOLERANCE_M } from '../config';
+import { MAX_VIAS, VIA_SAMPLE_SPACING_M, VIA_SIMPLIFY_TOLERANCE_M } from '../config';
 import { distanceBetween } from '#lib/geometry/distance.js';
-import type { GuidePath } from './types';
+import type { GuideWalk } from './types';
 
-export type ViasResult = { ok: true; vias: Position[] } | { ok: false; error: string };
+export type WalkViasResult = { ok: true; vias: Position[][] } | { ok: false; error: string };
+
+export type WalkViasOptions = {
+	/** Via cap shared by every walk: they are joined into one map-matching request. */
+	maxVias?: number;
+	/** Douglas–Peucker epsilon in meters; deviations within it are not worth a via. */
+	toleranceM?: number;
+	/** Preferred maximum interval between vias; spare budget splits longer intervals. */
+	sampleSpacingM?: number;
+};
+
+/** Stretch of a walk between two kept points, with its most deviating interior point. */
+type Span = {
+	walk: number;
+	start: number;
+	end: number;
+	split: number;
+	deviationM: number;
+};
 
 /**
  * Perpendicular distance from point P to segment AB, in meters.
@@ -33,178 +51,127 @@ function perpendicularDistanceM(p: Position, a: Position, b: Position): number {
 	return Math.hypot(px - qx, py - qy);
 }
 
-/** Douglas–Peucker simplify using meter tolerance. */
-export function simplifyRdp(points: Position[], toleranceM: number): Position[] {
-	if (points.length <= 2) return [...points];
+function samePosition(left: Position, right: Position): boolean {
+	return left[0] === right[0] && left[1] === right[1];
+}
 
-	const keep = new Uint8Array(points.length);
-	keep[0] = 1;
-	keep[points.length - 1] = 1;
-
-	const stack: Array<[number, number]> = [[0, points.length - 1]];
-
-	while (stack.length > 0) {
-		const [start, end] = stack.pop()!;
-		const a = points[start]!;
-		const b = points[end]!;
-		let maxDist = 0;
-		let maxIdx = -1;
-		for (let i = start + 1; i < end; i++) {
-			const d = perpendicularDistanceM(points[i]!, a, b);
-			if (d > maxDist) {
-				maxDist = d;
-				maxIdx = i;
-			}
-		}
-		if (maxIdx >= 0 && maxDist > toleranceM) {
-			keep[maxIdx] = 1;
-			stack.push([start, maxIdx], [maxIdx, end]);
+function farthestInterior(points: Position[], start: number, end: number) {
+	let split = start + 1;
+	let deviationM = -1;
+	for (let index = start + 1; index < end; index++) {
+		const distance = perpendicularDistanceM(points[index]!, points[start]!, points[end]!);
+		if (distance > deviationM) {
+			split = index;
+			deviationM = distance;
 		}
 	}
-
-	const out: Position[] = [];
-	for (let i = 0; i < points.length; i++) {
-		if (keep[i]) out.push(points[i]!);
-	}
-	return out;
+	return { split, deviationM };
 }
 
 /**
- * Add intermediate vias to long segments while retaining every input vertex.
- * For closed paths, the closing segment is included and the repeated start
- * counts toward `maxVias`.
+ * Split intervals longer than the sample spacing, longest first, until the budget runs out.
+ * Every input point is kept.
  */
-export function densifySegments(
-	points: Position[],
-	closed: boolean,
-	maxVias: number,
-	spacingM: number
-): Position[] {
-	if (points.length < 2 || maxVias < 2) return [...points].slice(0, maxVias);
+function densify(lines: Position[][], budget: number, spacingM: number): Position[][] {
+	const lengths = lines.map((line) =>
+		line.slice(1).map((end, index) => distanceBetween(line[index]!, end))
+	);
+	const divisions = lengths.map((line) => line.map(() => 1));
 
-	const segmentCount = closed ? points.length : points.length - 1;
-	const baseViaCount = points.length + (closed ? 1 : 0);
-	if (spacingM <= 0 || baseViaCount >= maxVias) {
-		return closed ? [...points, points[0]!] : [...points];
-	}
-
-	const lengths = Array.from({ length: segmentCount }, (_, index) => {
-		const nextIndex = (index + 1) % points.length;
-		return distanceBetween(points[index]!, points[nextIndex]!);
-	});
-	const divisions = lengths.map(() => 1);
-	let remaining = maxVias - baseViaCount;
-
-	while (remaining > 0) {
-		let longestIndex = -1;
+	for (let remaining = budget; remaining > 0; remaining--) {
+		let longest: [number, number] | undefined;
 		let longestInterval = spacingM;
-
-		for (let index = 0; index < segmentCount; index++) {
-			const interval = lengths[index]! / divisions[index]!;
-			if (interval > longestInterval) {
-				longestInterval = interval;
-				longestIndex = index;
+		for (const [line, intervals] of lengths.entries()) {
+			for (const [index, lengthM] of intervals.entries()) {
+				const interval = lengthM / divisions[line]![index]!;
+				if (interval > longestInterval) {
+					longest = [line, index];
+					longestInterval = interval;
+				}
 			}
 		}
-
-		if (longestIndex < 0) break;
-		divisions[longestIndex]! += 1;
-		remaining -= 1;
+		if (!longest) break;
+		divisions[longest[0]]![longest[1]]! += 1;
 	}
 
-	const out: Position[] = [points[0]!];
-	for (let index = 0; index < segmentCount; index++) {
-		const start = points[index]!;
-		const end = points[(index + 1) % points.length]!;
-		const divisionCount = divisions[index]!;
-
-		for (let step = 1; step <= divisionCount; step++) {
-			if (step === divisionCount) {
-				out.push(end);
-				continue;
+	return lines.map((line, lineIndex) => {
+		const out: Position[] = [line[0]!];
+		for (const [index, divisionCount] of divisions[lineIndex]!.entries()) {
+			const start = line[index]!;
+			const end = line[index + 1]!;
+			for (let step = 1; step < divisionCount; step++) {
+				const fraction = step / divisionCount;
+				out.push([
+					start[0]! + (end[0]! - start[0]!) * fraction,
+					start[1]! + (end[1]! - start[1]!) * fraction
+				]);
 			}
-
-			const fraction = step / divisionCount;
-			out.push([
-				start[0]! + (end[0]! - start[0]!) * fraction,
-				start[1]! + (end[1]! - start[1]!) * fraction
-			]);
+			out.push(end);
 		}
-	}
-
-	return out;
-}
-
-/** Evenly stride an array down to at most `max` points (keeps first and last). */
-export function strideToMax(points: Position[], max: number): Position[] {
-	if (points.length <= max) return [...points];
-	if (max < 2) return [points[0]!, points[points.length - 1]!];
-
-	const out: Position[] = [points[0]!];
-	const inner = max - 2;
-	for (let i = 1; i <= inner; i++) {
-		const idx = Math.round((i * (points.length - 1)) / (max - 1));
-		const p = points[idx]!;
-		const prev = out[out.length - 1]!;
-		if (p[0] !== prev[0] || p[1] !== prev[1]) out.push(p);
-	}
-	const last = points[points.length - 1]!;
-	const tail = out[out.length - 1]!;
-	if (tail[0] !== last[0] || tail[1] !== last[1]) out.push(last);
-	return out;
-}
-
-function dedupeConsecutive(points: Position[]): Position[] {
-	if (points.length === 0) return [];
-	const out: Position[] = [points[0]!];
-	for (let i = 1; i < points.length; i++) {
-		const p = points[i]!;
-		const prev = out[out.length - 1]!;
-		if (p[0] !== prev[0] || p[1] !== prev[1]) out.push(p);
-	}
-	return out;
+		return out;
+	});
 }
 
 /**
- * Build map-matching trace points from a guide path.
- * Closed guides get the start re-appended so the route returns to the origin.
+ * Turn component walks into map-matching vias under one shared budget. Mandatory points are always
+ * kept, and a stretch that returns to its starting point keeps its farthest point so the loop
+ * survives. The rest is Douglas–Peucker simplified across all walks at once, most deviating point
+ * first, so the budget goes wherever the drawing bends most; spare budget then densifies long
+ * intervals.
  */
-export function guideToVias(
-	guide: GuidePath,
-	options: {
-		maxVias?: number;
-		toleranceM?: number;
-		sampleSpacingM?: number;
-	} = {}
-): ViasResult {
+export function allocateWalkVias(
+	walks: GuideWalk[],
+	options: WalkViasOptions = {}
+): WalkViasResult {
 	const maxVias = options.maxVias ?? MAX_VIAS;
 	const toleranceM = options.toleranceM ?? VIA_SIMPLIFY_TOLERANCE_M;
 	const sampleSpacingM = options.sampleSpacingM ?? VIA_SAMPLE_SPACING_M;
 
-	let points = dedupeConsecutive(guide.points);
-	if (points.length < MIN_VIAS) {
-		return { ok: false, error: 'Need a longer sketch to route.' };
+	const kept = walks.map(({ points }) => new Uint8Array(points.length));
+	const spans: Span[] = [];
+	let count = 0;
+
+	const keep = (walk: number, index: number) => {
+		kept[walk]![index] = 1;
+		count += 1;
+	};
+	const addSpan = (walk: number, start: number, end: number) => {
+		if (end - start < 2) return;
+		const points = walks[walk]!.points;
+		const span = { walk, start, end, ...farthestInterior(points, start, end) };
+		if (samePosition(points[start]!, points[end]!)) splitSpan(span);
+		else spans.push(span);
+	};
+	const splitSpan = ({ walk, start, end, split }: Span) => {
+		keep(walk, split);
+		addSpan(walk, start, split);
+		addSpan(walk, split, end);
+	};
+
+	for (const [walk, { mandatory }] of walks.entries()) {
+		for (const [order, index] of mandatory.entries()) {
+			keep(walk, index);
+			if (order > 0) addSpan(walk, mandatory[order - 1]!, index);
+		}
+	}
+	if (count > maxVias) {
+		return {
+			ok: false,
+			error: `Too many shapes and junctions to route at once (max ${maxVias} waypoints).`
+		};
 	}
 
-	points = simplifyRdp(points, toleranceM);
-	points = dedupeConsecutive(points);
-
-	const pointBudget = guide.closed ? maxVias - 1 : maxVias;
-	if (pointBudget < MIN_VIAS) {
-		return { ok: false, error: 'Need a longer sketch to route.' };
-	}
-	if (points.length > pointBudget) points = strideToMax(points, pointBudget);
-
-	points = densifySegments(points, guide.closed, maxVias, sampleSpacingM);
-	// Closed path may legitimately start==end as two list entries to complete the trace.
-	// Only fail if fewer than 2 unique positions.
-	const uniqueEnough =
-		points.length >= MIN_VIAS &&
-		(points.length > 2 || points[0]![0] !== points[1]![0] || points[0]![1] !== points[1]![1]);
-
-	if (!uniqueEnough) {
-		return { ok: false, error: 'Need a longer sketch to route.' };
+	while (count < maxVias) {
+		let best = -1;
+		for (const [index, span] of spans.entries()) {
+			if (span.deviationM > toleranceM && (best < 0 || span.deviationM > spans[best]!.deviationM)) {
+				best = index;
+			}
+		}
+		if (best < 0) break;
+		splitSpan(spans.splice(best, 1)[0]!);
 	}
 
-	return { ok: true, vias: points };
+	const lines = walks.map(({ points }, walk) => points.filter((_, index) => kept[walk]![index]));
+	return { ok: true, vias: densify(lines, maxVias - count, sampleSpacingM) };
 }

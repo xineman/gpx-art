@@ -95,12 +95,18 @@ of required samples.
 ## Implementation status
 
 ```text
-Done (Phase A + B, not yet wired into Route):
+Done (Phase A + B + C, wired into Route):
   Exact noding + overlap merging → near-endpoint snapping → stub trimming → Chinese Postman
-
-Next (Phase C):
-  Route emission and map matching (stage 5) → disconnected-component ordering (stage 4)
+  → walk per component → global via allocation → component ordering → map matching
 ```
 
-The first functional vertical slice adds route emission for a single component. Ordering
-disconnected components can then improve that working pipeline independently.
+`prepareRouteShapes` builds one graph from every guide (sorted, so draw order does not matter)
+and converts each component's traversal into a walk (`topology/walks.ts`). Closed walks start at
+a junction when they have one. `allocateWalkVias` keeps every walk end, junction pass, and
+dead-end tip; a stretch that returns to its start keeps its farthest point. It then spends the
+remaining budget on the most deviating points across all walks (Douglas–Peucker above
+`VIA_SIMPLIFY_TOLERANCE_M`), and densifies intervals longer than `VIA_SAMPLE_SPACING_M` with what is
+left. Mandatory points beyond `MAX_VIAS` fail the route.
+
+Each walk is one optimizer shape: open walks may be reversed, closed walks rotated to start at any
+of their vias. Alternative start/end pairs for open walks are not offered as candidates yet.

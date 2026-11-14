@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import type { Feature } from 'geojson';
+import type { Feature, Position } from 'geojson';
 import { prepareRouteShapes } from './prepare-shapes';
+
+/** About 111 m per unit northward and 68 m per unit eastward near 52°N. */
+function at(x: number, y: number): Position {
+	return [21 + x * 0.001, 52 + y * 0.001];
+}
+
+function line(...coordinates: Position[]): Feature {
+	return { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } };
+}
+
+function visits(vias: Position[], position: Position): number {
+	return vias.filter((via) => via[0] === position[0] && via[1] === position[1]).length;
+}
+
+/** Vias as drawn, in either walking direction. */
+function walkedEitherWay(vias: Position[], expected: Position[]): boolean {
+	const key = (points: Position[]) => JSON.stringify(points);
+	return key(vias) === key(expected) || key(vias) === key([...expected].reverse());
+}
 
 describe('prepareRouteShapes', () => {
 	it('builds vias from a polyline', () => {
@@ -59,50 +78,65 @@ describe('prepareRouteShapes', () => {
 		expect(result.ok).toBe(false);
 	});
 
-	it('retains boundaries between multiple features', () => {
-		const features: Feature[] = [
-			{
-				type: 'Feature',
-				properties: {},
-				geometry: {
-					type: 'LineString',
-					coordinates: [
-						[0, 0],
-						[1, 1]
-					]
-				}
-			},
-			{
-				type: 'Feature',
-				properties: {},
-				geometry: {
-					type: 'LineString',
-					coordinates: [
-						[1, 1],
-						[2, 2]
-					]
-				}
-			}
-		];
-		const result = prepareRouteShapes(features, { maxVias: 4 });
+	it('joins touching features into one walk and keeps disconnected ones apart', () => {
+		const result = prepareRouteShapes(
+			[line(at(0, 0), at(1, 0)), line(at(20, 0), at(21, 0)), line(at(1, 0), at(1, 1))],
+			{ maxVias: 5 }
+		);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.shapes).toEqual([
-			{
-				closed: false,
-				vias: [
-					[0, 0],
-					[1, 1]
-				]
-			},
-			{
-				closed: false,
-				vias: [
-					[1, 1],
-					[2, 2]
-				]
-			}
+		expect(result.shapes).toHaveLength(2);
+		expect(result.shapes.every((shape) => !shape.closed)).toBe(true);
+		const [joined, apart] = [...result.shapes].sort((a, b) => b.vias.length - a.vias.length);
+		expect(walkedEitherWay(joined!.vias, [at(0, 0), at(1, 0), at(1, 1)])).toBe(true);
+		expect(walkedEitherWay(apart!.vias, [at(20, 0), at(21, 0)])).toBe(true);
+	});
+
+	it('walks every arm of crossing features through their junction', () => {
+		const tips = [at(-1, 0), at(1, 0), at(0, -1), at(0, 1)];
+		const result = prepareRouteShapes([line(tips[0]!, tips[1]!), line(tips[2]!, tips[3]!)]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.shapes).toHaveLength(1);
+		const { vias, closed } = result.shapes[0]!;
+		expect(closed).toBe(false);
+		for (const tip of tips) expect(visits(vias, tip)).toBe(1);
+		// Two arms are ridden once at the ends; the other two go out and back through the center.
+		expect(visits(vias, at(0, 0))).toBe(3);
+		expect(vias).toHaveLength(7);
+	});
+
+	it('retraces a short spur to its dead-end tip even within the simplify tolerance', () => {
+		const result = prepareRouteShapes([line(at(0, 0), at(2, 0)), line(at(1, 0), at(1, 0.2))], {
+			maxVias: 6
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.shapes).toHaveLength(1);
+		const { vias } = result.shapes[0]!;
+		expect(visits(vias, at(1, 0.2))).toBe(1);
+		expect(visits(vias, at(1, 0))).toBe(2);
+		expect(vias).toHaveLength(5);
+	});
+
+	it('starts a closed walk at its junction so the loop start costs no extra via', () => {
+		const polygon = (...ring: Position[]): Feature => ({
+			type: 'Feature',
+			properties: {},
+			geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]!]] }
+		});
+		const junction = at(1, 1);
+		const result = prepareRouteShapes([
+			polygon(at(0, 0), at(2, 0), junction),
+			polygon(junction, at(2, 2), at(0, 2))
 		]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.shapes).toHaveLength(1);
+		const { vias, closed } = result.shapes[0]!;
+		expect(closed).toBe(true);
+		expect(vias[0]).toEqual(junction);
+		expect(visits(vias, junction)).toBe(3);
 	});
 
 	it('shares one via budget across shapes while preserving a closed loop', () => {
@@ -184,7 +218,7 @@ describe('prepareRouteShapes', () => {
 		const result = prepareRouteShapes(features);
 		expect(result).toEqual({
 			ok: false,
-			error: 'Too many shapes to route at once (max 60 waypoints).'
+			error: 'Too many shapes and junctions to route at once (max 60 waypoints).'
 		});
 	});
 });

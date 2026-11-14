@@ -1,155 +1,79 @@
 import { describe, expect, it } from 'vitest';
 import type { Position } from 'geojson';
-import { MAX_VIAS } from '../config';
 import { distanceBetween } from '#lib/geometry/distance.js';
-import { densifySegments, guideToVias, simplifyRdp, strideToMax } from './vias';
+import type { GuideWalk } from './types';
+import { allocateWalkVias } from './vias';
 
-function denseLine(n: number): Position[] {
-	const pts: Position[] = [];
-	for (let i = 0; i < n; i++) {
-		// ~11 m steps in lat near 52°N
-		pts.push([21, 52 + i * 0.0001]);
-	}
-	return pts;
+/** About 11 m per unit northward and 7 m per unit eastward near 52°N. */
+function at(x: number, y: number): Position {
+	return [21 + x * 0.0001, 52 + y * 0.0001];
 }
 
-describe('simplifyRdp', () => {
-	it('keeps endpoints of a straight line and drops middles', () => {
-		const pts: Position[] = [
-			[21, 52],
-			[21, 52.001],
-			[21, 52.002],
-			[21, 52.003]
-		];
-		const simplified = simplifyRdp(pts, 50);
-		expect(simplified[0]).toEqual(pts[0]);
-		expect(simplified[simplified.length - 1]).toEqual(pts[pts.length - 1]);
-		expect(simplified.length).toBeLessThanOrEqual(pts.length);
-		expect(simplified.length).toBe(2);
-	});
-});
+function walk(points: Position[], mandatory = [0, points.length - 1]): GuideWalk {
+	const first = points[0]!;
+	const last = points[points.length - 1]!;
+	return { points, mandatory, closed: first[0] === last[0] && first[1] === last[1] };
+}
 
-describe('densifySegments', () => {
-	it('adds vias to a long straight segment and keeps its endpoints', () => {
-		const points: Position[] = [
-			[21, 52],
-			[21, 52.005]
-		];
-		const densified = densifySegments(points, false, 20, 120);
+function allocate(walks: GuideWalk[], maxVias: number, sampleSpacingM = 10_000) {
+	const result = allocateWalkVias(walks, { maxVias, toleranceM: 30, sampleSpacingM });
+	expect(result.ok).toBe(true);
+	if (!result.ok) throw new Error(result.error);
+	return result.vias;
+}
 
-		expect(densified[0]).toEqual(points[0]);
-		expect(densified[densified.length - 1]).toEqual(points[1]);
-		expect(densified.length).toBeGreaterThan(2);
-		for (let index = 1; index < densified.length; index++) {
-			expect(distanceBetween(densified[index - 1]!, densified[index]!)).toBeLessThanOrEqual(120);
-		}
+function maxInterval(vias: Position[]): number {
+	return Math.max(...vias.slice(1).map((point, index) => distanceBetween(vias[index]!, point)));
+}
+
+describe('allocateWalkVias', () => {
+	it('simplifies a dense straight stroke to its ends', () => {
+		const line = Array.from({ length: 200 }, (_, index) => at(0, index));
+		expect(allocate([walk(line)], 20)).toEqual([[line[0], line[199]]]);
 	});
 
-	it('retains rectangle corners and densifies every edge including close', () => {
-		const rectangle: Position[] = [
-			[21, 52],
-			[21.004, 52],
-			[21.004, 52.004],
-			[21, 52.004]
-		];
-		const densified = densifySegments(rectangle, true, 60, 120);
-
-		for (const corner of rectangle) expect(densified).toContainEqual(corner);
-		expect(densified[0]).toEqual(rectangle[0]);
-		expect(densified[densified.length - 1]).toEqual(rectangle[0]);
-		expect(densified.filter((point) => point[0] === 21 && point[1] === 52)).toHaveLength(2);
-		for (let index = 1; index < densified.length; index++) {
-			expect(distanceBetween(densified[index - 1]!, densified[index]!)).toBeLessThanOrEqual(120);
-		}
+	it('keeps mandatory junction passes and dead-end tips inside the tolerance', () => {
+		// Junction J at the middle of a straight line, with a short spur to T retraced from J.
+		const points = [at(0, 0), at(0, 5), at(1, 5), at(0, 5), at(0, 10)];
+		expect(allocate([walk(points, [0, 1, 2, 3, 4])], 20)).toEqual([points]);
 	});
 
-	it('does not add vias to segments already within the target spacing', () => {
-		const points: Position[] = [
-			[21, 52],
-			[21, 52.0005]
-		];
-
-		expect(densifySegments(points, false, 20, 120)).toEqual(points);
+	it('keeps the farthest point of a loop that returns to its start', () => {
+		const square = [at(0, 0), at(1, 0), at(1, 1), at(0, 1), at(0, 0)];
+		expect(allocate([walk(square)], 20)).toEqual([[at(0, 0), at(1, 1), at(0, 0)]]);
 	});
 
-	it('spends a constrained budget on the longest remaining interval', () => {
-		const points: Position[] = [
-			[21, 52],
-			[21, 52.004],
-			[21.002, 52.004]
-		];
-		const densified = densifySegments(points, false, 4, 120);
-
-		expect(densified).toHaveLength(4);
-		expect(densified[1]![0]).toBe(21);
-		expect(densified[1]![1]).toBeCloseTo(52.002);
-		expect(densified[2]).toEqual(points[1]);
-	});
-});
-
-describe('strideToMax', () => {
-	it('caps length and keeps ends', () => {
-		const pts = denseLine(100);
-		const capped = strideToMax(pts, 10);
-		expect(capped.length).toBeLessThanOrEqual(10);
-		expect(capped[0]).toEqual(pts[0]);
-		expect(capped[capped.length - 1]).toEqual(pts[pts.length - 1]);
-	});
-});
-
-describe('guideToVias', () => {
-	it('simplifies dense freehand before consistently densifying to the cap', () => {
-		const result = guideToVias(
-			{ points: denseLine(200), closed: false },
-			{ maxVias: 20, toleranceM: 40, sampleSpacingM: 80 }
-		);
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		expect(result.vias).toHaveLength(20);
-		expect(result.vias[0]).toEqual(denseLine(200)[0]);
-		expect(result.vias[result.vias.length - 1]).toEqual(denseLine(200)[199]);
-		expect(result.vias.every((point) => point[0] === 21)).toBe(true);
+	it('spends a shared budget on the most deviating bend across walks', () => {
+		const sharp = walk([at(0, 0), at(20, 40), at(40, 0)]);
+		const gentle = walk([at(100, 0), at(120, 5), at(140, 0)]);
+		expect(allocate([gentle, sharp], 5)).toEqual([
+			[at(100, 0), at(140, 0)],
+			[at(0, 0), at(20, 40), at(40, 0)]
+		]);
+		expect(allocate([gentle, sharp], 6)).toEqual([gentle.points, sharp.points]);
 	});
 
-	it('re-appends start for closed guides', () => {
-		const square: Position[] = [
-			[21, 52],
-			[21.02, 52],
-			[21.02, 52.02],
-			[21, 52.02]
-		];
-		const result = guideToVias({ points: square, closed: true }, { maxVias: 20, toleranceM: 5 });
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		for (const corner of square) expect(result.vias).toContainEqual(corner);
-		const first = result.vias[0]!;
-		const last = result.vias[result.vias.length - 1]!;
-		expect(first[0]).toBe(last[0]);
-		expect(first[1]).toBe(last[1]);
-		expect(
-			result.vias.filter((point) => point[0] === first[0] && point[1] === first[1])
-		).toHaveLength(2);
+	it('densifies the longest intervals across walks with the spare budget', () => {
+		const short = walk([at(0, 0), at(0, 50)]);
+		const long = walk([at(10, 0), at(10, 150)]);
+		const vias = allocate([short, long], 10, 120);
+
+		expect(vias.flat()).toHaveLength(10);
+		expect(vias.map((line) => [line[0], line.at(-1)])).toEqual([short.points, long.points]);
+		expect(maxInterval(vias[1]!)).toBeLessThan(maxInterval(vias[0]!) * 1.01);
 	});
 
-	it('never exceeds the route-wide default cap', () => {
-		const result = guideToVias(
-			{
-				points: [
-					[21, 52],
-					[21, 52.1]
-				],
-				closed: false
-			},
-			{ toleranceM: 5, sampleSpacingM: 20 }
-		);
-
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		expect(result.vias).toHaveLength(MAX_VIAS);
+	it('stops densifying once every interval is within the sample spacing', () => {
+		const vias = allocate([walk([at(0, 0), at(0, 50)])], 60, 120);
+		expect(vias[0]!.length).toBeLessThan(60);
+		expect(maxInterval(vias[0]!)).toBeLessThanOrEqual(120);
 	});
 
-	it('rejects too-short sketches', () => {
-		const result = guideToVias({ points: [[21, 52]], closed: false });
-		expect(result.ok).toBe(false);
+	it('rejects walks whose mandatory points exceed the cap', () => {
+		const points = Array.from({ length: 6 }, (_, index) => at(index * 100, 0));
+		expect(allocateWalkVias([walk(points, [0, 1, 2, 3, 4, 5])], { maxVias: 5 })).toEqual({
+			ok: false,
+			error: 'Too many shapes and junctions to route at once (max 5 waypoints).'
+		});
 	});
 });
