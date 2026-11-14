@@ -11,7 +11,8 @@
 	import { routingOptions } from '../routing-options.svelte';
 	import { flash } from '#lib/util/flash.svelte.js';
 	import { tools } from '#lib/drawing/tools.svelte.js';
-	import { isSupersededFailure, type RouteFailure } from '../api/failure';
+	import { isSupersededFailure } from '../api/failure';
+	import type { RouteFailure } from '../api/contracts';
 	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import { routeActionModel } from './route-action';

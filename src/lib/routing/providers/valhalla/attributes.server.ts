@@ -8,7 +8,7 @@ import type {
 	RouteRoadAttributes,
 	RouteRoadKind,
 	RouteRoadSpan
-} from '../../attribution/types';
+} from '../../api/contracts';
 
 const TRACE_ATTRIBUTES = [
 	'edge.id',

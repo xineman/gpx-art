@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import type { MatrixApiResponse } from '../../shape-optimization/matrix-response';
+import type { ApiFailure, MatrixSuccess } from '../../api/contracts';
 import { postValhalla, PROVIDER_UNAVAILABLE_STATUS } from './http.server';
 import type { ValhallaConfig } from './types.server';
 
@@ -52,7 +52,7 @@ function normalizeDistances(value: unknown, size: number): (number | null)[][] |
 export async function fetchValhallaDistanceMatrix(
 	coordinates: Position[],
 	config: ValhallaConfig
-): Promise<MatrixApiResponse> {
+): Promise<MatrixSuccess | ApiFailure> {
 	const reply = await postValhalla<ValhallaMatrixResponse>(
 		config,
 		'sources_to_targets',

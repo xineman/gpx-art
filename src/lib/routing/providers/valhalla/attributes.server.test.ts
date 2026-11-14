@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import type { AttributedRouteEdge } from '../../attribution/types';
+import type { AttributedRouteEdge } from '../../api/contracts';
 import { encodePolyline6 } from './polyline';
 import { buildRoadSpans, fetchValhallaAttributes, parsePolishRoadNames } from './attributes.server';
 

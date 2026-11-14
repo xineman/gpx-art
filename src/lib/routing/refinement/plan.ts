@@ -3,7 +3,7 @@ import { samePosition } from '#lib/geometry/position.js';
 import type { RouteDetour, WaypointDetourAnalysis } from './detours';
 import { normalizeWaypointSelections } from './detour-coverage';
 import type { WaypointActionSelection } from './types';
-import type { RouteRequest, RouteVia } from '../matching/types';
+import type { RouteRequest, RouteVia } from '../api/contracts';
 
 export type RefinementPlan = {
 	request: RouteRequest;

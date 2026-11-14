@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MAX_VIAS, MIN_VIAS } from '#lib/routing/config.js';
 import { coordinateSchema, isCoordinateRangeIssue } from '#lib/routing/api/schemas.server.js';
-import { matrixSuccessSchema } from '#lib/routing/shape-optimization/matrix-response.js';
+import { matrixSuccessSchema } from '#lib/routing/api/contracts.js';
 import {
 	apiStatus,
 	defineJsonPost,

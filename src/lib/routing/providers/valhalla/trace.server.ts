@@ -1,7 +1,7 @@
 import type { LineString, Position } from 'geojson';
 import { pathLength } from '#lib/geometry/distance.js';
 import { samePosition } from '#lib/geometry/position.js';
-import type { RouteRequest } from '../../matching/types';
+import type { RouteRequest } from '../../api/contracts';
 import { decodePolyline6 } from './polyline';
 import {
 	postValhalla,

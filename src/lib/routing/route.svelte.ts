@@ -2,12 +2,15 @@ import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import { MIN_VIAS } from './config';
 import { downloadTextFile } from '#lib/util/download.js';
 import { formatDistance } from '#lib/geometry/distance.js';
-import { requestRouteAttributes } from './attribution/client';
-import type { RouteAttributionSuccess, RouteRoadSpan } from './attribution/types';
+import { requestRoute, requestRouteAttributes } from './api/client';
+import type {
+	RouteAttributionSuccess,
+	RouteResponse,
+	RouteRoadSpan,
+	RouteSuccess
+} from './api/contracts';
 import { lineStringToGpx, routeGpxFilename } from './export/gpx';
 import { requestOptimizedRoute } from './generate-route';
-import { requestRoute } from './matching/client';
-import type { RouteResponse, RouteSuccess } from './matching/types';
 import { prepareRouteShapes } from './preparation/prepare-shapes';
 import { buildRouteMapFeatures } from './presentation/map-features';
 import { refineRouteAutomatically } from './refinement/auto-refine';

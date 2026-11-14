@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import type { ZodOpenApiOperationObject } from 'zod-openapi';
-import { apiFailureSchema, type ApiFailure } from '#lib/routing/api/api-response.js';
+import { apiFailureSchema, type ApiFailure } from '#lib/routing/api/contracts.js';
 
 export const apiStatus = {
 	ok: 200,

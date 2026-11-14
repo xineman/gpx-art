@@ -3,7 +3,7 @@ import { geoJsonPositionSchema } from '#lib/routing/api/schemas.server.js';
 import {
 	routeAttributionSuccessSchema,
 	type AttributedRouteEdge
-} from '#lib/routing/attribution/attributes-response.js';
+} from '#lib/routing/api/contracts.js';
 import {
 	apiStatus,
 	defineJsonPost,

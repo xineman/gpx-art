@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RouteSuccess } from '../matching/types';
+import type { RouteSuccess } from '../api/contracts';
 import { refineRouteAutomatically } from './auto-refine';
 
 const routeWithDetour: RouteSuccess = {

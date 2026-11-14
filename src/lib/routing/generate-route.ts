@@ -1,11 +1,9 @@
 import type { Position } from 'geojson';
-import { requestRoute } from './matching/client';
-import type { RouteRequest, RouteResponse } from './matching/types';
+import { requestMatrix, requestRoute, type RoutingRequestOptions } from './api/client';
+import type { RouteRequest, RouteResponse } from './api/contracts';
 import type { PreparedRouteShape } from './preparation/types';
 import { buildShapeOptimizationProblem } from './shape-optimization/build-problem';
-import { requestMatrix } from './shape-optimization/matrix-client';
 import { optimizeShapeTraversal } from './shape-optimization/shape-optimizer';
-import type { RoutingRequestOptions } from './api/http-client';
 
 function requestFromPositions(points: Position[]): RouteRequest {
 	return { vias: points.map((location) => ({ location })) };

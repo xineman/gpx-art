@@ -1,11 +1,4 @@
-import type { ApiFailure } from './api-response';
-
-export type RouteFailureCode = 'superseded';
-
-export type RouteFailure = ApiFailure & {
-	/** Machine-readable reason for failures handled specially by the client. */
-	code?: RouteFailureCode;
-};
+import type { RouteFailure } from './contracts';
 
 export function supersededFailure(): RouteFailure {
 	return { ok: false, code: 'superseded', error: 'Superseded.' };
