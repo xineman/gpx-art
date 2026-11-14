@@ -150,15 +150,36 @@ describe('buildTopologyGraph', () => {
 		expect(graphFor(guides)).toEqual(graphFor(guides, { snapToleranceM: 0 }));
 	});
 
-	it('splits an additional crossing created by an accepted snap', () => {
+	it('splits additional crossings created by an accepted snap', () => {
 		const graph = graphFor([
 			closed([-0.0005, 0], [0.0005, 0], [0.0005, -0.001], [-0.0005, -0.001]),
 			open([0, 0.00006], [0.003, 0.00006]),
-			open([0.0015, 0.00002], [0.0015, 0.00004])
+			// Lies between the line and its snapped position, so only the moved line crosses it.
+			closed([0.0015, 0.00002], [0.0016, 0.00002], [0.00155, 0.00004])
 		]);
 
-		expect(graph.edges).toHaveLength(9);
-		expect(graph.nodes.filter(({ id }) => degree(graph, id) === 4)).toHaveLength(1);
+		expect(graph.edges).toHaveLength(13);
+		expect(nodesOfDegree(graph, 4)).toHaveLength(2);
+	});
+
+	it('trims a short overshoot past a crossing but keeps an isolated short stroke', () => {
+		const graph = graphFor([
+			open(at(0, 0), at(4, 0)),
+			open(at(2, -2), at(2, 0.01), at(2.01, 0.02), at(2, 0.03)),
+			open(at(10, 10), at(10, 10.05))
+		]);
+		const crossing = nodeNear(graph, at(2, 0));
+
+		expect(crossing && degree(graph, crossing.id)).toBe(3);
+		expect(nodesOfDegree(graph, 1)).toHaveLength(5);
+		expect(nodeNear(graph, at(2, 0.03))).toBeUndefined();
+		expect(nodeAt(graph, at(10, 10.05))).toBeDefined();
+	});
+
+	it('trims both sides of a short stroke crossing a line', () => {
+		const graph = graphFor([open(at(0, 0), at(4, 0)), open(at(2, -0.03), at(2, 0.04))]);
+		expect(graph.edges).toHaveLength(2);
+		expect(nodesOfDegree(graph, 1)).toHaveLength(2);
 	});
 
 	it('honors custom, disabled, and default snapping tolerances', () => {

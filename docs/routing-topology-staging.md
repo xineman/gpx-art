@@ -42,6 +42,10 @@ fixed junction on its host, and a host whose own end also moves bends through th
 moving either or both endpoints of a segment would collapse it or introduce an overlap, keep that
 segment in its original position and plan the rest again.
 
+After snapping, remove dead-end chains no longer than the tolerance that hang off a junction: a
+stroke that overshoots a crossing would otherwise force a retraced spur. An isolated short stroke
+is kept.
+
 This is an enhancement to exact noding. Exactly connected drawings can work without it, while
 freehand sketches and imported geometry will usually need a configurable snapping tolerance.
 
