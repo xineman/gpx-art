@@ -25,45 +25,53 @@ type RouteRefinementSources = {
 	getWaypoints: () => Position[];
 };
 
-export function createRouteRefinementState({
-	getRouteGeometry,
-	getWaypoints
-}: RouteRefinementSources) {
-	const analysis: WaypointDetourAnalysis[] = $derived.by(() => {
-		const routeGeometry = getRouteGeometry();
-		return routeGeometry ? analyzeRouteDetours(routeGeometry, getWaypoints()) : [];
+export class RouteRefinementState {
+	#sources: RouteRefinementSources;
+	#selections = $state<WaypointActionSelection[]>([]);
+
+	constructor(sources: RouteRefinementSources) {
+		this.#sources = sources;
+	}
+
+	#analysis: WaypointDetourAnalysis[] = $derived.by(() => {
+		const routeGeometry = this.#sources.getRouteGeometry();
+		return routeGeometry ? analyzeRouteDetours(routeGeometry, this.#sources.getWaypoints()) : [];
 	});
 
-	function waypointAnalysis(index: number): WaypointDetourAnalysis {
-		return getWaypointDetourAnalysis(analysis, index);
+	hasCandidate(index: number): boolean {
+		return getWaypointDetourAnalysis(this.#analysis, index).candidate != null;
 	}
 
-	function hasCandidate(index: number): boolean {
-		return waypointAnalysis(index).candidate != null;
+	#analysisWithSelections: WaypointDetourAnalysis[] = $derived.by(() =>
+		applySelectionsToWaypointAnalysis(this.#analysis, this.#selections)
+	);
+
+	action(index: number): WaypointRefinementAction {
+		return this.#analysisWithSelections[index]?.action ?? 'keep';
 	}
 
-	let selections = $state<WaypointActionSelection[]>([]);
-	const analysisWithSelections: WaypointDetourAnalysis[] = $derived.by(() =>
-		applySelectionsToWaypointAnalysis(analysis, selections)
+	readonly plan: RefinementPlan = $derived.by(() =>
+		buildRefinementPlan(
+			this.#sources.getRouteGeometry(),
+			this.#sources.getWaypoints(),
+			this.#analysisWithSelections,
+			this.#selections
+		)
 	);
 
-	function action(index: number): WaypointRefinementAction {
-		return analysisWithSelections[index]?.action ?? 'keep';
-	}
-
-	const plan: RefinementPlan = $derived.by(() =>
-		buildRefinementPlan(getRouteGeometry(), getWaypoints(), analysisWithSelections, selections)
+	readonly moveProposals: WaypointMoveProposal[] = $derived.by(() =>
+		buildWaypointMoveProposals(
+			this.#sources.getRouteGeometry(),
+			this.#sources.getWaypoints(),
+			this.#analysisWithSelections
+		)
 	);
 
-	const moveProposals: WaypointMoveProposal[] = $derived.by(() =>
-		buildWaypointMoveProposals(getRouteGeometry(), getWaypoints(), analysisWithSelections)
-	);
-
-	const actionCounts = $derived.by(() => {
+	readonly actionCounts = $derived.by(() => {
 		let move = 0;
 		let remove = 0;
 
-		for (const waypointAnalysis of analysisWithSelections) {
+		for (const waypointAnalysis of this.#analysisWithSelections) {
 			if (waypointAnalysis.action === 'move') move += 1;
 			if (waypointAnalysis.action === 'remove') remove += 1;
 		}
@@ -71,51 +79,35 @@ export function createRouteRefinementState({
 		return { move, remove, pending: move + remove };
 	});
 
-	const canRefineCurrentResult = $derived(
-		getRouteGeometry() != null && actionCounts.pending > 0 && plan.request.vias.length >= MIN_VIAS
+	readonly canRefineCurrentResult = $derived.by(
+		() =>
+			this.#sources.getRouteGeometry() != null &&
+			this.actionCounts.pending > 0 &&
+			this.plan.request.vias.length >= MIN_VIAS
 	);
 
-	function reset() {
-		selections = [];
+	reset() {
+		this.#selections = [];
 	}
 
-	function replaceSelections(nextSelections: WaypointActionSelection[] = []) {
-		selections = [...nextSelections];
+	replaceSelections(nextSelections: WaypointActionSelection[] = []) {
+		this.#selections = [...nextSelections];
 	}
 
-	function cycle(index: number): WaypointRefinementAction | null {
-		if (!Number.isInteger(index) || index < 0 || index >= getWaypoints().length) return null;
+	cycle(index: number): WaypointRefinementAction | null {
+		if (!Number.isInteger(index) || index < 0 || index >= this.#sources.getWaypoints().length)
+			return null;
 
-		const actions: WaypointRefinementAction[] = hasCandidate(index)
+		const actions: WaypointRefinementAction[] = this.hasCandidate(index)
 			? ['move', 'remove', 'keep']
 			: ['keep', 'remove'];
-		const current = action(index);
+		const current = this.action(index);
 		const next = actions[(actions.indexOf(current) + 1) % actions.length]!;
 
-		selections = applyWaypointSelection(analysis, selections, {
+		this.#selections = applyWaypointSelection(this.#analysis, this.#selections, {
 			waypointIndex: index,
 			action: next
 		});
 		return next;
 	}
-
-	return {
-		get actionCounts() {
-			return actionCounts;
-		},
-		get plan() {
-			return plan;
-		},
-		get moveProposals() {
-			return moveProposals;
-		},
-		get canRefineCurrentResult() {
-			return canRefineCurrentResult;
-		},
-		hasCandidate,
-		action,
-		reset,
-		replaceSelections,
-		cycle
-	};
 }

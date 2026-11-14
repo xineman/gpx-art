@@ -24,7 +24,7 @@ import {
 	createLatestOperation,
 	type LatestOperationScope
 } from '#lib/routing/shared/latest-operation.js';
-import { createRouteRefinementState } from './route-refinement.svelte';
+import { RouteRefinementState } from './route-refinement.svelte';
 
 export type RouteStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type RouteLoadingAction = 'generate' | 'refine' | 'reset' | null;
@@ -35,232 +35,202 @@ type RoutePhase =
 	| { status: 'loading'; action: ActiveRouteLoadingAction };
 type AcceptedRoute = RouteSuccess & { refined: boolean };
 
-let phase = $state<RoutePhase>({ status: 'idle', action: null });
-let acceptedRoute = $state<AcceptedRoute | null>(null);
-let attribution = $state<RouteAttributionSuccess | null>(null);
-let activeRoadSpanIndex = $state<number | null>(null);
-const routeOperations = createLatestOperation();
+class RouteState {
+	#phase = $state<RoutePhase>({ status: 'idle', action: null });
+	#acceptedRoute = $state<AcceptedRoute | null>(null);
+	#attribution = $state<RouteAttributionSuccess | null>(null);
+	#activeRoadSpanIndex = $state<number | null>(null);
+	#routeOperations = createLatestOperation();
 
-/** Sketch revision bound to the current route or in-flight route attempt. */
-let routeSketchRevision: number | null = null;
+	/** Sketch revision bound to the current route or in-flight route attempt. */
+	#routeSketchRevision: number | null = null;
 
-const routeGeometry: LineString | null = $derived(
-	attribution?.geometry ?? acceptedRoute?.geometry ?? null
-);
-/** Map-matched positions for the current or preserved route. */
-const waypoints: Position[] = $derived(acceptedRoute?.waypoints ?? []);
-const distanceM = $derived(attribution?.distanceM ?? acceptedRoute?.distanceM ?? 0);
-const hasRefinedRoute = $derived(acceptedRoute?.refined ?? false);
-const roadEdges: AttributedRouteEdge[] = $derived(attribution?.roadEdges ?? []);
-const roadSpans: RouteRoadSpan[] = $derived(attribution?.roadSpans ?? []);
-const activeRoadSpan: RouteRoadSpan | null = $derived(
-	activeRoadSpanIndex === null ? null : (roadSpans[activeRoadSpanIndex] ?? null)
-);
-const isLoading = $derived(phase.status === 'loading');
-const isReady = $derived(phase.status === 'ready' && acceptedRoute != null);
-const distanceLabel = $derived(formatDistance(distanceM));
+	#routeGeometry: LineString | null = $derived(
+		this.#attribution?.geometry ?? this.#acceptedRoute?.geometry ?? null
+	);
+	/** Map-matched positions for the current or preserved route. */
+	#waypoints: Position[] = $derived(this.#acceptedRoute?.waypoints ?? []);
+	#distanceM = $derived(this.#attribution?.distanceM ?? this.#acceptedRoute?.distanceM ?? 0);
+	readonly hasRefinedRoute = $derived(this.#acceptedRoute?.refined ?? false);
+	readonly roadEdges: AttributedRouteEdge[] = $derived(this.#attribution?.roadEdges ?? []);
+	readonly roadSpans: RouteRoadSpan[] = $derived(this.#attribution?.roadSpans ?? []);
+	#activeRoadSpan: RouteRoadSpan | null = $derived(
+		this.#activeRoadSpanIndex === null ? null : (this.roadSpans[this.#activeRoadSpanIndex] ?? null)
+	);
+	readonly isLoading = $derived(this.#phase.status === 'loading');
+	readonly isReady = $derived(this.#phase.status === 'ready' && this.#acceptedRoute != null);
+	readonly distanceLabel = $derived(formatDistance(this.#distanceM));
 
-const refinement = createRouteRefinementState({
-	getRouteGeometry: () => routeGeometry,
-	getWaypoints: () => waypoints
-});
+	#refinement = new RouteRefinementState({
+		getRouteGeometry: () => this.#routeGeometry,
+		getWaypoints: () => this.#waypoints
+	});
 
-let lastFocusedMoveWaypointIndex = $state<number | null>(null);
-const moveWaypointIndexes: number[] = $derived(
-	refinement.moveProposals.map(({ waypointIndex }) => waypointIndex)
-);
-const highlightedMoveWaypointIndex: number | null = $derived.by(() => {
-	if (
-		lastFocusedMoveWaypointIndex === null ||
-		!moveWaypointIndexes.includes(lastFocusedMoveWaypointIndex)
+	#lastFocusedMoveWaypointIndex = $state<number | null>(null);
+	readonly moveWaypointIndexes: number[] = $derived(
+		this.#refinement.moveProposals.map(({ waypointIndex }) => waypointIndex)
+	);
+	readonly highlightedMoveWaypointIndex: number | null = $derived.by(() => {
+		if (
+			this.#lastFocusedMoveWaypointIndex === null ||
+			!this.moveWaypointIndexes.includes(this.#lastFocusedMoveWaypointIndex)
+		) {
+			return null;
+		}
+		return this.#lastFocusedMoveWaypointIndex;
+	});
+
+	readonly canRefineRoute = $derived(this.isReady && this.#refinement.canRefineCurrentResult);
+
+	#clearRouteData() {
+		this.#acceptedRoute = null;
+		this.#attribution = null;
+		this.#refinement.reset();
+		this.#lastFocusedMoveWaypointIndex = null;
+		this.#activeRoadSpanIndex = null;
+	}
+
+	#resetRoute(nextStatus: Extract<RouteStatus, 'idle' | 'error'>) {
+		this.#clearRouteData();
+		this.#routeSketchRevision = null;
+		this.#phase = { status: nextStatus, action: null };
+	}
+
+	#acceptRoute(
+		result: RouteSuccess,
+		options: {
+			refined: boolean;
+			selections?: WaypointActionSelection[];
+		}
 	) {
-		return null;
+		this.#acceptedRoute = { ...result, refined: options.refined };
+		this.#attribution = null;
+		this.#refinement.replaceSelections(options.selections ?? []);
+		this.#lastFocusedMoveWaypointIndex = null;
+		this.#activeRoadSpanIndex = null;
+		this.#phase = { status: 'ready', action: null };
 	}
-	return lastFocusedMoveWaypointIndex;
-});
 
-const canRefineRoute = $derived(isReady && refinement.canRefineCurrentResult);
+	async #attributeReadyRoute(
+		operation: LatestOperationScope,
+		action: ActiveRouteLoadingAction
+	): Promise<RouteResponse> {
+		if (!this.#acceptedRoute || !this.#routeGeometry)
+			return { ok: false, error: 'No route found.' };
+		const routeGeometryToAttribute = this.#routeGeometry;
+		const routedWaypoints = [...this.#waypoints];
+		this.#phase = { status: 'loading', action };
 
-function clearRouteData() {
-	acceptedRoute = null;
-	attribution = null;
-	refinement.reset();
-	lastFocusedMoveWaypointIndex = null;
-	activeRoadSpanIndex = null;
-}
+		const attributed = await operation.guard(
+			requestRouteAttributes(routeGeometryToAttribute, {
+				signal: operation.signal
+			})
+		);
+		if (!attributed.ok) {
+			this.#phase = { status: 'ready', action: null };
+			return attributed;
+		}
 
-function resetRoute(nextStatus: Extract<RouteStatus, 'idle' | 'error'>) {
-	clearRouteData();
-	routeSketchRevision = null;
-	phase = { status: nextStatus, action: null };
-}
-
-function acceptRoute(
-	result: RouteSuccess,
-	options: {
-		refined: boolean;
-		selections?: WaypointActionSelection[];
+		this.#attribution = attributed;
+		this.#activeRoadSpanIndex = null;
+		this.#phase = { status: 'ready', action: null };
+		const result: RouteSuccess = {
+			ok: true,
+			geometry: attributed.geometry,
+			distanceM: attributed.distanceM,
+			waypoints: routedWaypoints
+		};
+		return result;
 	}
-) {
-	acceptedRoute = { ...result, refined: options.refined };
-	attribution = null;
-	refinement.replaceSelections(options.selections ?? []);
-	lastFocusedMoveWaypointIndex = null;
-	activeRoadSpanIndex = null;
-	phase = { status: 'ready', action: null };
-}
 
-async function attributeReadyRoute(
-	operation: LatestOperationScope,
-	action: ActiveRouteLoadingAction
-): Promise<RouteResponse> {
-	if (!acceptedRoute || !routeGeometry) return { ok: false, error: 'No route found.' };
-	const routeGeometryToAttribute = routeGeometry;
-	const routedWaypoints = [...waypoints];
-	phase = { status: 'loading', action };
+	async #refineAutomatically(operation: LatestOperationScope, initialRoute: RouteSuccess) {
+		this.#phase = { status: 'loading', action: 'generate' };
 
-	const attributed = await operation.guard(
-		requestRouteAttributes(routeGeometryToAttribute, {
-			signal: operation.signal
+		const outcome = await operation.guard(
+			refineRouteAutomatically(initialRoute, (request) =>
+				operation.guard(requestRoute(request, { signal: operation.signal }))
+			)
+		);
+
+		this.#acceptRoute(outcome.route, { refined: outcome.refined });
+		return outcome.response;
+	}
+
+	/** Map source data: base route, display-only detour overlays, and via points. */
+	readonly collection: FeatureCollection = $derived.by(() =>
+		buildRouteMapFeatures({
+			routeGeometry: this.#routeGeometry,
+			waypoints: this.#waypoints.map((coordinates, index) => ({
+				coordinates,
+				candidate: this.#refinement.hasCandidate(index),
+				action: this.#refinement.action(index)
+			})),
+			moveProposals: this.#refinement.moveProposals,
+			highlightedMoveWaypointIndex: this.highlightedMoveWaypointIndex,
+			activeRoadSpan: this.#activeRoadSpan,
+			interactive: this.isReady
 		})
 	);
-	if (!attributed.ok) {
-		phase = { status: 'ready', action: null };
-		return attributed;
-	}
 
-	attribution = attributed;
-	activeRoadSpanIndex = null;
-	phase = { status: 'ready', action: null };
-	const result: RouteSuccess = {
-		ok: true,
-		geometry: attributed.geometry,
-		distanceM: attributed.distanceM,
-		waypoints: routedWaypoints
-	};
-	return result;
-}
-
-async function refineAutomatically(operation: LatestOperationScope, initialRoute: RouteSuccess) {
-	phase = { status: 'loading', action: 'generate' };
-
-	const outcome = await operation.guard(
-		refineRouteAutomatically(initialRoute, (request) =>
-			operation.guard(requestRoute(request, { signal: operation.signal }))
-		)
-	);
-
-	acceptRoute(outcome.route, { refined: outcome.refined });
-	return outcome.response;
-}
-
-const collection: FeatureCollection = $derived.by(() =>
-	buildRouteMapFeatures({
-		routeGeometry,
-		waypoints: waypoints.map((coordinates, index) => ({
-			coordinates,
-			candidate: refinement.hasCandidate(index),
-			action: refinement.action(index)
-		})),
-		moveProposals: refinement.moveProposals,
-		highlightedMoveWaypointIndex,
-		activeRoadSpan,
-		interactive: isReady
-	})
-);
-
-export const route = {
 	get status() {
-		return phase.status;
-	},
+		return this.#phase.status;
+	}
 	get loadingAction() {
-		return phase.action;
-	},
-	get isLoading() {
-		return isLoading;
-	},
-	get isReady() {
-		return isReady;
-	},
-	get hasRefinedRoute() {
-		return hasRefinedRoute;
-	},
+		return this.#phase.action;
+	}
 	get moveWaypointCount() {
-		return refinement.actionCounts.move;
-	},
-	get moveWaypointIndexes(): number[] {
-		return moveWaypointIndexes;
-	},
-	get highlightedMoveWaypointIndex() {
-		return highlightedMoveWaypointIndex;
-	},
+		return this.#refinement.actionCounts.move;
+	}
 	get removeWaypointCount() {
-		return refinement.actionCounts.remove;
-	},
+		return this.#refinement.actionCounts.remove;
+	}
 	get pendingWaypointCount() {
-		return refinement.actionCounts.pending;
-	},
-	get canRefineRoute() {
-		return canRefineRoute;
-	},
-	get roadEdges(): AttributedRouteEdge[] {
-		return roadEdges;
-	},
-	get roadSpans(): RouteRoadSpan[] {
-		return roadSpans;
-	},
+		return this.#refinement.actionCounts.pending;
+	}
 	get activeRoadSpanIndex() {
-		return activeRoadSpanIndex;
-	},
+		return this.#activeRoadSpanIndex;
+	}
 	inspectRoadSpan(index: number | null) {
-		activeRoadSpanIndex =
-			index !== null && Number.isInteger(index) && index >= 0 && index < roadSpans.length
+		this.#activeRoadSpanIndex =
+			index !== null && Number.isInteger(index) && index >= 0 && index < this.roadSpans.length
 				? index
 				: null;
-	},
+	}
 	inspectMoveWaypoint(index: number) {
-		if (moveWaypointIndexes.includes(index)) lastFocusedMoveWaypointIndex = index;
-	},
+		if (this.moveWaypointIndexes.includes(index)) this.#lastFocusedMoveWaypointIndex = index;
+	}
 	clearMoveWaypointFocus() {
-		lastFocusedMoveWaypointIndex = null;
-	},
+		this.#lastFocusedMoveWaypointIndex = null;
+	}
 	reviewMoveWaypoint(offset: number): number | null {
-		if (moveWaypointIndexes.length === 0 || !Number.isFinite(offset)) return null;
+		if (this.moveWaypointIndexes.length === 0 || !Number.isFinite(offset)) return null;
 		const currentIndex = Math.max(
 			0,
-			moveWaypointIndexes.indexOf(highlightedMoveWaypointIndex ?? -1)
+			this.moveWaypointIndexes.indexOf(this.highlightedMoveWaypointIndex ?? -1)
 		);
 		const nextIndex =
-			(currentIndex + Math.trunc(offset) + moveWaypointIndexes.length) % moveWaypointIndexes.length;
-		lastFocusedMoveWaypointIndex = moveWaypointIndexes[nextIndex]!;
-		return lastFocusedMoveWaypointIndex;
-	},
-	/**
-	 * Map source data: base route, display-only detour overlays, and via points.
-	 */
-	get collection(): FeatureCollection {
-		return collection;
-	},
-	get distanceLabel() {
-		return distanceLabel;
-	},
+			(currentIndex + Math.trunc(offset) + this.moveWaypointIndexes.length) %
+			this.moveWaypointIndexes.length;
+		this.#lastFocusedMoveWaypointIndex = this.moveWaypointIndexes[nextIndex]!;
+		return this.#lastFocusedMoveWaypointIndex;
+	}
 	async generate(features: Feature[], revision: number, options: { autoRefine?: boolean } = {}) {
-		return routeOperations.run(async (operation) => {
+		return this.#routeOperations.run(async (operation) => {
 			if (features.length === 0) {
 				const error = 'Sketch a shape first.';
-				resetRoute('error');
+				this.#resetRoute('error');
 				return { ok: false as const, error };
 			}
 
 			const prepared = prepareRouteShapes(features);
 			if (!prepared.ok) {
-				resetRoute('error');
+				this.#resetRoute('error');
 				return prepared;
 			}
 
-			clearRouteData();
-			routeSketchRevision = revision;
-			phase = { status: 'loading', action: 'generate' };
+			this.#clearRouteData();
+			this.#routeSketchRevision = revision;
+			this.#phase = { status: 'loading', action: 'generate' };
 
 			const result = await operation.guard(
 				requestOptimizedRoute(prepared.shapes, {
@@ -268,51 +238,51 @@ export const route = {
 				})
 			);
 			if (!result.ok) {
-				resetRoute('error');
+				this.#resetRoute('error');
 				return result;
 			}
 
-			acceptRoute(result, { refined: false });
+			this.#acceptRoute(result, { refined: false });
 			if (options.autoRefine) {
-				const refined = await refineAutomatically(operation, result);
+				const refined = await this.#refineAutomatically(operation, result);
 				if (!refined.ok) return refined;
 			}
-			return attributeReadyRoute(operation, 'generate');
+			return this.#attributeReadyRoute(operation, 'generate');
 		}, supersededFailure);
-	},
+	}
 	async refineRoute(): Promise<RouteResponse> {
-		if (!isReady || routeSketchRevision == null) {
+		if (!this.isReady || this.#routeSketchRevision == null) {
 			return { ok: false, error: 'Generate a route first.' };
 		}
-		if (refinement.actionCounts.pending === 0) {
+		if (this.#refinement.actionCounts.pending === 0) {
 			return { ok: false, error: 'Choose at least one waypoint action to refine the route.' };
 		}
 
-		const plan = refinement.plan;
+		const plan = this.#refinement.plan;
 		if (plan.request.vias.length < MIN_VIAS) {
 			return { ok: false, error: `Keep at least ${MIN_VIAS} waypoints to refine the route.` };
 		}
 
-		return routeOperations.run(async (operation) => {
-			phase = { status: 'loading', action: 'refine' };
+		return this.#routeOperations.run(async (operation) => {
+			this.#phase = { status: 'loading', action: 'refine' };
 
 			const result = await operation.guard(
 				requestRoute(plan.request, { signal: operation.signal })
 			);
 			if (!result.ok) {
-				phase = { status: 'ready', action: null };
+				this.#phase = { status: 'ready', action: null };
 				return result;
 			}
 
-			acceptRoute(result, {
+			this.#acceptRoute(result, {
 				refined: true,
 				selections: plan.nextSelections
 			});
-			return attributeReadyRoute(operation, 'refine');
+			return this.#attributeReadyRoute(operation, 'refine');
 		}, supersededFailure);
-	},
+	}
 	async resetFromSketch(features: Feature[], revision: number): Promise<RouteResponse> {
-		if (!isReady || !hasRefinedRoute) {
+		if (!this.isReady || !this.hasRefinedRoute) {
 			return { ok: false, error: 'Refine the route first.' };
 		}
 
@@ -321,9 +291,9 @@ export const route = {
 			return prepared;
 		}
 
-		return routeOperations.run(async (operation) => {
-			routeSketchRevision = revision;
-			phase = { status: 'loading', action: 'reset' };
+		return this.#routeOperations.run(async (operation) => {
+			this.#routeSketchRevision = revision;
+			this.#phase = { status: 'loading', action: 'reset' };
 
 			const result = await operation.guard(
 				requestOptimizedRoute(prepared.shapes, {
@@ -331,33 +301,35 @@ export const route = {
 				})
 			);
 			if (!result.ok) {
-				phase = { status: 'ready', action: null };
+				this.#phase = { status: 'ready', action: null };
 				return result;
 			}
 
-			acceptRoute(result, { refined: false });
-			return attributeReadyRoute(operation, 'reset');
+			this.#acceptRoute(result, { refined: false });
+			return this.#attributeReadyRoute(operation, 'reset');
 		}, supersededFailure);
-	},
+	}
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {
-		if (!isReady) return null;
-		const next = refinement.cycle(index);
-		if (next === 'move') lastFocusedMoveWaypointIndex = index;
+		if (!this.isReady) return null;
+		const next = this.#refinement.cycle(index);
+		if (next === 'move') this.#lastFocusedMoveWaypointIndex = index;
 		return next;
-	},
+	}
 	/** Drop route when the drawing revision no longer matches what produced it. */
 	syncSketch(revision: number) {
-		if (routeSketchRevision == null) return;
-		if (revision !== routeSketchRevision) {
-			routeOperations.supersede();
-			resetRoute('idle');
+		if (this.#routeSketchRevision == null) return;
+		if (revision !== this.#routeSketchRevision) {
+			this.#routeOperations.supersede();
+			this.#resetRoute('idle');
 		}
-	},
+	}
 	/** Download GPX for the current route (no-op when not ready). */
 	downloadGpx() {
-		if (!routeGeometry) return;
-		const text = lineStringToGpx(routeGeometry);
+		if (!this.#routeGeometry) return;
+		const text = lineStringToGpx(this.#routeGeometry);
 		downloadTextFile(routeGpxFilename(), text, 'application/gpx+xml');
 	}
-};
+}
+
+export const route = new RouteState();

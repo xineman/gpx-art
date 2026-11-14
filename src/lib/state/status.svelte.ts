@@ -8,20 +8,6 @@ import { pointer } from '#lib/util/pointer.svelte.js';
 import { drawings } from './drawings.svelte';
 import { toolById, tools, type ToolId } from './tools.svelte';
 
-/**
- * Ephemeral flash messages (e.g. "Rectangle added.") sit on top of a
- * derived baseline so status never goes permanently stale the way a
- * purely imperative string can.
- */
-let flash = $state<string | null>(null);
-let flashTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Live draft geometry while the user is mid-stroke (null when idle). */
-let draftGeometry = $state<Geometry | null>(null);
-let draftTool = $state<ToolId | null>(null);
-let draftVertexCount = $state(0);
-let draftCanFinish = $state(false);
-
 const FLASH_MS = 2200;
 
 function toolLabel(id: string): string {
@@ -42,123 +28,72 @@ function toolReadyStatus(id: ToolId): string {
 	return `${def.label} ready.`;
 }
 
-function draftingStatus(tool: ToolId): string {
-	const touch = !pointer.fineHover;
+/**
+ * Flash messages sit on top of the live draft and tool baseline.
+ * The shared instance owns the timer and tool-change subscription.
+ */
+class StatusState {
+	#flash = $state<string | null>(null);
+	#flashTimer: ReturnType<typeof setTimeout> | undefined;
+	#draftGeometry = $state<Geometry | null>(null);
+	#draftTool = $state<ToolId | null>(null);
+	#draftVertexCount = $state(0);
+	#draftCanFinish = $state(false);
 
-	switch (tool) {
-		case 'pencil':
-			return touch ? 'Drawing · lift finger to finish' : 'Drawing pencil stroke.';
-		case 'rectangle':
-			return touch ? 'Rectangle · drag, then release' : 'Sizing rectangle.';
-		case 'polyline':
-			if (!draftCanFinish) {
-				return touch ? 'Polyline · tap to add vertices' : 'Polyline · click to add vertices';
-			}
-			return touch
-				? 'Polyline · double-tap last point to finish'
-				: 'Polyline · double-click or Enter to finish';
-		case 'polygon':
-			if (draftVertexCount < 3) {
-				return touch
-					? `Polygon · tap vertices (${draftVertexCount}/3)`
-					: `Polygon · click vertices (${draftVertexCount}/3)`;
-			}
-			return touch
-				? 'Polygon · double-tap last point to close'
-				: 'Polygon · double-click or Enter to close';
-		default:
-			return toolReadyStatus(tools.active);
-	}
-}
-
-function baselineStatus(): string {
-	// Temporary Space-pan is a mode, not a tool pick.
-	if (tools.spaceHeld) return 'Map navigation active.';
-
-	const tool = tools.active;
-
-	if (draftTool != null) {
-		return draftingStatus(draftTool);
+	constructor() {
+		// Any status consumer gets flash clearing when the tool or Space-pan changes.
+		tools.onModeChange(() => this.clearFlash());
 	}
 
-	// Empty canvas + default pencil: gentle invite before the first pick.
-	if (drawings.features.length === 0 && tool === 'pencil' && pointer.fineHover) {
-		return 'Sketch a shape.';
-	}
-
-	return toolReadyStatus(tool);
-}
-
-function featuresForStats(): Feature[] {
-	const committed = drawings.features;
-	if (!draftGeometry || !draftTool) return committed;
-	return [
-		...committed,
-		{
-			type: 'Feature',
-			properties: { tool: draftTool, id: '__draft__' },
-			geometry: draftGeometry
-		}
-	];
-}
-
-function clearFlashInternal() {
-	if (flashTimer) clearTimeout(flashTimer);
-	flashTimer = null;
-	flash = null;
-}
-
-// Tool / Space-pan changes should not stay buried under a finished-shape flash.
-// Owned here (not StatusBar) so any status consumer gets the same behavior.
-tools.onModeChange(() => {
-	clearFlashInternal();
-});
-
-export const status = {
 	get message() {
-		return flash ?? baselineStatus();
-	},
+		return this.#flash ?? this.#baselineStatus();
+	}
+
 	get distanceLabel() {
-		return distanceLabelFromFeatures(featuresForStats());
-	},
+		return distanceLabelFromFeatures(this.#featuresForStats());
+	}
+
 	get pointLabel() {
-		// Use committed draft vertices only — not the rubber-band cursor in draft geometry.
+		// Count committed draft vertices, not the rubber-band cursor.
 		const committed = featuresPointCount(drawings.features);
-		return pointLabelFromCount(committed + draftVertexCount);
-	},
+		return pointLabelFromCount(committed + this.#draftVertexCount);
+	}
+
 	get draftActive() {
-		return draftTool != null;
-	},
-	/**
-	 * Report live draft from DrawingController.
-	 * Pass `tool: null` to clear.
-	 */
+		return this.#draftTool != null;
+	}
+
+	/** Report a live draft; pass `tool: null` to clear it. */
 	setDraft(
 		tool: ToolId | null,
 		geometry: Geometry | null = null,
 		meta: { vertexCount?: number; canFinish?: boolean } = {}
 	) {
-		// Starting a stroke should not sit under a previous "… finished." flash.
-		if (tool != null && draftTool == null) this.clearFlash();
-		draftTool = tool;
-		draftGeometry = tool ? geometry : null;
-		draftVertexCount = tool ? (meta.vertexCount ?? 0) : 0;
-		draftCanFinish = tool ? (meta.canFinish ?? false) : false;
-	},
-	/** Short-lived override; baseline resumes when it expires. */
+		// Starting a stroke should not sit under a finished-shape flash.
+		if (tool != null && this.#draftTool == null) this.clearFlash();
+		this.#draftTool = tool;
+		this.#draftGeometry = tool ? geometry : null;
+		this.#draftVertexCount = tool ? (meta.vertexCount ?? 0) : 0;
+		this.#draftCanFinish = tool ? (meta.canFinish ?? false) : false;
+	}
+
+	/** Short-lived override; the baseline resumes when it expires. */
 	flash(message: string, ms = FLASH_MS) {
-		if (flashTimer) clearTimeout(flashTimer);
-		flash = message;
-		flashTimer = setTimeout(() => {
-			flash = null;
-			flashTimer = null;
+		clearTimeout(this.#flashTimer);
+		this.#flash = message;
+		this.#flashTimer = setTimeout(() => {
+			this.#flash = null;
+			this.#flashTimer = undefined;
 		}, ms);
-	},
-	/** Drop a pending flash (e.g. when the user switches tools). */
+	}
+
 	clearFlash() {
-		clearFlashInternal();
-	},
-	/** Called after a successful commit so the bar acknowledges the action. */
+		clearTimeout(this.#flashTimer);
+		this.#flashTimer = undefined;
+		this.#flash = null;
+	}
+
+	/** Acknowledge a committed drawing. */
 	announceCommit(tool: string, closed = false) {
 		if (closed) {
 			this.flash('Closed loop added.');
@@ -180,4 +115,58 @@ export const status = {
 				this.flash(`${label} added.`);
 		}
 	}
-};
+
+	#draftingStatus(tool: ToolId): string {
+		const touch = !pointer.fineHover;
+
+		switch (tool) {
+			case 'pencil':
+				return touch ? 'Drawing · lift finger to finish' : 'Drawing pencil stroke.';
+			case 'rectangle':
+				return touch ? 'Rectangle · drag, then release' : 'Sizing rectangle.';
+			case 'polyline':
+				if (!this.#draftCanFinish) {
+					return touch ? 'Polyline · tap to add vertices' : 'Polyline · click to add vertices';
+				}
+				return touch
+					? 'Polyline · double-tap last point to finish'
+					: 'Polyline · double-click or Enter to finish';
+			case 'polygon':
+				if (this.#draftVertexCount < 3) {
+					return touch
+						? `Polygon · tap vertices (${this.#draftVertexCount}/3)`
+						: 'Polygon · click vertices';
+				}
+				return touch
+					? 'Polygon · double-tap last point to close'
+					: 'Polygon · double-click or Enter to close';
+			default:
+				return toolReadyStatus(tools.active);
+		}
+	}
+
+	#baselineStatus(): string {
+		if (tools.spaceHeld) return 'Map navigation active.';
+		const tool = tools.active;
+		if (this.#draftTool != null) return this.#draftingStatus(this.#draftTool);
+		if (drawings.features.length === 0 && tool === 'pencil' && pointer.fineHover) {
+			return 'Sketch a shape.';
+		}
+		return toolReadyStatus(tool);
+	}
+
+	#featuresForStats(): Feature[] {
+		const committed = drawings.features;
+		if (!this.#draftGeometry || !this.#draftTool) return committed;
+		return [
+			...committed,
+			{
+				type: 'Feature',
+				properties: { tool: this.#draftTool, id: '__draft__' },
+				geometry: this.#draftGeometry
+			}
+		];
+	}
+}
+
+export const status = new StatusState();

@@ -17,8 +17,8 @@ Working map + drawing + routing shell:
 - **Route pipeline:** client extract/simplify grouped shape traces → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side shape-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + road-attribution ribbon + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
-- Snapshot undo/redo of committed features on `drawings` module runes (bulk import is one undo step)
-- Route is derived state (`route` module runes); sketch changes invalidate it
+- Snapshot undo/redo on the shared `drawings` state instance (bulk import is one undo step)
+- Route is derived state on the shared `route` instance; sketch changes invalidate it
 
 Not present yet: manual multi-shape ordering UI, persistence, settings UI (profile/base URL via env).
 
@@ -84,12 +84,14 @@ src/
     geometry/             # haversine distance + sketch stats (pure)
     map/context.ts        # provideMap / useMap (Svelte context)
     state/
-      tools.svelte.ts     # active tool + Space-to-pan (module runes)
-      drawings.svelte.ts  # completed FeatureCollection + snapshot undo/redo
-      route.svelte.ts     # derived route (loading/ready) + GPX download
-      status.svelte.ts    # status copy + distance/point labels
+      tools.svelte.ts     # ToolsState singleton: active tool + Space-to-pan
+      drawings.svelte.ts  # DrawingsState singleton: features + snapshot undo/redo
+      route.svelte.ts     # RouteState singleton: derived route + GPX download
+      route-refinement.svelte.ts # owned RouteRefinementState: selections + plans
+      routing-options.svelte.ts # RoutingOptionsState singleton: session preferences
+      status.svelte.ts    # StatusState singleton: status copy + distance/point labels
     util/
-      pointer.svelte.ts   # fine-hover vs touch (matchMedia)
+      pointer.svelte.ts   # PointerState singleton: fine-hover vs touch (matchMedia)
   routes/
     +layout.svelte
     +page.svelte          # FullscreenMap only
@@ -112,7 +114,7 @@ OpenAPI endpoint, which generates the spec with `zod-openapi`.
 
 **Drawing pipeline.**
 
-1. `tools` / `drawings` / `status` are **module-level runes** (shared singletons). Every importer sees the same signals — use this pattern for cross-tree UI state, not classes with per-import instances.
+1. Reactive application state uses **classes with private mutable rune fields** in `.svelte.ts` modules. Expose computed values as public `readonly $derived` fields instead of forwarding getters; keep getters for mutable state and simple projections. Export one shared instance (`tools`, `drawings`, `route`, `status`, `routingOptions`, `pointer`); consumers import it rather than constructing their own. Keep cohesive owned state separate: `RouteState` composes `RouteRefinementState`. Pure calculations remain ordinary functions.
 2. `MapDrawingInput` translates MapLibre and window events. `DrawingSession` owns drag and vertex gestures and returns updates for `DrawingController` to apply. `DrawingLayer.svelte` wires the controller to runes via `$effect`, commits with `drawings.add(...)`, and feeds live draft geometry into `status`.
 3. `layers.ts` owns source/layer IDs and paint; colors come from `layout.css` theme tokens, not hardcoded hex. Keep pure geometry in `geo.ts` / `geometry/`.
 4. `FullscreenMap` owns overlay placement (status + tools stack + bottom history) and mounts `ToolShortcuts` once. Tool/history chrome should not self-position with absolute insets or register global keys.

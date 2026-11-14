@@ -1,11 +1,13 @@
 /** Session-scoped preferences shared by the desktop and mobile route controls. */
-let autoRefineOnGenerate = $state(true);
+class RoutingOptionsState {
+	#autoRefineOnGenerate = $state(true);
 
-export const routingOptions = {
 	get autoRefineOnGenerate() {
-		return autoRefineOnGenerate;
-	},
-	setAutoRefineOnGenerate(value: boolean) {
-		autoRefineOnGenerate = value;
+		return this.#autoRefineOnGenerate;
 	}
-};
+	setAutoRefineOnGenerate(value: boolean) {
+		this.#autoRefineOnGenerate = value;
+	}
+}
+
+export const routingOptions = new RoutingOptionsState();

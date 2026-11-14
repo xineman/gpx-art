@@ -54,58 +54,56 @@ export function toolById(id: string): ToolDef | undefined {
 	return TOOLS.find((t) => t.id === id);
 }
 
-/**
- * Shared tool selection. Module-level runes (not a class) so every
- * importer shares the same reactive signals — avoids silent desync
- * between the tools panel and DrawingLayer.
- */
-let active = $state<ToolId>('pencil');
-let spaceHeld = $state(false);
+/** Shared tool selection; all importers use the same reactive class instance. */
+class ToolsState {
+	#active = $state<ToolId>('pencil');
+	#spaceHeld = $state(false);
 
-/** Listeners for sticky-tool / Space-pan changes (e.g. status flash clear). */
-const modeChangeListeners = new SvelteSet<() => void>();
+	/** Listeners for sticky-tool / Space-pan changes (e.g. status flash clear). */
+	#modeChangeListeners = new SvelteSet<() => void>();
 
-function notifyModeChange() {
-	for (const fn of modeChangeListeners) fn();
-}
+	#notifyModeChange() {
+		for (const fn of this.#modeChangeListeners) fn();
+	}
 
-export const tools = {
 	get active() {
-		return active;
-	},
+		return this.#active;
+	}
 	get spaceHeld() {
-		return spaceHeld;
-	},
+		return this.#spaceHeld;
+	}
 	/** Tool that actually drives interaction right now. */
 	get effective(): ToolId {
-		return spaceHeld ? 'pan' : active;
-	},
+		return this.#spaceHeld ? 'pan' : this.#active;
+	}
 	get isPanning() {
-		return spaceHeld || active === 'pan';
-	},
+		return this.#spaceHeld || this.#active === 'pan';
+	}
 	select(tool: ToolId) {
-		const changed = active !== tool || spaceHeld;
-		active = tool;
+		const changed = this.#active !== tool || this.#spaceHeld;
+		this.#active = tool;
 		// Selecting a tool ends temporary space-pan so the panel stays truthful
-		spaceHeld = false;
-		if (changed) notifyModeChange();
-	},
+		this.#spaceHeld = false;
+		if (changed) this.#notifyModeChange();
+	}
 	pressSpace() {
-		if (spaceHeld) return;
-		spaceHeld = true;
-		notifyModeChange();
-	},
+		if (this.#spaceHeld) return;
+		this.#spaceHeld = true;
+		this.#notifyModeChange();
+	}
 	releaseSpace() {
-		if (!spaceHeld) return;
-		spaceHeld = false;
-		notifyModeChange();
-	},
+		if (!this.#spaceHeld) return;
+		this.#spaceHeld = false;
+		this.#notifyModeChange();
+	}
 	/**
 	 * Subscribe to sticky-tool / Space-pan changes.
 	 * Returns an unsubscribe function.
 	 */
 	onModeChange(fn: () => void): () => void {
-		modeChangeListeners.add(fn);
-		return () => modeChangeListeners.delete(fn);
+		this.#modeChangeListeners.add(fn);
+		return () => this.#modeChangeListeners.delete(fn);
 	}
-};
+}
+
+export const tools = new ToolsState();
