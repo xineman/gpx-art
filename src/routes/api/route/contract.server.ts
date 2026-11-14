@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { MAX_VIAS, MIN_VIAS } from '#lib/config/routing.js';
-import { coordinateSchema, isCoordinateRangeIssue } from '#lib/routing/shared/schemas.server.js';
+import { MAX_VIAS, MIN_VIAS } from '#lib/routing/config.js';
+import { coordinateSchema, isCoordinateRangeIssue } from '#lib/routing/api/schemas.server.js';
 import type { RouteVia } from '#lib/routing/matching/types.js';
 import { routeSuccessSchema } from '#lib/routing/matching/route-response.js';
 import {

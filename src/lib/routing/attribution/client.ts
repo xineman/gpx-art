@@ -1,5 +1,5 @@
 import type { LineString } from 'geojson';
-import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../api/http-client';
 import type { RouteAttributionResponse } from './types';
 
 /** Attribute an accepted route geometry for the road ribbon and map inspection. */

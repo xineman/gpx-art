@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_VIAS } from '#lib/config/routing.js';
+import { MAX_VIAS } from '#lib/routing/config.js';
 import { jsonPostRequest } from '../request.test-helper';
 import { readBody } from './contract.server';
 

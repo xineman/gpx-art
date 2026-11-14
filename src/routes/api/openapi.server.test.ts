@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { MAX_VIAS, MIN_VIAS } from '#lib/config/routing.js';
+import { MAX_VIAS, MIN_VIAS } from '#lib/routing/config.js';
 import { readBody as readAttributesBody } from './attributes/contract.server';
 import { readBody as readMatrixBody } from './matrix/contract.server';
 import { readBody as readRouteBody } from './route/contract.server';

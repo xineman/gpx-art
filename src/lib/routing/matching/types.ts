@@ -1,6 +1,6 @@
 import type { Position } from 'geojson';
 import type { z } from 'zod';
-import type { RouteFailure } from '../shared/failure';
+import type { RouteFailure } from '../api/failure';
 import type { routeSuccessSchema } from './route-response';
 
 /** One input coordinate with optional road snapping constraints. */

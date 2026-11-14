@@ -1,5 +1,5 @@
 import type { Position } from 'geojson';
-import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../api/http-client';
 import type { MatrixRequest, MatrixResponse } from './types';
 
 export async function requestMatrix(

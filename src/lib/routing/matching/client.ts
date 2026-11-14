@@ -1,4 +1,4 @@
-import { parseApiFailure, postJson, type RoutingRequestOptions } from '../shared/http-client';
+import { parseApiFailure, postJson, type RoutingRequestOptions } from '../api/http-client';
 import type { RouteRequest, RouteResponse } from './types';
 
 /** Request one ordered Valhalla map-matching trace. */

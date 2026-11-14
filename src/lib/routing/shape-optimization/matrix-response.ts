@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApiFailure } from '../shared/api-response';
+import type { ApiFailure } from '../api/api-response';
 
 export const matrixSuccessSchema = z.object({
 	ok: z.literal(true),

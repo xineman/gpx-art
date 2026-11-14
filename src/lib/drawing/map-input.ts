@@ -1,9 +1,9 @@
-import type { Map as MaplibreMap, MapMouseEvent, MapTouchEvent } from 'maplibre-gl';
-import { routeWaypointAtPoint } from '#lib/map/waypoint-hit.js';
+import type { Map as MaplibreMap, MapMouseEvent, MapTouchEvent, PointLike } from 'maplibre-gl';
 import type { DrawingPosition } from './draft';
 import type { DrawingInput, PointerKind } from './session';
 
 type DispatchInput = (event: DrawingInput, original?: Pick<Event, 'preventDefault'>) => void;
+export type IgnoreDrawingPoint = (point: PointLike) => boolean;
 
 function mousePosition(event: MapMouseEvent): DrawingPosition {
 	return [event.lngLat.lng, event.lngLat.lat];
@@ -18,11 +18,17 @@ function touchPosition(event: MapTouchEvent): DrawingPosition | null {
 export class MapDrawingInput {
 	#map: MaplibreMap;
 	#dispatch: DispatchInput;
+	#ignorePoint: IgnoreDrawingPoint;
 	#releaseCapture: (() => void) | undefined;
 
-	constructor(map: MaplibreMap, dispatch: DispatchInput) {
+	constructor(
+		map: MaplibreMap,
+		dispatch: DispatchInput,
+		ignorePoint: IgnoreDrawingPoint = () => false
+	) {
 		this.#map = map;
 		this.#dispatch = dispatch;
+		this.#ignorePoint = ignorePoint;
 	}
 
 	attach() {
@@ -78,8 +84,7 @@ export class MapDrawingInput {
 	}
 
 	#onMouseDown = (event: MapMouseEvent) => {
-		if (event.originalEvent.button !== 0 || routeWaypointAtPoint(this.#map, event.point) != null)
-			return;
+		if (event.originalEvent.button !== 0 || this.#ignorePoint(event.point)) return;
 		this.#dispatch({ type: 'dragStart', pointer: 'mouse', position: mousePosition(event) }, event);
 	};
 
@@ -93,7 +98,7 @@ export class MapDrawingInput {
 
 	#onTouchStart = (event: MapTouchEvent) => {
 		const first = event.points[0];
-		if (first && routeWaypointAtPoint(this.#map, first) != null) return;
+		if (first && this.#ignorePoint(first)) return;
 		// A second finger interrupts drawing so the map can handle the pinch.
 		if (event.points.length !== 1) {
 			this.#onTouchCancel();
@@ -139,7 +144,7 @@ export class MapDrawingInput {
 	};
 
 	#onClick = (event: MapMouseEvent) => {
-		if (routeWaypointAtPoint(this.#map, event.point) != null) return;
+		if (this.#ignorePoint(event.point)) return;
 		this.#dispatch(
 			{
 				type: 'tap',
@@ -152,7 +157,7 @@ export class MapDrawingInput {
 	};
 
 	#onDoubleClick = (event: MapMouseEvent) => {
-		if (routeWaypointAtPoint(this.#map, event.point) != null) return;
+		if (this.#ignorePoint(event.point)) return;
 		this.#dispatch({ type: 'doubleClick' }, event);
 	};
 

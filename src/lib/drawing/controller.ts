@@ -1,9 +1,10 @@
 import type { Geometry } from 'geojson';
 import type { Map as MaplibreMap } from 'maplibre-gl';
-import type { ToolId } from '#lib/state/tools.svelte.js';
+import type { ToolId } from './types';
 import { projectDraft, type DraftSnapshot } from './draft';
-import { PREVIEW_SOURCE, previewCollection, setSourceData } from './layers';
-import { MapDrawingInput } from './map-input';
+import { PREVIEW_SOURCE, previewCollection } from './map/layers';
+import { setSourceData } from '#lib/map/sources.js';
+import { MapDrawingInput, type IgnoreDrawingPoint } from './map-input';
 import { DrawingSession, type DrawingEvent } from './session';
 import { toLngLat } from './tap';
 
@@ -19,12 +20,21 @@ export class DrawingController {
 	#session: DrawingSession;
 	#input: MapDrawingInput;
 
-	constructor(map: MaplibreMap, commit: CommitFn, onDraftChange?: DraftChangeFn) {
+	constructor(
+		map: MaplibreMap,
+		commit: CommitFn,
+		onDraftChange?: DraftChangeFn,
+		ignorePoint?: IgnoreDrawingPoint
+	) {
 		this.#map = map;
 		this.#commit = commit;
 		this.#onDraftChange = onDraftChange;
 		this.#session = new DrawingSession((position) => map.project(toLngLat(position)));
-		this.#input = new MapDrawingInput(map, (event, original) => this.#dispatch(event, original));
+		this.#input = new MapDrawingInput(
+			map,
+			(event, original) => this.#dispatch(event, original),
+			ignorePoint
+		);
 	}
 
 	setTool(tool: ToolId) {

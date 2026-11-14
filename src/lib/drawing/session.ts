@@ -1,5 +1,5 @@
 import type { LineString } from 'geojson';
-import type { ToolId } from '#lib/state/tools.svelte.js';
+import type { ToolId } from './types';
 import {
 	canFinishVertices,
 	type Draft,
