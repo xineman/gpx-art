@@ -1,4 +1,5 @@
 import type { LineString, Position } from 'geojson';
+import { samePosition } from '#lib/geometry/position.js';
 import type { RouteDetour, WaypointDetourAnalysis } from './detours';
 import { normalizeWaypointSelections } from './detour-coverage';
 import type { WaypointActionSelection } from './types';
@@ -23,10 +24,6 @@ export type DetourScore = {
 };
 
 const MAX_AUTOMATIC_DISTANCE_INCREASE_RATIO = 1.1;
-
-function samePosition(a: Position, b: Position): boolean {
-	return a[0] === b[0] && a[1] === b[1];
-}
 
 function bearingAtRouteIndex(points: Position[], index: number): number | undefined {
 	const before = points[Math.max(0, index - 1)];

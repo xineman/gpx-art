@@ -1,13 +1,6 @@
-import type { Feature, Geometry, Position } from 'geojson';
+import type { Feature, Geometry } from 'geojson';
 import { formatDistance, pathLength } from '#lib/geometry/distance.js';
-
-/** True when the ring's first and last positions are the same vertex. */
-function isClosedRing(ring: Position[]) {
-	if (ring.length < 2) return false;
-	const first = ring[0];
-	const last = ring[ring.length - 1];
-	return !!first && !!last && first[0] === last[0] && first[1] === last[1];
-}
+import { isClosedRing } from '#lib/geometry/position.js';
 
 /**
  * Sketch vertex count for a geometry.

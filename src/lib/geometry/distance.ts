@@ -30,6 +30,15 @@ export function pathLength(points: Position[]) {
 	return meters;
 }
 
+/** Distance from the first position to each position along the path (meters). */
+export function cumulativeDistances(points: Position[]): number[] {
+	const distances = [0];
+	for (let index = 1; index < points.length; index++) {
+		distances.push(distances[index - 1]! + distanceBetween(points[index - 1]!, points[index]!));
+	}
+	return distances;
+}
+
 export function formatDistance(meters: number) {
 	if (meters < 1000) return `${Math.round(meters)} m`;
 	return `${(meters / 1000).toFixed(1)} km`;

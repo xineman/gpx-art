@@ -1,5 +1,6 @@
 import type { LineString, Position } from 'geojson';
 import { pathLength } from '#lib/geometry/distance.js';
+import { samePosition } from '#lib/geometry/position.js';
 import type { RouteRequest } from '../../matching/types';
 import { decodePolyline6 } from './polyline';
 import type { ValhallaConfig } from './types.server';
@@ -125,10 +126,6 @@ function findGeometryGaps(body: ValhallaTraceResponse, coordinateCount: number):
 	}
 
 	return gaps;
-}
-
-function samePosition(a: Position, b: Position) {
-	return a[0] === b[0] && a[1] === b[1];
 }
 
 function appendUnique(target: Position[], points: Position[]) {

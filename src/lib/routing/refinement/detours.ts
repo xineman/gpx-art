@@ -1,5 +1,5 @@
 import type { LineString, Position } from 'geojson';
-import { distanceBetween } from '#lib/geometry/distance.js';
+import { cumulativeDistances, distanceBetween } from '#lib/geometry/distance.js';
 import { applyCandidateCoverage } from './detour-coverage';
 import type { WaypointRefinementAction } from './types';
 
@@ -63,14 +63,6 @@ function isBetterCandidate(candidate: DetourInterval, best: DetourInterval | nul
 		(candidateScore(candidate) === candidateScore(best) &&
 			candidate.returnDistanceM < best.returnDistanceM)
 	);
-}
-
-function cumulativeDistances(points: Position[]): number[] {
-	const distances = [0];
-	for (let index = 1; index < points.length; index++) {
-		distances.push(distances[index - 1]! + distanceBetween(points[index - 1]!, points[index]!));
-	}
-	return distances;
 }
 
 /**

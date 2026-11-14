@@ -1,4 +1,5 @@
 import type { Position } from 'geojson';
+import { samePosition } from '#lib/geometry/position.js';
 import type { ShapeOptimizationProblem, ShapeTraversalCandidate } from './build-problem';
 
 export const EXACT_SHAPE_LIMIT = 10;
@@ -15,10 +16,6 @@ type ExactNode = {
 	previousMask: number;
 	previousId: number | null;
 };
-
-function samePosition(a: Position, b: Position): boolean {
-	return a[0] === b[0] && a[1] === b[1];
-}
 
 function matrixIsValid(matrix: (number | null)[][], size: number): boolean {
 	return (
