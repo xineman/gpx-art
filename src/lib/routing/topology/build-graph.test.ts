@@ -297,6 +297,32 @@ describe('buildTopologyGraph', () => {
 		expect(graph.nodes).toHaveLength(3);
 	});
 
+	it('joins three lines through one interior point at a single node', () => {
+		// Mulberry32: a seeded generator keeps the random trials reproducible.
+		let seed = 0x5eed;
+		const random = () => {
+			seed = (seed + 0x6d2b79f5) | 0;
+			let value = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+			value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+			return ((value ^ (value >>> 14)) >>> 0) / 2 ** 32;
+		};
+		const [centerX, centerY] = at(0, 0) as [number, number];
+		const ray = (angle: number, length: number): Position => [
+			centerX + Math.cos(angle) * length * 0.001,
+			centerY + Math.sin(angle) * length * 0.001
+		];
+
+		let splitCenters = 0;
+		for (let trial = 0; trial < 2000; trial++) {
+			const guides = Array.from({ length: 3 }, () => {
+				const angle = random() * Math.PI;
+				return open(ray(angle, -0.5 - random()), ray(angle, 0.5 + random()));
+			});
+			if (graphFor(guides, { snapToleranceM: 0 }).nodes.length !== 7) splitCenters++;
+		}
+		expect(splitCenters).toBe(0);
+	});
+
 	it('reports a positive-length collinear overlap', () => {
 		const result = buildTopologyGraph([open([0, 0], [2, 0]), open([1, 0], [3, 0])]);
 		expect(result).toEqual({

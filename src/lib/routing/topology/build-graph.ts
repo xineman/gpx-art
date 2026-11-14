@@ -6,6 +6,11 @@ import type { GuidePath } from '../preparation/types';
 const NUMERIC_EPSILON = 1e-12;
 const COORDINATE_PRECISION = 12;
 /**
+ * Splits on one segment closer than this on both axes (degrees, about 0.1 mm) are one point. It
+ * absorbs rounding in intersections of nearly parallel segments, which grows as the angle shrinks.
+ */
+const POSITION_EPSILON = 1e-9;
+/**
  * Free ends ignore geometry reachable within this multiple of the snap tolerance along the drawing:
  * that geometry is the stroke's own tail, and snapping onto it would close a tiny loop.
  */
@@ -266,12 +271,26 @@ function findSplit(splits: SplitPoint[], split: SplitPoint): SplitPoint | undefi
 	return splits.find(
 		(candidate) =>
 			Math.abs(candidate.t - split.t) <= NUMERIC_EPSILON ||
-			samePosition(candidate.position, split.position)
+			(Math.abs(candidate.position[0]! - split.position[0]!) <= POSITION_EPSILON &&
+				Math.abs(candidate.position[1]! - split.position[1]!) <= POSITION_EPSILON)
 	);
 }
 
-function addSplit(segment: SourceSegment, split: SplitPoint) {
-	if (!findSplit(segment.splits, split)) segment.splits.push(split);
+/**
+ * Record a crossing on both segments. Each pair computes its own intersection, so concurrent
+ * crossings differ by rounding noise; a crossing already recorded on either segment wins so every
+ * segment through that point splits at the same position.
+ */
+function addCrossing(
+	left: SourceSegment,
+	right: SourceSegment,
+	intersection: Extract<SegmentIntersection, { kind: 'point' }>
+) {
+	const leftExisting = findSplit(left.splits, intersection.left);
+	const rightExisting = findSplit(right.splits, intersection.right);
+	const position = (leftExisting ?? rightExisting ?? intersection.left).position;
+	if (!leftExisting) left.splits.push({ t: intersection.left.t, position });
+	if (!rightExisting) right.splits.push({ t: intersection.right.t, position });
 }
 
 function withEndpointSplits(segment: Segment): SourceSegment {
@@ -618,8 +637,7 @@ function nodePlacedSegments(placed: PlacedSegment[]): Segment[] {
 			}
 			const intersection = intersectSegments(left, right);
 			if (intersection.kind !== 'point') continue;
-			addSplit(left, intersection.left);
-			addSplit(right, intersection.right);
+			addCrossing(left, right, intersection);
 		}
 	}
 	return splitSegments(segments);
@@ -722,8 +740,7 @@ export function buildTopologyGraph(
 					]
 				};
 			}
-			addSplit(left, intersection.left);
-			addSplit(right, intersection.right);
+			addCrossing(left, right, intersection);
 		}
 	}
 
