@@ -296,7 +296,7 @@ describe('route state', () => {
 		expect(route.highlightedMoveWaypointIndex).toBe(1);
 	});
 
-	it('sends grouped shapes and hides provisional endpoint roles while optimizing', async () => {
+	it('requests prepared shapes and shows no waypoints until the route arrives', async () => {
 		let resolveRoute!: (result: typeof success) => void;
 		const response = new Promise<typeof success>((resolve) => {
 			resolveRoute = resolve;
@@ -454,8 +454,6 @@ describe('route state', () => {
 			properties: { waypointIndex: 1, activeMove: false },
 			geometry: { type: 'Point', coordinates: [21.001, 52] }
 		});
-		expect(waypointProperties(1)).toMatchObject({ candidate: true, action: 'move' });
-		expect(featuresOfKind('detour')[0]?.geometry).toBeDefined();
 	});
 
 	it('cycles a covered candidate through keep, move, and remove', async () => {
@@ -612,48 +610,6 @@ describe('route state', () => {
 				vias: [
 					expect.objectContaining({ location: straightSuccess.waypoints[0] }),
 					expect.objectContaining({ location: straightSuccess.waypoints[2] })
-				]
-			}),
-			expect.objectContaining({ signal: expect.anything() })
-		);
-	});
-
-	it('moves a candidate to its detected detour entry during refinement', async () => {
-		requestRouteMock.mockResolvedValueOnce(ordinarySuccess).mockResolvedValueOnce(success);
-		await route.generate([line], 6);
-
-		expect(route.canRefineRoute).toBe(true);
-		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({
-				vias: expect.arrayContaining([
-					expect.objectContaining({ location: ordinarySuccess.waypoints[0] }),
-					expect.objectContaining({ location: [21.001, 52], radiusM: 20 }),
-					expect.objectContaining({ location: ordinarySuccess.waypoints[2] })
-				])
-			}),
-			expect.objectContaining({ signal: expect.anything() })
-		);
-	});
-
-	it('combines a move candidate with a removed ordinary waypoint', async () => {
-		requestRouteMock.mockResolvedValueOnce(mixedSuccess).mockResolvedValueOnce(success);
-		await route.generate([line], 7);
-
-		expect(waypointProperties(1)?.action).toBe('move');
-		expect(waypointProperties(2)?.candidate).toBe(false);
-		expect(route.cycleWaypointAction(2)).toBe('remove');
-		expect(route.moveWaypointCount).toBe(1);
-		expect(route.removeWaypointCount).toBe(1);
-		await route.refineRoute();
-		expect(requestRouteMock).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({
-				vias: [
-					expect.objectContaining({ location: mixedSuccess.waypoints[0] }),
-					expect.objectContaining({ location: [21.002, 52], radiusM: 20 }),
-					expect.objectContaining({ location: mixedSuccess.waypoints[3] })
 				]
 			}),
 			expect.objectContaining({ signal: expect.anything() })

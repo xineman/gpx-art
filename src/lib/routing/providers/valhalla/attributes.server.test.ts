@@ -132,7 +132,7 @@ describe('buildRoadSpans', () => {
 });
 
 describe('fetchValhallaAttributes', () => {
-	it('attributes an accepted route without calling Valhalla /route', async () => {
+	it('attributes a route with one exact edge-walk trace', async () => {
 		const points: Position[] = [
 			[21, 52],
 			[21.01, 52.01]
