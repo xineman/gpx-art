@@ -28,6 +28,7 @@ type RouteRefinementSources = {
 export class RouteRefinementState {
 	#sources: RouteRefinementSources;
 	#selections = $state<WaypointActionSelection[]>([]);
+	#lastFocusedMoveWaypointIndex = $state<number | null>(null);
 
 	constructor(sources: RouteRefinementSources) {
 		this.#sources = sources;
@@ -67,6 +68,19 @@ export class RouteRefinementState {
 		)
 	);
 
+	readonly moveWaypointIndexes: number[] = $derived(
+		this.moveProposals.map(({ waypointIndex }) => waypointIndex)
+	);
+	readonly highlightedMoveWaypointIndex: number | null = $derived.by(() => {
+		if (
+			this.#lastFocusedMoveWaypointIndex === null ||
+			!this.moveWaypointIndexes.includes(this.#lastFocusedMoveWaypointIndex)
+		) {
+			return null;
+		}
+		return this.#lastFocusedMoveWaypointIndex;
+	});
+
 	readonly actionCounts = $derived.by(() => {
 		let move = 0;
 		let remove = 0;
@@ -86,12 +100,35 @@ export class RouteRefinementState {
 			this.plan.request.vias.length >= MIN_VIAS
 	);
 
+	inspectMoveWaypoint(index: number) {
+		if (this.moveWaypointIndexes.includes(index)) this.#lastFocusedMoveWaypointIndex = index;
+	}
+
+	clearMoveWaypointFocus() {
+		this.#lastFocusedMoveWaypointIndex = null;
+	}
+
+	reviewMoveWaypoint(offset: number): number | null {
+		if (this.moveWaypointIndexes.length === 0 || !Number.isFinite(offset)) return null;
+		const currentIndex = Math.max(
+			0,
+			this.moveWaypointIndexes.indexOf(this.highlightedMoveWaypointIndex ?? -1)
+		);
+		const nextIndex =
+			(currentIndex + Math.trunc(offset) + this.moveWaypointIndexes.length) %
+			this.moveWaypointIndexes.length;
+		this.#lastFocusedMoveWaypointIndex = this.moveWaypointIndexes[nextIndex]!;
+		return this.#lastFocusedMoveWaypointIndex;
+	}
+
 	reset() {
 		this.#selections = [];
+		this.clearMoveWaypointFocus();
 	}
 
 	replaceSelections(nextSelections: WaypointActionSelection[] = []) {
 		this.#selections = [...nextSelections];
+		this.clearMoveWaypointFocus();
 	}
 
 	cycle(index: number): WaypointRefinementAction | null {
@@ -108,6 +145,7 @@ export class RouteRefinementState {
 			waypointIndex: index,
 			action: next
 		});
+		if (next === 'move') this.#lastFocusedMoveWaypointIndex = index;
 		return next;
 	}
 }

@@ -66,19 +66,10 @@ class RouteState {
 		getWaypoints: () => this.#waypoints
 	});
 
-	#lastFocusedMoveWaypointIndex = $state<number | null>(null);
-	readonly moveWaypointIndexes: number[] = $derived(
-		this.#refinement.moveProposals.map(({ waypointIndex }) => waypointIndex)
+	readonly moveWaypointIndexes: number[] = $derived(this.#refinement.moveWaypointIndexes);
+	readonly highlightedMoveWaypointIndex: number | null = $derived(
+		this.#refinement.highlightedMoveWaypointIndex
 	);
-	readonly highlightedMoveWaypointIndex: number | null = $derived.by(() => {
-		if (
-			this.#lastFocusedMoveWaypointIndex === null ||
-			!this.moveWaypointIndexes.includes(this.#lastFocusedMoveWaypointIndex)
-		) {
-			return null;
-		}
-		return this.#lastFocusedMoveWaypointIndex;
-	});
 
 	readonly canRefineRoute = $derived(this.isReady && this.#refinement.canRefineCurrentResult);
 
@@ -86,7 +77,6 @@ class RouteState {
 		this.#acceptedRoute = null;
 		this.#attribution = null;
 		this.#refinement.reset();
-		this.#lastFocusedMoveWaypointIndex = null;
 		this.#activeRoadSpanIndex = null;
 	}
 
@@ -106,7 +96,6 @@ class RouteState {
 		this.#acceptedRoute = { ...result, refined: options.refined };
 		this.#attribution = null;
 		this.#refinement.replaceSelections(options.selections ?? []);
-		this.#lastFocusedMoveWaypointIndex = null;
 		this.#activeRoadSpanIndex = null;
 		this.#phase = { status: 'ready', action: null };
 	}
@@ -197,22 +186,13 @@ class RouteState {
 				: null;
 	}
 	inspectMoveWaypoint(index: number) {
-		if (this.moveWaypointIndexes.includes(index)) this.#lastFocusedMoveWaypointIndex = index;
+		this.#refinement.inspectMoveWaypoint(index);
 	}
 	clearMoveWaypointFocus() {
-		this.#lastFocusedMoveWaypointIndex = null;
+		this.#refinement.clearMoveWaypointFocus();
 	}
 	reviewMoveWaypoint(offset: number): number | null {
-		if (this.moveWaypointIndexes.length === 0 || !Number.isFinite(offset)) return null;
-		const currentIndex = Math.max(
-			0,
-			this.moveWaypointIndexes.indexOf(this.highlightedMoveWaypointIndex ?? -1)
-		);
-		const nextIndex =
-			(currentIndex + Math.trunc(offset) + this.moveWaypointIndexes.length) %
-			this.moveWaypointIndexes.length;
-		this.#lastFocusedMoveWaypointIndex = this.moveWaypointIndexes[nextIndex]!;
-		return this.#lastFocusedMoveWaypointIndex;
+		return this.#refinement.reviewMoveWaypoint(offset);
 	}
 	async generate(features: Feature[], revision: number, options: { autoRefine?: boolean } = {}) {
 		return this.#routeOperations.run(async (operation) => {
@@ -312,9 +292,7 @@ class RouteState {
 	/** Advance one ready route waypoint through its available refinement actions. */
 	cycleWaypointAction(index: number): WaypointRefinementAction | null {
 		if (!this.isReady) return null;
-		const next = this.#refinement.cycle(index);
-		if (next === 'move') this.#lastFocusedMoveWaypointIndex = index;
-		return next;
+		return this.#refinement.cycle(index);
 	}
 	/** Drop route when the drawing revision no longer matches what produced it. */
 	syncSketch(revision: number) {

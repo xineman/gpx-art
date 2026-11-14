@@ -284,6 +284,7 @@ describe('route state', () => {
 		});
 
 		await route.generate([line], 1);
+		route.inspectMoveWaypoint(1);
 		await expect(route.refineRoute()).resolves.toEqual({
 			ok: false,
 			error: 'No route found.'
@@ -291,6 +292,7 @@ describe('route state', () => {
 		expect(route.status).toBe('ready');
 		expect(routeGeometry()).toEqual(ordinarySuccess.geometry);
 		expect(route.roadSpans).toEqual(attributedSuccess.roadSpans);
+		expect(route.highlightedMoveWaypointIndex).toBe(1);
 	});
 
 	it('sends grouped shapes and hides provisional endpoint roles while optimizing', async () => {
@@ -528,6 +530,7 @@ describe('route state', () => {
 				?.properties?.waypointIndex
 		).toBe(1);
 		expect(route.reviewMoveWaypoint(1)).toBe(0);
+		expect(route.reviewMoveWaypoint(-1)).toBe(1);
 		route.clearMoveWaypointFocus();
 		expect(route.highlightedMoveWaypointIndex).toBeNull();
 	});
@@ -569,9 +572,11 @@ describe('route state', () => {
 	it('cycles a detected candidate through move, remove, and keep', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 		await route.generate([line], 4);
+		route.inspectMoveWaypoint(1);
 
 		expect(route.cycleWaypointAction(1)).toBe('remove');
 		expect(waypointProperties(1)?.action).toBe('remove');
+		expect(route.highlightedMoveWaypointIndex).toBeNull();
 		expect(route.moveWaypointCount).toBe(0);
 		expect(route.removeWaypointCount).toBe(1);
 		expect(featuresOfKind('detour')).toHaveLength(0);
@@ -583,6 +588,8 @@ describe('route state', () => {
 
 		expect(route.cycleWaypointAction(1)).toBe('move');
 		expect(waypointProperties(1)?.action).toBe('move');
+		expect(route.highlightedMoveWaypointIndex).toBe(1);
+		expect(waypointProperties(1)?.activeMove).toBe(true);
 		expect(featuresOfKind('detour')).toHaveLength(1);
 	});
 
@@ -687,11 +694,14 @@ describe('route state', () => {
 	it('resets selected actions on reroute, invalidation, and a fresh-route error', async () => {
 		requestRouteMock.mockResolvedValue(ordinarySuccess);
 		await route.generate([line], 9);
+		route.inspectMoveWaypoint(1);
+		expect(route.highlightedMoveWaypointIndex).toBe(1);
 		route.cycleWaypointAction(1);
 		expect(waypointProperties(1)?.action).toBe('remove');
 
 		await route.generate([line], 9);
 		expect(waypointProperties(1)?.action).toBe('move');
+		expect(route.highlightedMoveWaypointIndex).toBeNull();
 		route.cycleWaypointAction(1);
 		route.syncSketch(10);
 		expect(waypointProperties(1)).toBeUndefined();
