@@ -1,11 +1,16 @@
-import type { LineString, Position } from 'geojson';
+import type { Position } from 'geojson';
+import type { z } from 'zod';
 import type { RouteFailure } from '../shared/failure';
+import type { routeSuccessSchema } from './route-response';
 
-/** Optional road-snapping constraints for one input coordinate. */
+/** One input coordinate with optional road snapping constraints. */
 export type RouteVia = {
 	location: Position;
+	/** Snapping radius in meters. */
 	radiusM?: number;
+	/** Heading in degrees. */
 	bearing?: number;
+	/** Heading tolerance in degrees; requires `bearing`. */
 	bearingRange?: number;
 };
 
@@ -13,12 +18,6 @@ export type RouteRequest = {
 	vias: RouteVia[];
 };
 
-export type RouteSuccess = {
-	ok: true;
-	geometry: LineString;
-	distanceM: number;
-	/** Map-matched input positions, in route order. */
-	waypoints: Position[];
-};
+export type RouteSuccess = z.infer<typeof routeSuccessSchema>;
 
 export type RouteResponse = RouteSuccess | RouteFailure;

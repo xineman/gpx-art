@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseRouteGeometry } from './attributes.server';
+import { jsonPostRequest } from '../request.test-helper';
+import { readBody } from './contract.server';
 
-describe('parseRouteGeometry', () => {
-	it('copies a valid canonical LineString', () => {
+function readJson(body: unknown) {
+	return readBody(jsonPostRequest(body));
+}
+
+describe('request validation', () => {
+	it('copies a valid canonical LineString', async () => {
 		const geometry = {
 			type: 'LineString',
 			coordinates: [
@@ -10,10 +15,10 @@ describe('parseRouteGeometry', () => {
 				[21.01, 52.01]
 			]
 		};
-		expect(parseRouteGeometry({ geometry })).toEqual({ ok: true, geometry });
+		expect(await readJson({ geometry })).toEqual({ ok: true, data: { geometry } });
 	});
 
-	it('preserves valid elevation and rejects invalid extra position elements', () => {
+	it('preserves valid elevation and rejects invalid extra position elements', async () => {
 		const geometry = {
 			type: 'LineString',
 			coordinates: [
@@ -21,9 +26,9 @@ describe('parseRouteGeometry', () => {
 				[21.01, 52.01, 110]
 			]
 		};
-		expect(parseRouteGeometry({ geometry })).toEqual({ ok: true, geometry });
+		expect(await readJson({ geometry })).toEqual({ ok: true, data: { geometry } });
 		expect(
-			parseRouteGeometry({
+			await readJson({
 				geometry: {
 					...geometry,
 					coordinates: [
@@ -51,8 +56,8 @@ describe('parseRouteGeometry', () => {
 			},
 			/coordinate/i
 		]
-	])('rejects invalid attribution input %#', (body, expected) => {
-		expect(parseRouteGeometry(body)).toEqual(
+	])('rejects invalid attribution input %#', async (body, expected) => {
+		expect(await readJson(body)).toEqual(
 			expect.objectContaining({ ok: false, error: expect.stringMatching(expected as RegExp) })
 		);
 	});

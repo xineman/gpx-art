@@ -1,12 +1,10 @@
+import type { ApiFailure } from './api-response';
+
 export type RouteFailureCode = 'superseded';
 
-export type RouteFailure = {
-	ok: false;
-	error: string;
+export type RouteFailure = ApiFailure & {
 	/** Machine-readable reason for failures handled specially by the client. */
 	code?: RouteFailureCode;
-	/** HTTP status associated with the failure, when available. */
-	status?: number;
 };
 
 export function supersededFailure(): RouteFailure {

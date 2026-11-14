@@ -153,6 +153,7 @@ const attributedSuccess = {
 	roadEdges: [],
 	roadSpans: [
 		{
+			id: '1',
 			wayId: 123,
 			wayIds: [123],
 			refs: ['DK10'],

@@ -31,6 +31,10 @@ another instance, create a `.env` file with:
 VALHALLA_BASE_URL=https://your-valhalla-instance.example
 ```
 
+With `pnpm dev` running, open [the Redoc API reference](http://localhost:5173/api/docs) for request
+and response examples for every routing endpoint. Redoc reads the
+[generated OpenAPI spec](http://localhost:5173/api/openapi.json).
+
 Useful development checks:
 
 ```sh

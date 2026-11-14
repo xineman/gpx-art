@@ -1,40 +1,32 @@
 import type { RequestHandler } from './$types';
-import { generateRoute, parseRouteRequest } from '#lib/routing/matching/route.server.js';
+import { generateRoute } from '#lib/routing/matching/route.server.js';
 import { resolveValhallaConfig } from '#lib/routing/providers/valhalla/config.server.js';
 import type { RouteFailure } from '#lib/routing/shared/failure.js';
+import { apiStatus } from '../contract.server';
+import { json, readBody } from './contract.server';
 
-function routeFailureHttpStatus(failure: RouteFailure): number {
-	if (failure.status === 400) return 400;
-	if (failure.status === 429) return 429;
-	if (failure.status != null) return 502;
-	return 400;
+function routeFailureHttpStatus(failure: RouteFailure) {
+	if (failure.status === 429) return apiStatus.rateLimited;
+	if (failure.status == null || failure.status === 400) return apiStatus.badRequest;
+	return apiStatus.badGateway;
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-	let body: unknown;
-	try {
-		body = await request.json();
-	} catch {
-		return Response.json({ ok: false, error: 'Request body must be JSON.' }, { status: 400 });
-	}
-
-	const parsed = parseRouteRequest(body);
-	if (!parsed.ok) {
-		return Response.json(parsed, { status: 400 });
-	}
+	const body = await readBody(request);
+	if (!body.ok) return json(apiStatus.badRequest, body);
 
 	const valhalla = resolveValhallaConfig();
 	if (!valhalla.ok) {
-		return Response.json(valhalla, { status: 503 });
+		return json(apiStatus.unavailable, valhalla);
 	}
 
-	const result = await generateRoute(parsed.request, {
+	const result = await generateRoute(body.data, {
 		valhalla: valhalla.config
 	});
 
 	if (!result.ok) {
-		return Response.json(result, { status: routeFailureHttpStatus(result) });
+		return json(routeFailureHttpStatus(result), result);
 	}
 
-	return Response.json(result);
+	return json(apiStatus.ok, result);
 };
