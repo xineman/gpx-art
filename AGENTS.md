@@ -82,6 +82,7 @@ src/
       map/               # route/detour layer definitions, sprites, and waypoint hit testing
       presentation/      # accepted route → map GeoJSON
       preparation/       # features → guide paths → bounded trace vias
+      topology/          # guide paths → noded graph → Chinese Postman traversals (not yet wired into Route)
       shape-optimization/ # shape traversal candidates, matrix API, route ordering
       matching/          # route response types, client, and server orchestration
       attribution/       # road-edge/span response types and client

@@ -15,6 +15,12 @@ export const VIA_SAMPLE_SPACING_M = 120;
 /** Maximum endpoint-to-path gap inferred as a topology connection. */
 export const TOPOLOGY_SNAP_TOLERANCE_M = 10;
 
+/**
+ * Largest odd-degree vertex count paired exactly by the Chinese Postman planner. Exact pairing
+ * keeps a 2^n table; larger components fall back to greedy pairing with pair-swap improvement.
+ */
+export const TOPOLOGY_EXACT_MATCHING_LIMIT = 18;
+
 /** Minimum distinct points needed to call Valhalla. */
 export const MIN_VIAS = 2;
 

@@ -43,41 +43,35 @@ freehand sketches and imported geometry will usually need a configurable snappin
 
 ## Phase B: Plan a traversal inside each connected component
 
-### 3. Closed Chinese Postman planner
+### 3. Chinese Postman planner
 
 Given a connected graph from phase A, find a walk that:
 
 - traverses every drawn edge;
-- starts and ends at the same node;
+- may start and finish at different nodes;
 - duplicates the minimum necessary edges.
 
-This is where the planner determines that a dead-end ray must be traversed outward and back. The
-first usable implementation therefore requires both exact noding and this closed traversal
-planner.
+The route is not required to return to its start: for many drawings that would only add
+retracing. A component without odd-degree vertices still produces a closed circuit.
 
-For an undirected graph, pair all odd-degree vertices using minimum-cost paths, duplicate those
-paths, and then produce an Euler circuit through the augmented graph.
+For an undirected graph, pair all but two odd-degree vertices using minimum-cost paths, duplicate
+those paths, and then produce an Euler trail through the augmented graph between the two unpaired
+vertices. The planner leaves unpaired the two odd vertices whose omission saves the most retracing.
 
-### 4. Open Chinese Postman optimization
-
-Generalize the planner so the route may start and finish at different nodes. The planner chooses
-two nodes to remain odd and pairs the remaining odd-degree vertices at minimum cost.
-
-For a drawing with several rays, an open route can start at one outer tip and finish at another.
-Those two rays may only need to be traversed once; other dead ends are still retraced.
-
-This stage improves the closed planner. It does not replace graph construction or the underlying
-Chinese Postman solution.
+This is where the planner determines that a dead-end ray must be traversed outward and back. For a
+drawing with several rays, the route can start at one outer tip and finish at another; those two
+rays are traversed once and the other dead ends are retraced. The first usable implementation
+therefore requires both exact noding and this traversal planner.
 
 ## Phase C: Integrate with the routing pipeline
 
-### 5. Order disconnected components
+### 4. Order disconnected components
 
 Once each connected component can produce valid traversal candidates, use the existing shape
 optimizer to order disconnected components and select their orientations. Individual GeoJSON
 features should no longer be the optimizer's atomic unit.
 
-### 6. Allocate vias and map-match
+### 5. Allocate vias and map-match
 
 Convert the selected graph walk back into ordered sketch coordinates. Preserve junctions and
 dead-end tips as mandatory points, simplify the remaining geometry to the global via budget, and
@@ -91,17 +85,15 @@ of required samples.
 ```text
 Exact graph construction
         ↓
-Closed Chinese Postman
+Chinese Postman
         ↓
 Route emission and map matching
         ↓
 Near-endpoint snapping
         ↓
-Open start/end optimization
-        ↓
 Disconnected-component optimization
 ```
 
-The first functional vertical slice is exact graph construction, closed Chinese Postman planning,
-and route emission. Near snapping, open-route optimization, and disconnected-component ordering
-can then improve that working foundation independently.
+The first functional vertical slice is exact graph construction, Chinese Postman planning, and route
+emission. Near snapping and disconnected-component ordering can then improve that working
+foundation independently.
