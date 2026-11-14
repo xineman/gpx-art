@@ -136,7 +136,8 @@ describe('prepareRouteShapes', () => {
 		const { vias, closed } = result.shapes[0]!;
 		expect(closed).toBe(true);
 		expect(vias[0]).toEqual(junction);
-		expect(visits(vias, junction)).toBe(3);
+		// The loop opens and closes there; its middle pass rides straight across and needs no via.
+		expect(visits(vias, junction)).toBe(2);
 	});
 
 	it('shares one via budget across shapes while preserving a closed loop', () => {
@@ -196,6 +197,20 @@ describe('prepareRouteShapes', () => {
 		const forward = prepareRouteShapes(features, { maxVias: 7 });
 		const reversed = prepareRouteShapes([...features].reverse(), { maxVias: 7 });
 		expect(reversed).toEqual(forward);
+	});
+
+	it('routes a line crossed more times than the via cap allows junction passes', () => {
+		// 31 crossings, each passed twice: one mandatory via per pass would need 62+ vias.
+		const zigzag = Array.from({ length: 32 }, (_, index) => at(index + 0.5, index % 2 ? -1 : 1));
+		const result = prepareRouteShapes([line(at(0, 0), at(32, 0)), line(...zigzag)]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.shapes).toHaveLength(1);
+		const { vias } = result.shapes[0]!;
+		expect(vias.length).toBeLessThanOrEqual(60);
+		for (const corner of [at(0, 0), at(32, 0), ...zigzag]) {
+			expect(visits(vias, corner)).toBeGreaterThanOrEqual(1);
+		}
 	});
 
 	it('rejects sketches whose route-wide minimum exceeds the via cap', () => {

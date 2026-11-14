@@ -16,6 +16,12 @@ export const VIA_SAMPLE_SPACING_M = 120;
 export const TOPOLOGY_SNAP_TOLERANCE_M = 10;
 
 /**
+ * Smallest turn, in degrees, that makes a walk's pass through a junction a mandatory via. Straighter
+ * passes ride through a crossing and are left to simplification like any other point.
+ */
+export const TOPOLOGY_JUNCTION_TURN_DEG = 30;
+
+/**
  * Largest odd-degree vertex count paired exactly by the Chinese Postman planner. Exact pairing
  * keeps a 2^n table; larger components fall back to greedy pairing with pair-swap improvement.
  */

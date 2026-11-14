@@ -192,8 +192,8 @@ function pathEdges(graph: TopologyGraph, paths: ShortestPaths, target: number): 
 	return edgeIds;
 }
 
-/** Angle between the incoming and outgoing directions at `via`; 0 continues straight. */
-function turnAngle(from: Position, via: Position, to: Position): number {
+/** Angle between the incoming and outgoing directions at `via`, in radians; 0 continues straight. */
+export function turnAngle(from: Position, via: Position, to: Position): number {
 	const longitudeScale = Math.cos((via[1]! * Math.PI) / 180);
 	const inX = (via[0]! - from[0]!) * longitudeScale;
 	const inY = via[1]! - from[1]!;
