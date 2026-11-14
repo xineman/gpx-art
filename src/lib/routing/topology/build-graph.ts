@@ -269,6 +269,30 @@ function findSplit(splits: SplitPoint[], split: SplitPoint): SplitPoint | undefi
 	);
 }
 
+/** Shared split identities, resolved after noding so intersection calculations keep original geometry. */
+class SplitPositions {
+	#parents = new Map<string, Position>();
+
+	resolve(position: Position): Position {
+		const keys: string[] = [];
+		let key = positionKey(position);
+		while (this.#parents.has(key)) {
+			keys.push(key);
+			position = this.#parents.get(key)!;
+			key = positionKey(position);
+		}
+		for (const child of keys) this.#parents.set(child, position);
+		return position;
+	}
+
+	join(left: Position, right: Position): Position {
+		const position = this.resolve(left);
+		const other = this.resolve(right);
+		if (!samePosition(position, other)) this.#parents.set(positionKey(other), position);
+		return position;
+	}
+}
+
 /**
  * Record a crossing on both segments. Each pair computes its own intersection, so concurrent
  * crossings differ by rounding noise; a crossing already recorded on either segment wins so every
@@ -277,24 +301,31 @@ function findSplit(splits: SplitPoint[], split: SplitPoint): SplitPoint | undefi
 function addCrossing(
 	left: SourceSegment,
 	right: SourceSegment,
-	intersection: Extract<SegmentIntersection, { kind: 'point' }>
+	intersection: Extract<SegmentIntersection, { kind: 'point' }>,
+	positions: SplitPositions
 ) {
 	const leftExisting = findSplit(left.splits, intersection.left);
 	const rightExisting = findSplit(right.splits, intersection.right);
-	const position = (leftExisting ?? rightExisting ?? intersection.left).position;
+	const position = positions.join(
+		(leftExisting ?? rightExisting ?? intersection.left).position,
+		(rightExisting ?? intersection.right).position
+	);
 	if (!leftExisting) left.splits.push({ t: intersection.left.t, position });
 	if (!rightExisting) right.splits.push({ t: intersection.right.t, position });
 }
 
 /** Split collinear segments at the ends of their shared stretch: each other's inner endpoints. */
-function addOverlapSplits(left: SourceSegment, right: SourceSegment) {
+function addOverlapSplits(left: SourceSegment, right: SourceSegment, positions: SplitPositions) {
 	for (const [segment, other] of [
 		[left, right],
 		[right, left]
 	] as const) {
 		for (const position of [other.start, other.end]) {
 			const split = { t: clampParameter(parameterOnSegment(position, segment)), position };
-			if (isInterior(split.t) && !findSplit(segment.splits, split)) segment.splits.push(split);
+			if (!isInterior(split.t)) continue;
+			const existing = findSplit(segment.splits, split);
+			if (existing) positions.join(existing.position, position);
+			else segment.splits.push(split);
 		}
 	}
 }
@@ -340,13 +371,13 @@ function sourceSegments(guides: GuidePath[]): SourceSegment[] {
 }
 
 /** Cut segments at their splits. A stretch drawn more than once becomes one piece with every source. */
-function splitSegments(segments: Iterable<SourceSegment>): Segment[] {
+function splitSegments(segments: Iterable<SourceSegment>, positions: SplitPositions): Segment[] {
 	const pieces = new Map<string, Segment>();
 	for (const { sources, splits } of segments) {
 		splits.sort((left, right) => left.t - right.t);
 		for (let index = 1; index < splits.length; index++) {
-			const start = splits[index - 1]!.position;
-			const end = splits[index]!.position;
+			const start = positions.resolve(splits[index - 1]!.position);
+			const end = positions.resolve(splits[index]!.position);
 			const startKey = positionKey(start);
 			const endKey = positionKey(end);
 			if (startKey === endKey) continue;
@@ -634,6 +665,7 @@ function overlappingPieces(placed: PlacedSegment[]): Set<number> {
 
 /** Split crossings introduced by moved segments. Unmoved segments are already noded. */
 function nodePlacedSegments(placed: PlacedSegment[]): Segment[] {
+	const positions = new SplitPositions();
 	const segments = placed.map((segment) => ({
 		...withEndpointSplits(segment),
 		moved: segment.moved,
@@ -649,10 +681,10 @@ function nodePlacedSegments(placed: PlacedSegment[]): Segment[] {
 			}
 			const intersection = intersectSegments(left, right);
 			if (intersection.kind !== 'point') continue;
-			addCrossing(left, right, intersection);
+			addCrossing(left, right, intersection, positions);
 		}
 	}
-	return splitSegments(segments);
+	return splitSegments(segments, positions);
 }
 
 /**
@@ -735,19 +767,23 @@ export function buildTopologyGraph(
 	options: TopologyBuildOptions = {}
 ): TopologyGraph {
 	const segments = sourceSegments(guides);
+	const positions = new SplitPositions();
 
 	for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
 		const left = segments[leftIndex]!;
 		for (let rightIndex = leftIndex + 1; rightIndex < segments.length; rightIndex++) {
 			const right = segments[rightIndex]!;
 			const intersection = intersectSegments(left, right);
-			if (intersection.kind === 'point') addCrossing(left, right, intersection);
-			else if (intersection.kind === 'overlap') addOverlapSplits(left, right);
+			if (intersection.kind === 'point') addCrossing(left, right, intersection, positions);
+			else if (intersection.kind === 'overlap') addOverlapSplits(left, right, positions);
 		}
 	}
 
 	const toleranceM = options.snapToleranceM ?? TOPOLOGY_SNAP_TOLERANCE_M;
-	const pieces = trimStubs(snapFreeEnds(splitSegments(segments), toleranceM), toleranceM);
+	const pieces = trimStubs(
+		snapFreeEnds(splitSegments(segments, positions), toleranceM),
+		toleranceM
+	);
 	const nodes: TopologyNode[] = [];
 	const nodeIds = new Map<string, number>();
 	const nodeId = (position: Position) => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Position } from 'geojson';
 import type { GuidePath } from '../preparation/types';
 import { buildTopologyGraph, type TopologyGraph } from './build-graph';
+import { connectedComponents } from './postman';
 
 function open(...points: Position[]): GuidePath {
 	return { points, closed: false };
@@ -67,6 +68,27 @@ describe('buildTopologyGraph', () => {
 		expect(graph.nodes).toHaveLength(4);
 		expect(graph.edges).toHaveLength(3);
 		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it.each([0, 10])('unifies existing crossing splits with snap tolerance %i', (snapToleranceM) => {
+		const host = open([0, 0], [0.002, 0]);
+		const branch = open([0.001, 0], [0.001, 0.001]);
+		const touching = open([0.0010000005, -0.001], [0.0010000005, 0], [0.002, 0.001]);
+		for (const guides of [
+			[host, branch, touching],
+			[host, touching, branch],
+			[branch, host, touching],
+			[branch, touching, host],
+			[touching, host, branch],
+			[touching, branch, host]
+		]) {
+			const original = structuredClone(guides);
+			const graph = buildTopologyGraph(guides, { snapToleranceM });
+			expect(connectedComponents(graph)).toHaveLength(1);
+			expect(nodesOfDegree(graph, 5)).toHaveLength(1);
+			expect(graph.edges).toHaveLength(5);
+			expect(guides).toEqual(original);
+		}
 	});
 
 	it('splits both segments at a mid-segment crossing', () => {
