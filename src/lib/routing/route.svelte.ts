@@ -10,7 +10,7 @@ import type {
 	RouteSuccess
 } from './api/contracts';
 import { lineStringToGpx, routeGpxFilename } from './export/gpx';
-import { requestOptimizedRoute } from './generate-route';
+import { requestOptimizedRoute } from './shape-optimization/optimized-route';
 import { prepareRouteShapes } from './preparation/prepare-shapes';
 import { buildRouteMapFeatures } from './presentation/map-features';
 import { refineRouteAutomatically } from './refinement/auto-refine';

@@ -6,7 +6,9 @@ const { requestRouteMock, requestRouteAttributesMock } = vi.hoisted(() => ({
 	requestRouteAttributesMock: vi.fn()
 }));
 
-vi.mock('#lib/routing/generate-route.js', () => ({ requestOptimizedRoute: requestRouteMock }));
+vi.mock('#lib/routing/shape-optimization/optimized-route.js', () => ({
+	requestOptimizedRoute: requestRouteMock
+}));
 vi.mock('#lib/routing/api/client.js', () => ({
 	requestRoute: requestRouteMock,
 	requestRouteAttributes: requestRouteAttributesMock

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import { requestOptimizedRoute } from './generate-route';
+import { requestOptimizedRoute } from './optimized-route';
 
 const routeSuccess = {
 	ok: true,
