@@ -6,6 +6,8 @@
 	import HistoryButtons from '#lib/drawing/components/HistoryButtons.svelte';
 	import MoveReviewControls from '#lib/routing/components/MoveReviewControls.svelte';
 	import RouteButton from '#lib/routing/components/RouteButton.svelte';
+	import { drawings } from '#lib/drawing/drawings.svelte.js';
+	import { tools } from '#lib/drawing/tools.svelte.js';
 </script>
 
 <div class="relative inline-flex">
@@ -28,6 +30,10 @@
 		<div class="mx-0.5 w-px self-stretch bg-panel-edge/20" aria-hidden="true"></div>
 
 		<!-- Adaptive next step: sketch → route → iterative refinement. -->
-		<RouteButton />
+		<RouteButton
+			sketch={drawings.features}
+			sketchRevision={drawings.revision}
+			onRouted={() => tools.select('pan')}
+		/>
 	</PanelChrome>
 </div>

@@ -2,14 +2,19 @@
 	import { onDestroy } from 'svelte';
 	import type { Map as MaplibreMap, MapMouseEvent } from 'maplibre-gl';
 	import { useMap } from '#lib/map/context.js';
-	import { drawings } from '#lib/drawing/drawings.svelte.js';
 	import { route } from '../route.svelte';
 	import { flash } from '#lib/util/flash.svelte.js';
-	import { tools } from '#lib/drawing/tools.svelte.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import { routeWaypointAtPoint } from '../map/waypoint-hit';
 	import { ROUTE_SOURCE, ensureRouteLayers } from '../map/layers';
 	import { setSourceData } from '#lib/map/sources.js';
+
+	interface Props {
+		/** Canvas cursor to restore after leaving a waypoint. */
+		idleCursor: string;
+	}
+
+	let { idleCursor }: Props = $props();
 
 	const mapHandle = useMap();
 
@@ -18,7 +23,7 @@
 	let hoveringWaypointIndex = $state<number | null>(null);
 
 	function restoreToolCursor(map: MaplibreMap) {
-		map.getCanvas().style.cursor = tools.isPanning ? 'grab' : 'crosshair';
+		map.getCanvas().style.cursor = idleCursor;
 	}
 
 	function clearWaypointHover(map: MaplibreMap | null) {
@@ -126,11 +131,6 @@
 		if (!ready && map && hoveringWaypointIndex != null) {
 			clearWaypointHover(map);
 		}
-	});
-
-	// Invalidate derived route when the sketch changes.
-	$effect(() => {
-		route.syncSketch(drawings.revision);
 	});
 
 	onDestroy(teardown);

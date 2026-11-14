@@ -7,6 +7,7 @@ import { setSourceData } from '#lib/map/sources.js';
 import { MapDrawingInput, type IgnoreDrawingPoint } from './map-input';
 import { DrawingSession, type DrawingEvent } from './session';
 import { toLngLat } from './tap';
+import { mapCursor } from './tools';
 
 export type { DraftSnapshot } from './draft';
 export type CommitFn = (geometry: Geometry, tool: string) => void;
@@ -83,14 +84,14 @@ export class DrawingController {
 	}
 
 	#syncMapInteraction() {
-		if (this.#session.panning) {
+		const panning = this.#session.panning;
+		if (panning) {
 			this.#map.dragPan.enable();
 			this.#map.doubleClickZoom.enable();
-			this.#map.getCanvas().style.cursor = 'grab';
 		} else {
 			this.#map.dragPan.disable();
 			this.#map.doubleClickZoom.disable();
-			this.#map.getCanvas().style.cursor = 'crosshair';
 		}
+		this.#map.getCanvas().style.cursor = mapCursor(panning);
 	}
 }
