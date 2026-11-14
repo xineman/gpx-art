@@ -21,31 +21,23 @@ export type TopologyNode = {
 	position: Position;
 };
 
+export type TopologySegmentRef = {
+	guideIndex: number;
+	segmentIndex: number;
+};
+
 export type TopologyEdge = {
 	id: number;
 	fromNodeId: number;
 	toNodeId: number;
-	guideIndex: number;
-	segmentIndex: number;
+	/** Guide segments drawn along this edge; more than one where strokes overlap. */
+	sources: TopologySegmentRef[];
 };
 
 export type TopologyGraph = {
 	nodes: TopologyNode[];
 	edges: TopologyEdge[];
 };
-
-export type TopologySegmentRef = {
-	guideIndex: number;
-	segmentIndex: number;
-};
-
-export type TopologyBuildResult =
-	| { ok: true; graph: TopologyGraph }
-	| {
-			ok: false;
-			code: 'collinear-overlap';
-			segments: [TopologySegmentRef, TopologySegmentRef];
-	  };
 
 export type TopologyBuildOptions = {
 	/** Gaps up to this length are closed, and dead-end stubs up to it are trimmed. */
@@ -57,7 +49,8 @@ type SplitPoint = {
 	position: Position;
 };
 
-type Segment = TopologySegmentRef & {
+type Segment = {
+	sources: TopologySegmentRef[];
 	start: Position;
 	end: Position;
 };
@@ -293,6 +286,19 @@ function addCrossing(
 	if (!rightExisting) right.splits.push({ t: intersection.right.t, position });
 }
 
+/** Split collinear segments at the ends of their shared stretch: each other's inner endpoints. */
+function addOverlapSplits(left: SourceSegment, right: SourceSegment) {
+	for (const [segment, other] of [
+		[left, right],
+		[right, left]
+	] as const) {
+		for (const position of [other.start, other.end]) {
+			const split = { t: clampParameter(parameterOnSegment(position, segment)), position };
+			if (isInterior(split.t) && !findSplit(segment.splits, split)) segment.splits.push(split);
+		}
+	}
+}
+
 function withEndpointSplits(segment: Segment): SourceSegment {
 	return {
 		...segment,
@@ -327,23 +333,30 @@ function sourceSegments(guides: GuidePath[]): SourceSegment[] {
 		for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
 			const start = points[segmentIndex]!;
 			const end = points[(segmentIndex + 1) % points.length]!;
-			segments.push(withEndpointSplits({ guideIndex, segmentIndex, start, end }));
+			segments.push(withEndpointSplits({ sources: [{ guideIndex, segmentIndex }], start, end }));
 		}
 	}
 	return segments;
 }
 
+/** Cut segments at their splits. A stretch drawn more than once becomes one piece with every source. */
 function splitSegments(segments: Iterable<SourceSegment>): Segment[] {
-	const pieces: Segment[] = [];
-	for (const { guideIndex, segmentIndex, splits } of segments) {
+	const pieces = new Map<string, Segment>();
+	for (const { sources, splits } of segments) {
 		splits.sort((left, right) => left.t - right.t);
 		for (let index = 1; index < splits.length; index++) {
 			const start = splits[index - 1]!.position;
 			const end = splits[index]!.position;
-			if (!samePosition(start, end)) pieces.push({ guideIndex, segmentIndex, start, end });
+			const startKey = positionKey(start);
+			const endKey = positionKey(end);
+			if (startKey === endKey) continue;
+			const key = startKey < endKey ? `${startKey};${endKey}` : `${endKey};${startKey}`;
+			const existing = pieces.get(key);
+			if (existing) existing.sources.push(...sources);
+			else pieces.set(key, { sources: [...sources], start, end });
 		}
 	}
-	return pieces;
+	return [...pieces.values()];
 }
 
 function comparePositions(left: Position, right: Position): number {
@@ -578,7 +591,7 @@ function placeSegments(
 
 	const placed: PlacedSegment[] = [];
 	const collapsed = new Set<number>();
-	for (const [piece, { guideIndex, segmentIndex, start, end }] of pieces.entries()) {
+	for (const [piece, { sources, start, end }] of pieces.entries()) {
 		const movedStart = movedStarts.get(piece);
 		const movedEnd = movedEnds.get(piece);
 		const splits = hostSplits[piece]!.sort((left, right) => left.t - right.t);
@@ -593,8 +606,7 @@ function placeSegments(
 		}
 		for (let index = 1; index < vertices.length; index++) {
 			placed.push({
-				guideIndex,
-				segmentIndex,
+				sources,
 				start: vertices[index - 1]!,
 				end: vertices[index]!,
 				piece,
@@ -715,13 +727,13 @@ function trimStubs(pieces: Segment[], toleranceM: number): Segment[] {
 }
 
 /**
- * Build an undirected graph from exact intersections and inferred near connections, without
- * short dead-end stubs that hang off junctions.
+ * Build an undirected graph from exact intersections, merged collinear overlaps, and inferred near
+ * connections, without short dead-end stubs that hang off junctions.
  */
 export function buildTopologyGraph(
 	guides: GuidePath[],
 	options: TopologyBuildOptions = {}
-): TopologyBuildResult {
+): TopologyGraph {
 	const segments = sourceSegments(guides);
 
 	for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
@@ -729,18 +741,8 @@ export function buildTopologyGraph(
 		for (let rightIndex = leftIndex + 1; rightIndex < segments.length; rightIndex++) {
 			const right = segments[rightIndex]!;
 			const intersection = intersectSegments(left, right);
-			if (intersection.kind === 'none') continue;
-			if (intersection.kind === 'overlap') {
-				return {
-					ok: false,
-					code: 'collinear-overlap',
-					segments: [
-						{ guideIndex: left.guideIndex, segmentIndex: left.segmentIndex },
-						{ guideIndex: right.guideIndex, segmentIndex: right.segmentIndex }
-					]
-				};
-			}
-			addCrossing(left, right, intersection);
+			if (intersection.kind === 'point') addCrossing(left, right, intersection);
+			else if (intersection.kind === 'overlap') addOverlapSplits(left, right);
 		}
 	}
 
@@ -758,12 +760,11 @@ export function buildTopologyGraph(
 		return id;
 	};
 
-	const edges = pieces.map<TopologyEdge>(({ start, end, guideIndex, segmentIndex }, id) => ({
+	const edges = pieces.map<TopologyEdge>(({ start, end, sources }, id) => ({
 		id,
 		fromNodeId: nodeId(start),
 		toNodeId: nodeId(end),
-		guideIndex,
-		segmentIndex
+		sources
 	}));
-	return { ok: true, graph: { nodes, edges } };
+	return { nodes, edges };
 }

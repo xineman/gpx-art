@@ -28,6 +28,9 @@ A ─── J ─── B
 `A–J`, `J–B`, and `J–C` are separate graph edges. This stage only determines connectivity; it
 does not choose a traversal.
 
+Collinear overlaps — a side shared by two imported shapes, or an out-and-back stroke — split at
+the ends of the shared stretch and keep one edge that lists every source segment drawn along it.
+
 ### 2. Near-connection inference
 
 Extend graph construction to strokes whose endpoints nearly touch another path. Project and snap

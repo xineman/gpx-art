@@ -26,10 +26,9 @@ function closed(...points: Position[]): GuidePath {
 	return { points, closed: true };
 }
 
+/** Exact noding only, so tests control every connection. */
 function graphFor(guides: GuidePath[]): TopologyGraph {
-	const result = buildTopologyGraph(guides, { snapToleranceM: 0 });
-	if (!result.ok) throw new Error(result.code);
-	return result.graph;
+	return buildTopologyGraph(guides, { snapToleranceM: 0 });
 }
 
 function nodeIdAt(graph: TopologyGraph, position: Position): number {
