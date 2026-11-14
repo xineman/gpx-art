@@ -1,0 +1,231 @@
+import { describe, expect, it } from 'vitest';
+import type { Position } from 'geojson';
+import type { GuidePath } from '../preparation/types';
+import { buildTopologyGraph, type TopologyBuildOptions, type TopologyGraph } from './build-graph';
+
+function open(...points: Position[]): GuidePath {
+	return { points, closed: false };
+}
+
+function closed(...points: Position[]): GuidePath {
+	return { points, closed: true };
+}
+
+function graphFor(guides: GuidePath[], options?: TopologyBuildOptions): TopologyGraph {
+	const result = buildTopologyGraph(guides, options);
+	expect(result.ok).toBe(true);
+	if (!result.ok) throw new Error(result.code);
+	return result.graph;
+}
+
+function nodeAt(graph: TopologyGraph, position: Position) {
+	return graph.nodes.find(
+		(node) => node.position[0] === position[0] && node.position[1] === position[1]
+	);
+}
+
+function degree(graph: TopologyGraph, nodeId: number): number {
+	return graph.edges.reduce(
+		(total, edge) => total + Number(edge.fromNodeId === nodeId) + Number(edge.toNodeId === nodeId),
+		0
+	);
+}
+
+describe('buildTopologyGraph', () => {
+	it('turns open and closed guide segments into graph edges', () => {
+		const openGraph = graphFor([open([0, 0], [1, 1], [2, 0])]);
+		expect(openGraph.nodes).toHaveLength(3);
+		expect(openGraph.edges).toHaveLength(2);
+
+		const closedGraph = graphFor([closed([0, 0], [1, 0], [1, 1], [0, 1])]);
+		expect(closedGraph.nodes).toHaveLength(4);
+		expect(closedGraph.edges).toHaveLength(4);
+		expect(closedGraph.nodes.every((node) => degree(closedGraph, node.id) === 2)).toBe(true);
+	});
+
+	it('shares a node between guides that touch at an endpoint', () => {
+		const graph = graphFor([open([0, 0], [1, 0]), open([1, 0], [2, 0])]);
+		const junction = nodeAt(graph, [1, 0]);
+		expect(graph.nodes).toHaveLength(3);
+		expect(graph.edges).toHaveLength(2);
+		expect(junction && degree(graph, junction.id)).toBe(2);
+	});
+
+	it('splits a host segment at a T-junction', () => {
+		const graph = graphFor([open([0, 0], [2, 0]), open([1, 0], [1, 1])]);
+		const junction = nodeAt(graph, [1, 0]);
+		expect(graph.nodes).toHaveLength(4);
+		expect(graph.edges).toHaveLength(3);
+		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it('splits both segments at a mid-segment crossing', () => {
+		const graph = graphFor([open([0, 0], [2, 0]), open([1, -1], [1, 1])]);
+		const junction = nodeAt(graph, [1, 0]);
+		expect(graph.nodes).toHaveLength(5);
+		expect(graph.edges).toHaveLength(4);
+		expect(junction && degree(graph, junction.id)).toBe(4);
+	});
+
+	it('nodes a self-crossing guide', () => {
+		const graph = graphFor([open([0, 0], [2, 2], [0, 2], [2, 0])]);
+		const junction = nodeAt(graph, [1, 1]);
+		expect(graph.nodes).toHaveLength(5);
+		expect(graph.edges).toHaveLength(5);
+		expect(junction && degree(graph, junction.id)).toBe(4);
+	});
+
+	it('detects an intersection on a closed guide closing segment', () => {
+		const graph = graphFor([closed([0, 0], [2, 0], [2, 2]), open([0.5, 1], [1.5, 1])]);
+		const junction = nodeAt(graph, [1, 1]);
+		expect(junction && degree(graph, junction.id)).toBe(4);
+	});
+
+	it('snaps an endpoint to a host segment within the default tolerance', () => {
+		const graph = graphFor([open([0, 0], [0.002, 0]), open([0.001, 0.00005], [0.001, 0.001])]);
+		const junction = nodeAt(graph, [0.001, 0]);
+		expect(graph.edges).toHaveLength(3);
+		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it('preserves an exact T-junction when a nearby stroke also needs to snap', () => {
+		const spur = open([0.00012, 0], [0.00012, 0.001]);
+		const host = open([0, 0], [0.002, 0]);
+		const approach = open([-0.00002, -0.00007], [-0.00002, -0.001]);
+
+		for (const guides of [
+			[spur, host, approach],
+			[host, spur, approach],
+			[approach, host, spur]
+		]) {
+			const graph = graphFor(guides);
+			const junction = nodeAt(graph, [0.00012, 0]);
+			expect(graph.nodes).toHaveLength(5);
+			expect(graph.edges).toHaveLength(4);
+			expect(junction && degree(graph, junction.id)).toBe(3);
+		}
+	});
+
+	it('splits a sloped host at the accepted snap even when the projection rounds off the line', () => {
+		const graph = graphFor([
+			open([21.01001237, 52.2300131], [21.01032347, 52.2301544]),
+			open([21.01015237, 52.2301031], [21.01018237, 52.2310131])
+		]);
+
+		expect(graph.edges).toHaveLength(3);
+		expect(graph.nodes.filter(({ id }) => degree(graph, id) === 3)).toHaveLength(1);
+	});
+
+	it.each([
+		['collapse', open([0.001, 0.00002], [0.001, 0.00006])],
+		['overlap', open([0.0005, 0.00003], [0.0015, 0.00003])]
+	])('keeps both strokes when snapping would cause %s', (_, stroke) => {
+		const guides = [open([0, 0], [0.002, 0]), stroke];
+		expect(graphFor(guides)).toEqual(graphFor(guides, { snapToleranceM: 0 }));
+	});
+
+	it('keeps the original geometry when moving one end would overlap another edge', () => {
+		const guides = [
+			open([0, 0], [0.002, 0]),
+			open([0.001, 0.00005], [0.003, 0]),
+			open([0.002, 0], [0.003, 0])
+		];
+		expect(graphFor(guides)).toEqual(graphFor(guides, { snapToleranceM: 0 }));
+	});
+
+	it('splits an additional crossing created by an accepted snap', () => {
+		const graph = graphFor([
+			closed([-0.0005, 0], [0.0005, 0], [0.0005, -0.001], [-0.0005, -0.001]),
+			open([0, 0.00006], [0.003, 0.00006]),
+			open([0.0015, 0.00002], [0.0015, 0.00004])
+		]);
+
+		expect(graph.edges).toHaveLength(9);
+		expect(graph.nodes.filter(({ id }) => degree(graph, id) === 4)).toHaveLength(1);
+	});
+
+	it('honors custom, disabled, and default snapping tolerances', () => {
+		const nearGuides = [open([0, 0], [0.002, 0]), open([0.001, 0.00005], [0.001, 0.001])];
+		expect(graphFor(nearGuides, { snapToleranceM: 5 }).edges).toHaveLength(2);
+		expect(graphFor(nearGuides, { snapToleranceM: 6 }).edges).toHaveLength(3);
+		expect(graphFor(nearGuides, { snapToleranceM: 0 }).edges).toHaveLength(2);
+
+		const outsideDefault = graphFor([
+			open([0, 0], [0.002, 0]),
+			open([0.001, 0.0001], [0.001, 0.001])
+		]);
+		expect(outsideDefault.edges).toHaveLength(2);
+	});
+
+	it('anchors a near endpoint pair without mutating the guides', () => {
+		const guides = [open([0, 0], [0.001, 0]), open([0.00105, 0], [0.002, 0])];
+		const original = guides.map((guide) => guide.points.map((point) => [...point]));
+		const graph = graphFor(guides);
+		const junction = nodeAt(graph, [0.00105, 0]);
+
+		expect(graph.nodes).toHaveLength(3);
+		expect(junction && degree(graph, junction.id)).toBe(2);
+		expect(guides.map((guide) => guide.points)).toEqual(original);
+	});
+
+	it('snaps both endpoints of an open guide onto a closed guide', () => {
+		const graph = graphFor([
+			closed([0, 0], [0.002, 0], [0.002, 0.002], [0, 0.002]),
+			open([0.001, 0.00005], [0.001, 0.00195])
+		]);
+		const bottom = nodeAt(graph, [0.001, 0]);
+		const top = nodeAt(graph, [0.001, 0.002]);
+
+		expect(bottom && degree(graph, bottom.id)).toBe(3);
+		expect(top && degree(graph, top.id)).toBe(3);
+	});
+
+	it('snaps onto a non-incident segment of the same guide', () => {
+		const graph = graphFor([open([0, 0], [0.002, 0], [0.002, 0.002], [0.001, 0.00005])]);
+		const junction = nodeAt(graph, [0.001, 0]);
+
+		expect(graph.edges).toHaveLength(4);
+		expect(junction && degree(graph, junction.id)).toBe(3);
+	});
+
+	it('snaps to the nearest eligible path', () => {
+		const graph = graphFor([
+			closed([0, -0.001], [0.002, -0.001], [0.002, 0], [0, 0]),
+			closed([0, 0.00008], [0.002, 0.00008], [0.002, 0.001], [0, 0.001]),
+			open([0.001, 0.00003], [0.003, 0.00004], [0.004, 0.00004])
+		]);
+		const nearest = nodeAt(graph, [0.001, 0]);
+
+		expect(nearest && degree(graph, nearest.id)).toBe(3);
+		expect(nodeAt(graph, [0.001, 0.00008])).toBeUndefined();
+	});
+
+	it('supports a single-point collinear touch', () => {
+		const graph = graphFor([open([0, 0], [1, 0]), open([1, 0], [2, 0])]);
+		expect(nodeAt(graph, [1, 0])).toBeDefined();
+		expect(graph.nodes).toHaveLength(3);
+	});
+
+	it('reports a positive-length collinear overlap', () => {
+		const result = buildTopologyGraph([open([0, 0], [2, 0]), open([1, 0], [3, 0])]);
+		expect(result).toEqual({
+			ok: false,
+			code: 'collinear-overlap',
+			segments: [
+				{ guideIndex: 0, segmentIndex: 0 },
+				{ guideIndex: 1, segmentIndex: 0 }
+			]
+		});
+	});
+
+	it('drops duplicate consecutive coordinates and produces stable output', () => {
+		const guides = [open([0, 0], [0, 0], [1, 0])];
+		const first = buildTopologyGraph(guides);
+		const second = buildTopologyGraph(guides);
+		expect(first).toEqual(second);
+		expect(first).toMatchObject({
+			ok: true,
+			graph: { nodes: [{ id: 0 }, { id: 1 }], edges: [{ id: 0 }] }
+		});
+	});
+});
