@@ -1,4 +1,5 @@
 import type { Position } from 'geojson';
+import { positionKey } from '#lib/geometry/position.js';
 import type { PreparedRouteShape } from '../preparation/types';
 
 export type ShapeTraversalCandidate = {
@@ -20,10 +21,6 @@ export type ShapeOptimizationProblem = {
 	coordinates: Position[];
 	shapes: ShapeTraversalCandidate[][];
 };
-
-function positionKey(position: Position): string {
-	return `${position[0]},${position[1]}`;
-}
 
 function traversalKey(vias: Position[]): string {
 	return vias.map(positionKey).join(';');

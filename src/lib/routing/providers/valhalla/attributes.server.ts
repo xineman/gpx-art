@@ -1,6 +1,6 @@
 import type { LineString } from 'geojson';
 import { decodePolyline6, encodePolyline6 } from './polyline';
-import { buildValhallaTraceUrl } from './urls';
+import { postValhalla, type ValhallaReply } from './http.server';
 import type { ValhallaConfig } from './types.server';
 import type {
 	AttributedRouteEdge,
@@ -8,7 +8,7 @@ import type {
 	RouteRoadAttributes,
 	RouteRoadKind,
 	RouteRoadSpan
-} from '../../attribution/types';
+} from '../../api/contracts';
 
 const TRACE_ATTRIBUTES = [
 	'edge.id',
@@ -50,8 +50,6 @@ type ValhallaTraceEdge = {
 type ValhallaTracePayload = {
 	edges?: ValhallaTraceEdge[];
 	shape?: string;
-	error?: string;
-	error_code?: number;
 };
 
 type ParsedReference = {
@@ -270,55 +268,27 @@ export function buildRoadSpans(edges: AttributedRouteEdge[]): RouteRoadSpan[] {
 	return spans;
 }
 
-async function postTrace(
+function postTrace(
 	encodedPolyline: string,
 	shapeMatch: 'edge_walk' | 'walk_or_snap',
 	config: ValhallaConfig
-): Promise<
-	| { ok: true; payload: ValhallaTracePayload }
-	| { ok: false; error: string; errorCode: number | null }
-> {
-	const fetchFn = config.fetchFn ?? fetch;
-	let response: Response;
-	try {
-		response = await fetchFn(buildValhallaTraceUrl(config.baseUrl), {
-			method: 'POST',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				'User-Agent': config.userAgent
-			},
-			body: JSON.stringify({
-				encoded_polyline: encodedPolyline,
-				shape_match: shapeMatch,
-				costing: 'bicycle',
-				costing_options: { bicycle: { bicycle_type: 'hybrid' } },
-				units: 'kilometers',
-				filters: { action: 'include', attributes: TRACE_ATTRIBUTES }
-			})
-		});
-	} catch {
-		return { ok: false, error: 'Routing server unavailable', errorCode: null };
-	}
-
-	let payload: ValhallaTracePayload | null = null;
-	try {
-		payload = (await response.json()) as ValhallaTracePayload;
-	} catch {
-		// Handled as an unavailable/invalid upstream response below.
-	}
-	if (!response.ok || !payload) {
-		return {
-			ok: false,
-			error: payload?.error ?? 'Routing server unavailable',
-			errorCode: numberOrNull(payload?.error_code)
-		};
-	}
-	return { ok: true, payload };
+): Promise<ValhallaReply<ValhallaTracePayload>> {
+	return postValhalla<ValhallaTracePayload>(config, 'trace_attributes', {
+		encoded_polyline: encodedPolyline,
+		shape_match: shapeMatch,
+		costing: 'bicycle',
+		costing_options: { bicycle: { bicycle_type: 'hybrid' } },
+		units: 'kilometers',
+		filters: { action: 'include', attributes: TRACE_ATTRIBUTES }
+	});
 }
 
-function isExactMatchFailure(result: { error: string; errorCode: number | null }) {
-	return result.errorCode === 443 || result.error.includes('Exact route match algorithm failed');
+function isExactMatchFailure(reply: ValhallaReply<ValhallaTracePayload>) {
+	return (
+		!reply.ok &&
+		reply.reason === 'rejected' &&
+		(reply.errorCode === 443 || reply.message.includes('Exact route match algorithm failed'))
+	);
 }
 
 /** Derive named/numbered road spans from an already accepted route geometry. */
@@ -327,14 +297,17 @@ export async function fetchValhallaAttributes(
 	config: ValhallaConfig
 ): Promise<RouteAttributionResponse> {
 	const encodedPolyline = encodePolyline6(geometry.coordinates);
-	let result = await postTrace(encodedPolyline, 'edge_walk', config);
-	if (!result.ok && isExactMatchFailure(result)) {
-		result = await postTrace(encodedPolyline, 'walk_or_snap', config);
+	let reply = await postTrace(encodedPolyline, 'edge_walk', config);
+	if (isExactMatchFailure(reply)) {
+		reply = await postTrace(encodedPolyline, 'walk_or_snap', config);
 	}
-	if (!result.ok) return { ok: false, error: result.error };
+	if (!reply.ok) {
+		const message = reply.reason === 'rejected' ? reply.message : '';
+		return { ok: false, error: message || 'Routing server unavailable', status: reply.status };
+	}
 
 	try {
-		const parsed = parseTrace(result.payload, encodedPolyline);
+		const parsed = parseTrace(reply.body, encodedPolyline);
 		return {
 			ok: true,
 			geometry: { type: 'LineString', coordinates: parsed.coordinates },

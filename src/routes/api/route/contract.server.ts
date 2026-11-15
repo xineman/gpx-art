@@ -1,14 +1,13 @@
 import { z } from 'zod';
 import { MAX_VIAS, MIN_VIAS } from '#lib/routing/config.js';
 import { coordinateSchema, isCoordinateRangeIssue } from '#lib/routing/api/schemas.server.js';
-import type { RouteVia } from '#lib/routing/matching/types.js';
-import { routeSuccessSchema } from '#lib/routing/matching/route-response.js';
+import { routeSuccessSchema, type RouteVia } from '#lib/routing/api/contracts.js';
 import {
 	apiStatus,
 	defineJsonPost,
-	failureResponse,
 	jsonRequest,
-	jsonResponse
+	jsonResponse,
+	providerFailureResponses
 } from '../contract.server';
 
 function sameLocation(a: RouteVia, b: RouteVia): boolean {
@@ -126,9 +125,9 @@ export const { readBody, json, openApiPost } = defineJsonPost({
 				[21.0211, 52.2315]
 			]
 		}),
-		[apiStatus.badRequest]: failureResponse('Invalid request or no continuous match was found.'),
-		[apiStatus.rateLimited]: failureResponse('The routing provider rate limited the request.'),
-		[apiStatus.badGateway]: failureResponse('The routing provider returned an error.'),
-		[apiStatus.unavailable]: failureResponse('Routing is not configured.')
+		...providerFailureResponses({
+			badRequest: 'Invalid request or no continuous match was found.',
+			badGateway: 'The routing provider returned an error.'
+		})
 	}
 });

@@ -1,23 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodePolyline6 } from './polyline';
 import { buildValhallaTraceBody, fetchValhallaTrace } from './trace.server';
-import { buildValhallaRouteUrl, buildValhallaTraceUrl } from './urls';
 
 const vias = [{ location: [21, 52] }, { location: [21.01, 52.01] }];
 
 describe('Valhalla trace request', () => {
-	it('uses the trace_attributes endpoint', () => {
-		expect(buildValhallaTraceUrl('https://valhalla.example/')).toBe(
-			'https://valhalla.example/trace_attributes'
-		);
-	});
-
-	it('uses the route endpoint for local gap repairs', () => {
-		expect(buildValhallaRouteUrl('https://valhalla.example/')).toBe(
-			'https://valhalla.example/route'
-		);
-	});
-
 	it('builds a bicycle map-matching body with optional point constraints', () => {
 		const body = buildValhallaTraceBody({
 			vias: [
@@ -185,10 +172,40 @@ describe('fetchValhallaTrace', () => {
 		});
 	});
 
-	it('preserves server failures unrelated to matching', async () => {
-		const fetchFn = vi.fn(async () =>
-			Response.json({ error: 'Rate limit exceeded', status_code: 429 }, { status: 429 })
-		);
+	it.each([
+		{
+			name: 'keeps a provider error unrelated to matching',
+			reply: () =>
+				Response.json({ error: 'Rate limit exceeded', status_code: 429 }, { status: 429 }),
+			expected: { error: 'Rate limit exceeded', status: 429 }
+		},
+		{
+			name: 'maps a provider no-path error to the no-bike-route message',
+			reply: () => Response.json({ error: 'No path could be found for input' }, { status: 400 }),
+			expected: {
+				error: 'No bike route found near that sketch — try closer to roads.',
+				status: 400
+			}
+		},
+		{
+			name: 'keeps the status of a non-JSON upstream failure',
+			reply: () => new Response('<html>rate limited</html>', { status: 429 }),
+			expected: { error: 'Routing server error (429).', status: 429 }
+		},
+		{
+			name: 'treats an unreadable success response as a gateway failure',
+			reply: () => new Response('not json'),
+			expected: { error: 'Routing server returned invalid JSON.', status: 502 }
+		},
+		{
+			name: 'reports an unreachable server',
+			reply: (): Response => {
+				throw new Error('offline');
+			},
+			expected: { error: 'Couldn’t reach the routing server.', status: 502 }
+		}
+	])('$name', async ({ reply, expected }) => {
+		const fetchFn = vi.fn(async () => reply());
 		const result = await fetchValhallaTrace(
 			{ vias },
 			{
@@ -198,53 +215,8 @@ describe('fetchValhallaTrace', () => {
 			}
 		);
 
-		expect(result).toEqual({
-			ok: false,
-			error: 'Rate limit exceeded',
-			status: 429
-		});
-	});
-
-	it('preserves the status of a non-JSON upstream failure', async () => {
-		const fetchFn = vi.fn(
-			async () =>
-				new Response('<html>rate limited</html>', {
-					status: 429,
-					headers: { 'Content-Type': 'text/html' }
-				})
-		);
-		const result = await fetchValhallaTrace(
-			{ vias },
-			{
-				baseUrl: 'https://valhalla.example',
-				userAgent: 'test',
-				fetchFn: fetchFn as unknown as typeof fetch
-			}
-		);
-
-		expect(result).toEqual({
-			ok: false,
-			error: 'Routing server error (429).',
-			status: 429
-		});
-	});
-
-	it('classifies an unreadable success response as a gateway failure', async () => {
-		const fetchFn = vi.fn(async () => new Response('not json'));
-		const result = await fetchValhallaTrace(
-			{ vias },
-			{
-				baseUrl: 'https://valhalla.example',
-				userAgent: 'test',
-				fetchFn: fetchFn as unknown as typeof fetch
-			}
-		);
-
-		expect(result).toEqual({
-			ok: false,
-			error: 'Routing server returned invalid JSON.',
-			status: 502
-		});
+		expect(result).toEqual({ ok: false, ...expected });
+		expect(fetchFn).toHaveBeenCalledTimes(1);
 	});
 
 	it('removes unmatched interior points and retries the trace once', async () => {
@@ -381,23 +353,5 @@ describe('fetchValhallaTrace', () => {
 			ok: false,
 			error: 'The sketch could not be matched continuously to bike roads.'
 		});
-	});
-
-	it('handles network failure', async () => {
-		const fetchFn = vi.fn(async () => {
-			throw new Error('offline');
-		});
-		const result = await fetchValhallaTrace(
-			{ vias },
-			{
-				baseUrl: 'https://valhalla.example',
-				userAgent: 'test',
-				fetchFn: fetchFn as unknown as typeof fetch
-			}
-		);
-
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toMatch(/reach the routing/i);
 	});
 });

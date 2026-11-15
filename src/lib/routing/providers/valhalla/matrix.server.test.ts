@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import {
-	buildValhallaMatrixBody,
-	buildValhallaMatrixUrl,
-	fetchValhallaDistanceMatrix
-} from './matrix.server';
+import { buildValhallaMatrixBody, fetchValhallaDistanceMatrix } from './matrix.server';
 
 const coordinates: Position[] = [
 	[21, 52],
@@ -13,9 +9,6 @@ const coordinates: Position[] = [
 
 describe('Valhalla distance matrix', () => {
 	it('builds one directed bicycle matrix containing every endpoint as source and target', () => {
-		expect(buildValhallaMatrixUrl('https://example.test/')).toBe(
-			'https://example.test/sources_to_targets'
-		);
 		expect(buildValhallaMatrixBody(coordinates)).toEqual({
 			sources: [
 				{ lat: 52, lon: 21 },

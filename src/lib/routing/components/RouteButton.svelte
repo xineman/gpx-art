@@ -5,18 +5,29 @@
 	import Navigation2 from '@lucide/svelte/icons/navigation-2';
 	import RefreshCcw from '@lucide/svelte/icons/refresh-ccw';
 	import RouteIcon from '@lucide/svelte/icons/route';
+	import type { Feature } from 'geojson';
 	import TooltipArrow from '#lib/components/ui/TooltipArrow.svelte';
-	import { drawings } from '#lib/drawing/drawings.svelte.js';
 	import { route } from '../route.svelte';
 	import { routingOptions } from '../routing-options.svelte';
 	import { flash } from '#lib/util/flash.svelte.js';
-	import { tools } from '#lib/drawing/tools.svelte.js';
-	import { isSupersededFailure, type RouteFailure } from '../api/failure';
+	import { isSupersededFailure } from '../api/failure';
+	import type { RouteFailure } from '../api/contracts';
 	import { dismissibleLayer } from '#lib/util/dismissible-layer.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
 	import { routeActionModel } from './route-action';
 
-	const hasSketch = $derived(drawings.features.length > 0);
+	interface Props {
+		/** Sketch features to route. */
+		sketch: Feature[];
+		/** Revision of `sketch`; the route is dropped when it changes. */
+		sketchRevision: number;
+		/** Called after a route is generated, refined, or restored. */
+		onRouted: () => void;
+	}
+
+	let { sketch, sketchRevision, onRouted }: Props = $props();
+
+	const hasSketch = $derived(sketch.length > 0);
 	const action = $derived(
 		routeActionModel({
 			status: route.status,
@@ -60,7 +71,7 @@
 		const result =
 			kind === 'refine'
 				? await route.refineRoute()
-				: await route.generate(drawings.features, drawings.revision, {
+				: await route.generate(sketch, sketchRevision, {
 						autoRefine: routingOptions.autoRefineOnGenerate
 					});
 		if (!result.ok) {
@@ -68,7 +79,7 @@
 			return;
 		}
 
-		tools.select('pan');
+		onRouted();
 		flash.show(resultMessage(kind === 'refine' ? 'Route refined' : 'Route ready'));
 	}
 
@@ -93,13 +104,13 @@
 	async function onReset() {
 		if (!route.hasRefinedRoute || route.isLoading) return;
 		flash.show('Restoring sketch route…', 60_000);
-		const result = await route.resetFromSketch(drawings.features, drawings.revision);
+		const result = await route.resetFromSketch(sketch, sketchRevision);
 		if (!result.ok) {
 			handleFailure(result);
 			return;
 		}
 
-		tools.select('pan');
+		onRouted();
 		flash.show(resultMessage('Sketch route restored'));
 	}
 

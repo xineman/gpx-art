@@ -43,18 +43,13 @@ describe('request validation', () => {
 		});
 	});
 
-	it('rejects empty vias', async () => {
-		const result = await readJson({ vias: [] });
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toMatch(/at least 2/i);
-	});
-
-	it('rejects too few vias', async () => {
-		const result = await readJson(routeRequest([[21, 52]]));
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toMatch(/at least 2/i);
+	it('requires a vias array with at least two waypoints', async () => {
+		for (const body of [{}, { vias: [] }, routeRequest([[21, 52]])]) {
+			expect(await readJson(body)).toMatchObject({
+				ok: false,
+				error: expect.stringMatching(/vias array|at least 2/i)
+			});
+		}
 	});
 
 	it('rejects non-finite coords', async () => {
@@ -103,13 +98,6 @@ describe('request validation', () => {
 			data: {
 				vias: [{ location: [21, 52] }, { location: [21.01, 52.01] }]
 			}
-		});
-	});
-
-	it('rejects the former grouped-shapes payload', async () => {
-		expect(await readJson({ shapes: [] })).toMatchObject({
-			ok: false,
-			error: expect.stringMatching(/vias array/i)
 		});
 	});
 });

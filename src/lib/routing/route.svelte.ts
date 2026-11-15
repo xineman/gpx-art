@@ -2,12 +2,15 @@ import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
 import { MIN_VIAS } from './config';
 import { downloadTextFile } from '#lib/util/download.js';
 import { formatDistance } from '#lib/geometry/distance.js';
-import { requestRouteAttributes } from './attribution/client';
-import type { RouteAttributionSuccess, RouteRoadSpan } from './attribution/types';
+import { requestRoute, requestRouteAttributes } from './api/client';
+import type {
+	RouteAttributionSuccess,
+	RouteResponse,
+	RouteRoadSpan,
+	RouteSuccess
+} from './api/contracts';
 import { lineStringToGpx, routeGpxFilename } from './export/gpx';
-import { requestOptimizedRoute } from './generate-route';
-import { requestRoute } from './matching/client';
-import type { RouteResponse, RouteSuccess } from './matching/types';
+import { requestOptimizedRoute } from './shape-optimization/optimized-route';
 import { prepareRouteShapes } from './preparation/prepare-shapes';
 import { buildRouteMapFeatures } from './presentation/map-features';
 import { refineRouteAutomatically } from './refinement/auto-refine';
@@ -89,6 +92,28 @@ class RouteState {
 		this.#phase = { status: 'ready', action: null };
 	}
 
+	/** Leave loading while keeping the currently accepted route. */
+	#restoreReady() {
+		this.#phase = { status: 'ready', action: null };
+	}
+
+	/** Show `action` as loading, then accept the loaded route or run `onFailure`. */
+	async #loadRoute(
+		operation: LatestOperationScope,
+		action: ActiveRouteLoadingAction,
+		load: (signal: AbortSignal) => Promise<RouteResponse>,
+		options: { refined: boolean; selections?: WaypointActionSelection[]; onFailure: () => void }
+	): Promise<RouteResponse> {
+		this.#phase = { status: 'loading', action };
+		const result = await operation.guard(load(operation.signal));
+		if (!result.ok) {
+			options.onFailure();
+			return result;
+		}
+		this.#acceptRoute(result, options);
+		return result;
+	}
+
 	async #attributeReadyRoute(
 		operation: LatestOperationScope,
 		action: ActiveRouteLoadingAction
@@ -105,13 +130,13 @@ class RouteState {
 			})
 		);
 		if (!attributed.ok) {
-			this.#phase = { status: 'ready', action: null };
+			this.#restoreReady();
 			return attributed;
 		}
 
 		this.#attribution = attributed;
 		this.#activeRoadSpanIndex = null;
-		this.#phase = { status: 'ready', action: null };
+		this.#restoreReady();
 		const result: RouteSuccess = {
 			ok: true,
 			geometry: attributed.geometry,
@@ -196,19 +221,14 @@ class RouteState {
 
 			this.#clearRouteData();
 			this.#routeSketchRevision = revision;
-			this.#phase = { status: 'loading', action: 'generate' };
-
-			const result = await operation.guard(
-				requestOptimizedRoute(prepared.shapes, {
-					signal: operation.signal
-				})
+			const result = await this.#loadRoute(
+				operation,
+				'generate',
+				(signal) => requestOptimizedRoute(prepared.shapes, { signal }),
+				{ refined: false, onFailure: () => this.#resetRoute('error') }
 			);
-			if (!result.ok) {
-				this.#resetRoute('error');
-				return result;
-			}
+			if (!result.ok) return result;
 
-			this.#acceptRoute(result, { refined: false });
 			if (options.autoRefine) {
 				const refined = await this.#refineAutomatically(operation, result);
 				if (!refined.ok) return refined;
@@ -230,20 +250,17 @@ class RouteState {
 		}
 
 		return this.#routeOperations.run(async (operation) => {
-			this.#phase = { status: 'loading', action: 'refine' };
-
-			const result = await operation.guard(
-				requestRoute(plan.request, { signal: operation.signal })
+			const result = await this.#loadRoute(
+				operation,
+				'refine',
+				(signal) => requestRoute(plan.request, { signal }),
+				{
+					refined: true,
+					selections: plan.nextSelections,
+					onFailure: () => this.#restoreReady()
+				}
 			);
-			if (!result.ok) {
-				this.#phase = { status: 'ready', action: null };
-				return result;
-			}
-
-			this.#acceptRoute(result, {
-				refined: true,
-				selections: plan.nextSelections
-			});
+			if (!result.ok) return result;
 			return this.#attributeReadyRoute(operation, 'refine');
 		}, supersededFailure);
 	}
@@ -259,19 +276,13 @@ class RouteState {
 
 		return this.#routeOperations.run(async (operation) => {
 			this.#routeSketchRevision = revision;
-			this.#phase = { status: 'loading', action: 'reset' };
-
-			const result = await operation.guard(
-				requestOptimizedRoute(prepared.shapes, {
-					signal: operation.signal
-				})
+			const result = await this.#loadRoute(
+				operation,
+				'reset',
+				(signal) => requestOptimizedRoute(prepared.shapes, { signal }),
+				{ refined: false, onFailure: () => this.#restoreReady() }
 			);
-			if (!result.ok) {
-				this.#phase = { status: 'ready', action: null };
-				return result;
-			}
-
-			this.#acceptRoute(result, { refined: false });
+			if (!result.ok) return result;
 			return this.#attributeReadyRoute(operation, 'reset');
 		}, supersededFailure);
 	}

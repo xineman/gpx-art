@@ -1,16 +1,6 @@
 import type { Feature, Geometry, Position } from 'geojson';
+import { isClosedRing } from '#lib/geometry/position.js';
 import type { GuidePath } from './types';
-
-function isClosedRing(ring: Position[]): boolean {
-	if (ring.length < 2) return false;
-	const first = ring[0];
-	const last = ring[lastIndex(ring)];
-	return !!first && !!last && first[0] === last[0] && first[1] === last[1];
-}
-
-function lastIndex(ring: Position[]) {
-	return ring.length - 1;
-}
 
 /** Drop the repeated closing vertex of a GeoJSON polygon ring. */
 export function openRing(ring: Position[]): Position[] {

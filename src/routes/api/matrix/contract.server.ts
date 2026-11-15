@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { MAX_VIAS, MIN_VIAS } from '#lib/routing/config.js';
 import { coordinateSchema, isCoordinateRangeIssue } from '#lib/routing/api/schemas.server.js';
-import { matrixSuccessSchema } from '#lib/routing/shape-optimization/matrix-response.js';
+import { matrixSuccessSchema } from '#lib/routing/api/contracts.js';
 import {
 	apiStatus,
 	defineJsonPost,
-	failureResponse,
 	jsonRequest,
-	jsonResponse
+	jsonResponse,
+	providerFailureResponses
 } from '../contract.server';
 
 const matrixRequestSchema = z.object(
@@ -52,11 +52,9 @@ export const { readBody, json, openApiPost } = defineJsonPost({
 				[850, 0]
 			]
 		}),
-		[apiStatus.badRequest]: failureResponse('Invalid request or rejected by the routing provider.'),
-		[apiStatus.rateLimited]: failureResponse('The routing provider rate limited the request.'),
-		[apiStatus.badGateway]: failureResponse(
-			'The routing provider could not return a usable matrix.'
-		),
-		[apiStatus.unavailable]: failureResponse('Routing is not configured.')
+		...providerFailureResponses({
+			badRequest: 'Invalid request or rejected by the routing provider.',
+			badGateway: 'The routing provider could not return a usable matrix.'
+		})
 	}
 });

@@ -11,6 +11,10 @@
 	import ToolShortcuts from '#lib/drawing/components/ToolShortcuts.svelte';
 	import { MAP_STYLE_URL, WARSAW_BOUNDS, WARSAW_CENTER, WARSAW_ZOOM } from '#lib/map/config.js';
 	import { pointer } from '#lib/util/pointer.svelte.js';
+	import { drawings } from '#lib/drawing/drawings.svelte.js';
+	import { mapCursor } from '#lib/drawing/tools.js';
+	import { tools } from '#lib/drawing/tools.svelte.js';
+	import { route } from '#lib/routing/route.svelte.js';
 
 	interface Props {
 		center?: [number, number];
@@ -32,6 +36,11 @@
 	onMount(() => {
 		pointer.init();
 	});
+
+	// A route belongs to the sketch revision that produced it; drop it when the sketch changes.
+	$effect(() => {
+		route.syncSketch(drawings.revision);
+	});
 </script>
 
 <ToolShortcuts />
@@ -39,7 +48,7 @@
 <div class="fixed inset-0 m-0 h-dvh w-screen overflow-hidden p-0">
 	<Map {center} {zoom} {bounds} {style} bind:ready={mapReady}>
 		<DrawingLayer ignorePoint={(map, point) => routeWaypointAtPoint(map, point) !== null} />
-		<RouteLayer />
+		<RouteLayer idleCursor={mapCursor(tools.isPanning)} />
 	</Map>
 
 	{#if mapReady}

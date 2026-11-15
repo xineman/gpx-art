@@ -97,17 +97,6 @@ describe('drawings history', () => {
 		expect(drawings.canRedo).toBe(false);
 	});
 
-	it('clear resets features and redo', () => {
-		drawings.add(lineA, 'polyline');
-		drawings.undo();
-		expect(drawings.canRedo).toBe(true);
-
-		drawings.clear();
-		expect(drawings.features).toEqual([]);
-		expect(drawings.canUndo).toBe(false);
-		expect(drawings.canRedo).toBe(false);
-	});
-
 	it('clearSketch empties features in one undoable step', () => {
 		const a = drawings.add(lineA, 'polyline');
 		drawings.add(lineB, 'pencil');

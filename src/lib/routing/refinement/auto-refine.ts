@@ -1,5 +1,5 @@
 import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '../config';
-import type { RouteRequest, RouteResponse, RouteSuccess } from '../matching/types';
+import type { RouteRequest, RouteResponse, RouteSuccess } from '../api/contracts';
 import { analyzeRouteDetours } from './detours';
 import { applySelectionsToWaypointAnalysis } from './detour-coverage';
 import {

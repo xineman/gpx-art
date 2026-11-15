@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, LineString, Position } from 'geojson';
-import type { RouteRoadSpan } from '../attribution/types';
+import type { RouteRoadSpan } from '../api/contracts';
 import type { WaypointMoveProposal } from '../refinement/plan';
 import type { WaypointRefinementAction } from '../refinement/types';
 

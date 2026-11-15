@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchAllButTwo, type MatchingResult, type PairCost } from './matching';
+import { matchAllButTwo, type MatchingResult, type PairCost } from './odd-vertex-pairing';
 
 function seededRandom(seed: number): () => number {
 	let state = seed >>> 0;

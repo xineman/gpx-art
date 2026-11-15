@@ -3,9 +3,14 @@ import { geoJsonPositionSchema } from '#lib/routing/api/schemas.server.js';
 import {
 	routeAttributionSuccessSchema,
 	type AttributedRouteEdge
-} from '#lib/routing/attribution/attributes-response.js';
-import { apiFailureSchema } from '#lib/routing/api/api-response.js';
-import { apiStatus, defineJsonPost, jsonRequest, jsonResponse } from '../contract.server';
+} from '#lib/routing/api/contracts.js';
+import {
+	apiStatus,
+	defineJsonPost,
+	jsonRequest,
+	jsonResponse,
+	providerFailureResponses
+} from '../contract.server';
 
 const MAX_ROUTE_SHAPE_POINTS = 100_000;
 const missingGeometry = 'Body must include a route geometry.';
@@ -32,8 +37,6 @@ function routeGeometryIssue(issue: z.core.$ZodIssue | undefined): string {
 	}
 	return issue?.message ?? 'Invalid route geometry.';
 }
-
-const attributesFailureSchema = apiFailureSchema.omit({ status: true });
 
 const geometry = {
 	type: 'LineString',
@@ -83,11 +86,9 @@ export const { readBody, json, openApiPost } = defineJsonPost({
 			roadEdges: [edge],
 			roadSpans: [{ ...edge, wayIds: [123] }]
 		}),
-		[apiStatus.badRequest]: jsonResponse(
-			'Invalid request or road details could not be matched.',
-			attributesFailureSchema
-		),
-		[apiStatus.badGateway]: jsonResponse('Routing server unavailable.', attributesFailureSchema),
-		[apiStatus.unavailable]: jsonResponse('Routing is not configured.', attributesFailureSchema)
+		...providerFailureResponses({
+			badRequest: 'Invalid request or road details could not be matched.',
+			badGateway: 'Routing server unavailable.'
+		})
 	}
 });

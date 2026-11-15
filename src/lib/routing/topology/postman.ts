@@ -1,7 +1,7 @@
 import type { Position } from 'geojson';
 import { distanceBetween } from '#lib/geometry/distance.js';
 import type { TopologyGraph } from './build-graph';
-import { matchAllButTwo } from './matching';
+import { matchAllButTwo } from './odd-vertex-pairing';
 
 const TURN_EPSILON = 1e-9;
 

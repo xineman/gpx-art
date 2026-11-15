@@ -1,23 +1,15 @@
 import type { Position } from 'geojson';
-import type { MatrixApiResponse } from '../../shape-optimization/matrix-response';
+import type { ApiFailure, MatrixSuccess } from '../../api/contracts';
+import { postValhalla, PROVIDER_UNAVAILABLE_STATUS } from './http.server';
 import type { ValhallaConfig } from './types.server';
 
 type ValhallaMatrixResponse = {
-	error?: string;
-	error_code?: number;
-	status_code?: number;
 	sources_to_targets?: {
 		distances?: unknown;
 	};
 };
 
-function trimTrailingSlash(url: string) {
-	return url.replace(/\/+$/, '');
-}
-
-export function buildValhallaMatrixUrl(baseUrl: string) {
-	return `${trimTrailingSlash(baseUrl)}/sources_to_targets`;
-}
+const INVALID_MATRIX_ERROR = 'Couldn’t optimize shape order — invalid routing response.';
 
 /** Build a directed bicycle-distance matrix request for the optimizer's candidate endpoints. */
 export function buildValhallaMatrixBody(coordinates: Position[]) {
@@ -60,58 +52,39 @@ function normalizeDistances(value: unknown, size: number): (number | null)[][] |
 export async function fetchValhallaDistanceMatrix(
 	coordinates: Position[],
 	config: ValhallaConfig
-): Promise<MatrixApiResponse> {
-	const fetchFn = config.fetchFn ?? fetch;
-	let response: Response;
-	try {
-		response = await fetchFn(buildValhallaMatrixUrl(config.baseUrl), {
-			method: 'POST',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				'User-Agent': config.userAgent
-			},
-			body: JSON.stringify(buildValhallaMatrixBody(coordinates))
-		});
-	} catch {
-		return {
-			ok: false,
-			error: 'Couldn’t optimize shape order — couldn’t reach the routing server.',
-			status: 502
-		};
+): Promise<MatrixSuccess | ApiFailure> {
+	const reply = await postValhalla<ValhallaMatrixResponse>(
+		config,
+		'sources_to_targets',
+		buildValhallaMatrixBody(coordinates)
+	);
+	if (!reply.ok) {
+		switch (reply.reason) {
+			case 'unreachable':
+				return {
+					ok: false,
+					error: 'Couldn’t optimize shape order — couldn’t reach the routing server.',
+					status: reply.status
+				};
+			case 'unreadable':
+				return { ok: false, error: INVALID_MATRIX_ERROR, status: reply.status };
+			case 'rejected': {
+				const message = reply.message || `routing server error (${reply.httpStatus})`;
+				return {
+					ok: false,
+					error: `Couldn’t optimize shape order — ${message}.`,
+					status: reply.status
+				};
+			}
+		}
 	}
 
-	let body: ValhallaMatrixResponse | null;
-	try {
-		body = (await response.json()) as ValhallaMatrixResponse;
-	} catch {
-		body = null;
-	}
-
-	if (!body) {
-		return {
-			ok: false,
-			error: 'Couldn’t optimize shape order — invalid routing response.',
-			status: response.ok ? 502 : response.status
-		};
-	}
-
-	if (!response.ok || body.error) {
-		const message = body.error?.trim() || `routing server error (${response.status})`;
-		return {
-			ok: false,
-			error: `Couldn’t optimize shape order — ${message}.`,
-			status: response.ok ? (body.status_code ?? body.error_code ?? 502) : response.status
-		};
-	}
-
-	const distances = normalizeDistances(body.sources_to_targets?.distances, coordinates.length);
+	const distances = normalizeDistances(
+		reply.body.sources_to_targets?.distances,
+		coordinates.length
+	);
 	if (!distances) {
-		return {
-			ok: false,
-			error: 'Couldn’t optimize shape order — invalid routing response.',
-			status: 502
-		};
+		return { ok: false, error: INVALID_MATRIX_ERROR, status: PROVIDER_UNAVAILABLE_STATUS };
 	}
 
 	return { ok: true, distances };

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Position } from 'geojson';
-import type { AttributedRouteEdge } from '../../attribution/types';
+import type { AttributedRouteEdge } from '../../api/contracts';
 import { encodePolyline6 } from './polyline';
 import { buildRoadSpans, fetchValhallaAttributes, parsePolishRoadNames } from './attributes.server';
 
@@ -132,7 +132,7 @@ describe('buildRoadSpans', () => {
 });
 
 describe('fetchValhallaAttributes', () => {
-	it('attributes an accepted route without calling Valhalla /route', async () => {
+	it('attributes a route with one exact edge-walk trace', async () => {
 		const points: Position[] = [
 			[21, 52],
 			[21.01, 52.01]

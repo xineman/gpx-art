@@ -79,24 +79,22 @@ src/
       config.ts          # client-safe via caps, tolerances, and refinement timeout
       latest-operation.ts # latest-command-wins async coordination
       components/        # RouteLayer, RouteButton, GPX download, move review, road ribbon
-      map/               # route/detour layer definitions, sprites, and waypoint hit testing
+      map/               # route/detour layer definitions, canvas sprites, and waypoint hit testing
       presentation/      # accepted route → map GeoJSON
       preparation/       # features → guide paths → topology walks → globally bounded trace vias
-      topology/          # guide paths → noded graph → Chinese Postman traversals → walks with mandatory vias
-      shape-optimization/ # component traversal candidates, matrix API, route ordering
-      matching/          # route response types, client, and server orchestration
-      attribution/       # road-edge/span response types and client
+      topology/          # guide paths → noded graph → Chinese Postman traversals (odd-vertex pairing) → walks with mandatory vias
+      shape-optimization/ # component traversal candidates, route ordering, optimized-route request
       refinement/        # detour analysis, plans, and owned route-refinement.svelte.ts
       export/            # GPX serialization
-      providers/valhalla/ # Valhalla trace/matrix/attribute adapters and server config
-      api/               # common routing HTTP client, failures, and validation schemas
+      providers/valhalla/ # Valhalla HTTP helper, trace/matrix/attribute adapters, and server config
+      api/               # contracts.ts (shared schemas + types), client.ts (endpoint calls), failures, request schemas
     map/                 # shared MapLibre infrastructure
       Map.svelte         # client-only map lifecycle
       context.ts         # provideMap / useMap
       config.ts          # style URL, Warsaw center/bounds/zoom
       sources.ts         # shared GeoJSON source updates
       theme.ts           # resolve CSS theme colors for map paint
-    geometry/            # shared distance calculations (pure)
+    geometry/            # shared distance, position, and planar segment helpers (pure)
     components/ui/       # reusable PanelChrome + TooltipArrow
     util/                # shared pointer, flash message, dismissible-layer, and download helpers
   routes/
@@ -113,7 +111,10 @@ src/
 **API reference:** On the dev server, Redoc at `/api/docs` reads `/api/openapi.json`. For each
 routing endpoint, keep request validation in `src/routes/api/<endpoint>/contract.server.ts`. Export
 `readBody` and `json` for the `+server.ts` handler and `openApiPost` for automatic discovery by the
-OpenAPI endpoint, which generates the spec with `zod-openapi`.
+OpenAPI endpoint, which generates the spec with `zod-openapi`. Response schemas and shared payload
+types live in `routing/api/contracts.ts`; browser code imports it with `import type` only so Zod
+stays out of the client bundle. Valhalla adapters call `postValhalla` and report a provider
+`status`; handlers map it with `providerFailureStatus`.
 
 ## Architecture notes
 
@@ -123,8 +124,8 @@ OpenAPI endpoint, which generates the spec with `zod-openapi`.
 
 1. Reactive application state uses **classes with private mutable rune fields** in `.svelte.ts` modules. Expose computed values as public `readonly $derived` fields instead of forwarding getters; keep getters for mutable state and simple projections. Export one shared instance (`tools`, `drawings`, `route`, `status`, `flash`, `routingOptions`, `pointer`); consumers import it rather than constructing their own. Keep feature state, components, configuration, and tests under `drawing/` or `routing/`; `editor/` composes the features. Ordinary drawing functions import domain types from `drawing/types.ts`, not reactive state modules. Routing raises status-bar messages through `util/flash.svelte.ts`, never `drawing/status.svelte.ts`. Keep cohesive owned state separate: `RouteState` composes `RouteRefinementState` in `routing/refinement/`, which owns waypoint selections, refinement plans, and move-review focus. Pure calculations remain ordinary functions.
 2. `MapDrawingInput` translates MapLibre and window events. `DrawingSession` owns drag and vertex gestures and returns updates for `DrawingController` to apply. `DrawingLayer.svelte` wires the controller to runes via `$effect`, commits with `drawings.add(...)`, and feeds live draft geometry into `status`.
-3. `drawing/map/layers.ts` owns sketch/preview paint; `routing/map/layers.ts` owns route/detour paint and sprites. Both use shared `map/sources.ts` and `map/theme.ts` helpers. Colors come from `layout.css` theme tokens. Keep pure geometry in `geo.ts` / `geometry/`.
-4. `editor/FullscreenMap` owns overlay placement, mounts `ToolShortcuts` once, and supplies drawing hit filtering so route waypoint interactions take priority. It mounts `DrawingLayer` before `RouteLayer` to preserve overlay order. `EditorToolbar` composes sketch and route controls. Tool/action chrome should not self-position with absolute insets or register global keys.
+3. `drawing/map/layers.ts` owns sketch/preview paint; `routing/map/layers.ts` owns route/detour paint and `routing/map/sprites.ts` its canvas images. Both use shared `map/sources.ts` and `map/theme.ts` helpers. Colors come from `layout.css` theme tokens. Keep pure geometry in `geo.ts` / `geometry/`.
+4. `editor/FullscreenMap` owns overlay placement, mounts `ToolShortcuts` once, and supplies drawing hit filtering so route waypoint interactions take priority. It mounts `DrawingLayer` before `RouteLayer` to preserve overlay order, and drops the route when the sketch revision changes. `EditorToolbar` composes sketch and route controls, passing sketch state into `RouteButton`; `routing/` does not import `drawing/`. Tool/action chrome should not self-position with absolute insets or register global keys.
 5. `pointer.fineHover` defaults touch-safe (`false`) until client `matchMedia`; status uses long touch hints when coarse, tooltips only when `pointer.ready && fineHover`.
 
 **Coordinates.** MapLibre / GeoJSON positions are `[lng, lat]`. Prefer that form at map boundaries; if app-domain points use `{ lat, lng }`, convert at the edge.

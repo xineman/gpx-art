@@ -51,3 +51,8 @@ export const TOOLS: readonly ToolDef[] = [
 export function toolById(id: string): ToolDef | undefined {
 	return TOOLS.find((t) => t.id === id);
 }
+
+/** Map canvas cursor while no overlay is hovered. */
+export function mapCursor(panning: boolean): 'grab' | 'crosshair' {
+	return panning ? 'grab' : 'crosshair';
+}

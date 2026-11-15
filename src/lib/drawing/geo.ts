@@ -1,4 +1,5 @@
 import type { Geometry, LineString, Position } from 'geojson';
+import { isClosedRing } from '#lib/geometry/position.js';
 
 export function lineString(points: Position[]): LineString {
 	return { type: 'LineString', coordinates: points };
@@ -7,11 +8,7 @@ export function lineString(points: Position[]): LineString {
 /** Close a route guide by repeating its first coordinate exactly once. */
 export function closedLineString(points: Position[]): LineString {
 	const line = [...points];
-	const first = line[0];
-	const last = line[line.length - 1];
-	if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
-		line.push(first);
-	}
+	if (line.length > 0 && !isClosedRing(line)) line.push(line[0]!);
 	return lineString(line);
 }
 
@@ -29,10 +26,11 @@ export function rectangleLineString(a: Position, b: Position): LineString {
 }
 
 export function isClosedLineString(geometry: Geometry): boolean {
-	if (geometry.type !== 'LineString' || geometry.coordinates.length < 3) return false;
-	const first = geometry.coordinates[0];
-	const last = geometry.coordinates[geometry.coordinates.length - 1];
-	return !!first && !!last && first[0] === last[0] && first[1] === last[1];
+	return (
+		geometry.type === 'LineString' &&
+		geometry.coordinates.length >= 3 &&
+		isClosedRing(geometry.coordinates)
+	);
 }
 
 export function distanceSq(a: Position, b: Position): number {

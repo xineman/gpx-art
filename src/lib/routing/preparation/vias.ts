@@ -1,6 +1,7 @@
 import type { Position } from 'geojson';
 import { MAX_VIAS, VIA_SAMPLE_SPACING_M, VIA_SIMPLIFY_TOLERANCE_M } from '../config';
 import { distanceBetween } from '#lib/geometry/distance.js';
+import { samePosition } from '#lib/geometry/position.js';
 import type { GuideWalk } from './types';
 
 export type WalkViasResult = { ok: true; vias: Position[][] } | { ok: false; error: string };
@@ -49,10 +50,6 @@ function perpendicularDistanceM(p: Position, a: Position, b: Position): number {
 	const qx = ax + t * bx;
 	const qy = ay + t * by;
 	return Math.hypot(px - qx, py - qy);
-}
-
-function samePosition(left: Position, right: Position): boolean {
-	return left[0] === right[0] && left[1] === right[1];
 }
 
 function farthestInterior(points: Position[], start: number, end: number) {
