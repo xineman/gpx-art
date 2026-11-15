@@ -14,7 +14,7 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract/simplify grouped shape traces → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side shape-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + road-attribution ribbon + optional GPX
+- **Route pipeline:** client extract guides → topology graph (exact noding, overlap merging, near-endpoint snapping, short-branch preservation) → Chinese Postman walk per connected component → global via allocation (turning junction passes and dead-end tips mandatory, Douglas–Peucker + densify under one cap) → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side component-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + road-attribution ribbon + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo on the shared `drawings` state instance (bulk import is one undo step)
@@ -81,8 +81,9 @@ src/
       components/        # RouteLayer, RouteButton, GPX download, move review, road ribbon
       map/               # route/detour layer definitions, sprites, and waypoint hit testing
       presentation/      # accepted route → map GeoJSON
-      preparation/       # features → guide paths → bounded trace vias
-      shape-optimization/ # shape traversal candidates, matrix API, route ordering
+      preparation/       # features → guide paths → topology walks → globally bounded trace vias
+      topology/          # guide paths → noded graph → Chinese Postman traversals → walks with mandatory vias
+      shape-optimization/ # component traversal candidates, matrix API, route ordering
       matching/          # route response types, client, and server orchestration
       attribution/       # road-edge/span response types and client
       refinement/        # detour analysis, plans, and owned route-refinement.svelte.ts

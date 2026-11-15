@@ -1,26 +1,24 @@
 import type { Position } from 'geojson';
+import { distanceBetween } from '#lib/geometry/distance.js';
 import { TOPOLOGY_SNAP_TOLERANCE_M } from '../config';
 import type { GuidePath } from '../preparation/types';
 
 const NUMERIC_EPSILON = 1e-12;
 const COORDINATE_PRECISION = 12;
+/**
+ * Splits on one segment closer than this on both axes (degrees, about 0.1 mm) are one point. It
+ * absorbs rounding in intersections of nearly parallel segments, which grows as the angle shrinks.
+ */
+const POSITION_EPSILON = 1e-9;
+/**
+ * Free ends ignore geometry reachable within this multiple of the snap tolerance along the drawing:
+ * that geometry is the stroke's own tail, and snapping onto it would close a tiny loop.
+ */
+const LOCAL_PATH_FACTOR = 2;
 
 export type TopologyNode = {
 	id: number;
 	position: Position;
-};
-
-export type TopologyEdge = {
-	id: number;
-	fromNodeId: number;
-	toNodeId: number;
-	guideIndex: number;
-	segmentIndex: number;
-};
-
-export type TopologyGraph = {
-	nodes: TopologyNode[];
-	edges: TopologyEdge[];
 };
 
 export type TopologySegmentRef = {
@@ -28,15 +26,21 @@ export type TopologySegmentRef = {
 	segmentIndex: number;
 };
 
-export type TopologyBuildResult =
-	| { ok: true; graph: TopologyGraph }
-	| {
-			ok: false;
-			code: 'collinear-overlap';
-			segments: [TopologySegmentRef, TopologySegmentRef];
-	  };
+export type TopologyEdge = {
+	id: number;
+	fromNodeId: number;
+	toNodeId: number;
+	/** Guide segments drawn along this edge; more than one where strokes overlap. */
+	sources: TopologySegmentRef[];
+};
+
+export type TopologyGraph = {
+	nodes: TopologyNode[];
+	edges: TopologyEdge[];
+};
 
 export type TopologyBuildOptions = {
+	/** Gaps up to this length are closed. Drawn branches are retained regardless of length. */
 	snapToleranceM?: number;
 };
 
@@ -45,7 +49,8 @@ type SplitPoint = {
 	position: Position;
 };
 
-type Segment = TopologySegmentRef & {
+type Segment = {
+	sources: TopologySegmentRef[];
 	start: Position;
 	end: Position;
 };
@@ -61,9 +66,31 @@ type SegmentProjection = SplitPoint & {
 	distanceM: number;
 };
 
-type Snap = {
-	target: SourceSegment;
+/** A piece endpoint with no other incident piece. Snapping may move it. */
+type FreeEnd = {
+	key: string;
+	position: Position;
+	piece: number;
+	atStart: boolean;
+	/** Graph distances to nodes reachable along the drawing within the local-path radius. */
+	nearby: Map<string, number>;
+};
+
+type HostSplit = {
+	piece: number;
 	split: SplitPoint;
+};
+
+/** A free end's destination: a point on a host piece, or a point shared with other free ends. */
+type SnapMove = {
+	target: Position;
+	host?: HostSplit;
+};
+
+type PlacedSegment = Segment & {
+	piece: number;
+	/** Touches a moved free end, so its geometry is new. */
+	moved: boolean;
 };
 
 function copyPosition(position: Position): Position {
@@ -233,16 +260,74 @@ function intersectSegments(left: Segment, right: Segment): SegmentIntersection {
 	return pointIntersection(left, right, leftT, rightT);
 }
 
-function matchingSplit(segment: SourceSegment, split: SplitPoint): SplitPoint | undefined {
-	return segment.splits.find(
+function findSplit(splits: SplitPoint[], split: SplitPoint): SplitPoint | undefined {
+	return splits.find(
 		(candidate) =>
 			Math.abs(candidate.t - split.t) <= NUMERIC_EPSILON ||
-			samePosition(candidate.position, split.position)
+			(Math.abs(candidate.position[0]! - split.position[0]!) <= POSITION_EPSILON &&
+				Math.abs(candidate.position[1]! - split.position[1]!) <= POSITION_EPSILON)
 	);
 }
 
-function addSplit(segment: SourceSegment, split: SplitPoint) {
-	if (!matchingSplit(segment, split)) segment.splits.push(split);
+/** Shared split identities, resolved after noding so intersection calculations keep original geometry. */
+class SplitPositions {
+	#parents = new Map<string, Position>();
+
+	resolve(position: Position): Position {
+		const keys: string[] = [];
+		let key = positionKey(position);
+		while (this.#parents.has(key)) {
+			keys.push(key);
+			position = this.#parents.get(key)!;
+			key = positionKey(position);
+		}
+		for (const child of keys) this.#parents.set(child, position);
+		return position;
+	}
+
+	join(left: Position, right: Position): Position {
+		const position = this.resolve(left);
+		const other = this.resolve(right);
+		if (!samePosition(position, other)) this.#parents.set(positionKey(other), position);
+		return position;
+	}
+}
+
+/**
+ * Record a crossing on both segments. Each pair computes its own intersection, so concurrent
+ * crossings differ by rounding noise; a crossing already recorded on either segment wins so every
+ * segment through that point splits at the same position.
+ */
+function addCrossing(
+	left: SourceSegment,
+	right: SourceSegment,
+	intersection: Extract<SegmentIntersection, { kind: 'point' }>,
+	positions: SplitPositions
+) {
+	const leftExisting = findSplit(left.splits, intersection.left);
+	const rightExisting = findSplit(right.splits, intersection.right);
+	const position = positions.join(
+		(leftExisting ?? rightExisting ?? intersection.left).position,
+		(rightExisting ?? intersection.right).position
+	);
+	if (!leftExisting) left.splits.push({ t: intersection.left.t, position });
+	if (!rightExisting) right.splits.push({ t: intersection.right.t, position });
+}
+
+/** Split collinear segments at the ends of their shared stretch: each other's inner endpoints. */
+function addOverlapSplits(left: SourceSegment, right: SourceSegment, positions: SplitPositions) {
+	for (const [segment, other] of [
+		[left, right],
+		[right, left]
+	] as const) {
+		for (const position of [other.start, other.end]) {
+			const split = { t: clampParameter(parameterOnSegment(position, segment)), position };
+			if (!isInterior(split.t)) continue;
+			const existing = findSplit(segment.splits, split);
+			if (existing) positions.join(existing.position, position);
+			else segment.splits.push(split);
+		}
+	}
 }
 
 function withEndpointSplits(segment: Segment): SourceSegment {
@@ -279,23 +364,30 @@ function sourceSegments(guides: GuidePath[]): SourceSegment[] {
 		for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
 			const start = points[segmentIndex]!;
 			const end = points[(segmentIndex + 1) % points.length]!;
-			segments.push(withEndpointSplits({ guideIndex, segmentIndex, start, end }));
+			segments.push(withEndpointSplits({ sources: [{ guideIndex, segmentIndex }], start, end }));
 		}
 	}
 	return segments;
 }
 
-function splitSegments(segments: Iterable<SourceSegment>): Segment[] {
-	const pieces: Segment[] = [];
-	for (const { guideIndex, segmentIndex, splits } of segments) {
+/** Cut segments at their splits. A stretch drawn more than once becomes one piece with every source. */
+function splitSegments(segments: Iterable<SourceSegment>, positions: SplitPositions): Segment[] {
+	const pieces = new Map<string, Segment>();
+	for (const { sources, splits } of segments) {
 		splits.sort((left, right) => left.t - right.t);
 		for (let index = 1; index < splits.length; index++) {
-			const start = splits[index - 1]!.position;
-			const end = splits[index]!.position;
-			if (!samePosition(start, end)) pieces.push({ guideIndex, segmentIndex, start, end });
+			const start = positions.resolve(splits[index - 1]!.position);
+			const end = positions.resolve(splits[index]!.position);
+			const startKey = positionKey(start);
+			const endKey = positionKey(end);
+			if (startKey === endKey) continue;
+			const key = startKey < endKey ? `${startKey};${endKey}` : `${endKey};${startKey}`;
+			const existing = pieces.get(key);
+			if (existing) existing.sources.push(...sources);
+			else pieces.set(key, { sources: [...sources], start, end });
 		}
 	}
-	return pieces;
+	return [...pieces.values()];
 }
 
 function comparePositions(left: Position, right: Position): number {
@@ -313,154 +405,331 @@ function compareSegments(left: Segment, right: Segment): number {
 	return comparePositions(leftStart, rightStart) || comparePositions(leftEnd, rightEnd);
 }
 
-function sameSourceSegment(left: Segment, right: Segment): boolean {
-	return left.guideIndex === right.guideIndex && left.segmentIndex === right.segmentIndex;
+type PieceGraph = Map<string, { key: string; lengthM: number }[]>;
+
+function pieceGraph(pieces: Segment[]): PieceGraph {
+	const adjacency: PieceGraph = new Map();
+	const link = (from: string, to: string, lengthM: number) => {
+		const neighbors = adjacency.get(from);
+		if (neighbors) neighbors.push({ key: to, lengthM });
+		else adjacency.set(from, [{ key: to, lengthM }]);
+	};
+	for (const { start, end } of pieces) {
+		const lengthM = distanceBetween(start, end);
+		link(positionKey(start), positionKey(end), lengthM);
+		link(positionKey(end), positionKey(start), lengthM);
+	}
+	return adjacency;
 }
 
-function nearestSnap(
-	source: SourceSegment,
-	point: Position,
-	segments: Map<SourceSegment, SourceSegment>,
-	toleranceM: number
-): Snap | undefined {
-	let best: Snap | undefined;
-	let bestDistance = Infinity;
-	for (const [original, target] of segments) {
-		// Projections use the exact geometry. A moved segment no longer offers that geometry.
-		if (target !== original || sameSourceSegment(source, target)) continue;
+/** Graph distances from `origin` to every node closer than `limitM` along the pieces. */
+function distancesWithin(
+	adjacency: PieceGraph,
+	origin: string,
+	limitM: number
+): Map<string, number> {
+	const distances = new Map([[origin, 0]]);
+	const settled = new Set<string>();
+	for (;;) {
+		let current: string | undefined;
+		let currentDistance = Infinity;
+		for (const [key, distance] of distances) {
+			if (!settled.has(key) && distance < currentDistance) {
+				current = key;
+				currentDistance = distance;
+			}
+		}
+		if (current == null) return distances;
+		settled.add(current);
+		for (const { key, lengthM } of adjacency.get(current) ?? []) {
+			const distance = currentDistance + lengthM;
+			if (distance < limitM && distance < (distances.get(key) ?? Infinity)) {
+				distances.set(key, distance);
+			}
+		}
+	}
+}
 
-		const projection = projectPointToSegment(point, target);
-		if (projection.distanceM > toleranceM) continue;
-		const distanceDifference = projection.distanceM - bestDistance;
+/** Dangling piece endpoints, ordered by position so the result ignores guide order. */
+function freeEnds(pieces: Segment[], localLimitM: number): FreeEnd[] {
+	const incidences = new Map<string, { piece: number; atStart: boolean }[]>();
+	for (const [piece, { start, end }] of pieces.entries()) {
+		for (const [position, atStart] of [
+			[start, true],
+			[end, false]
+		] as const) {
+			const key = positionKey(position);
+			const incident = incidences.get(key);
+			if (incident) incident.push({ piece, atStart });
+			else incidences.set(key, [{ piece, atStart }]);
+		}
+	}
+
+	const adjacency = pieceGraph(pieces);
+	const ends: FreeEnd[] = [];
+	for (const [key, incident] of incidences) {
+		if (incident.length !== 1) continue;
+		const { piece, atStart } = incident[0]!;
+		ends.push({
+			key,
+			position: atStart ? pieces[piece]!.start : pieces[piece]!.end,
+			piece,
+			atStart,
+			nearby: distancesWithin(adjacency, key, localLimitM)
+		});
+	}
+	return ends.sort((left, right) => comparePositions(left.position, right.position));
+}
+
+/** Along-drawing distance from a free end to a point on a piece; Infinity when not nearby. */
+function localDistance(end: FreeEnd, piece: Segment, t: number): number {
+	const lengthM = distanceBetween(piece.start, piece.end);
+	return Math.min(
+		(end.nearby.get(positionKey(piece.start)) ?? Infinity) + t * lengthM,
+		(end.nearby.get(positionKey(piece.end)) ?? Infinity) + (1 - t) * lengthM
+	);
+}
+
+function nearestHost(
+	point: Position,
+	pieces: Segment[],
+	toleranceM: number,
+	accepts: (piece: Segment, projection: SegmentProjection) => boolean
+): HostSplit | undefined {
+	let best: (HostSplit & { distanceM: number }) | undefined;
+	for (const [index, piece] of pieces.entries()) {
+		const projection = projectPointToSegment(point, piece);
+		if (projection.distanceM > toleranceM || !accepts(piece, projection)) continue;
+		const distanceDifference = projection.distanceM - (best?.distanceM ?? Infinity);
 		if (
 			!best ||
 			distanceDifference < -NUMERIC_EPSILON ||
-			(Math.abs(distanceDifference) <= NUMERIC_EPSILON && compareSegments(target, best.target) < 0)
+			(Math.abs(distanceDifference) <= NUMERIC_EPSILON &&
+				compareSegments(piece, pieces[best.piece]!) < 0)
 		) {
-			best = { target, split: matchingSplit(target, projection) ?? projection };
-			bestDistance = projection.distanceM;
+			best = {
+				piece: index,
+				split: { t: projection.t, position: projection.position },
+				distanceM: projection.distanceM
+			};
 		}
 	}
 	return best;
 }
 
-function applySnaps(
-	source: SourceSegment,
-	startSnap: Snap | undefined,
-	endSnap: Snap | undefined,
-	segments: Map<SourceSegment, SourceSegment>,
-	locked: Set<SourceSegment>
-) {
-	if (!startSnap && !endSnap) return;
-	// Two projections onto one straight source segment would retrace part of that segment.
-	if (startSnap && endSnap && sameSourceSegment(startSnap.target, endSnap.target)) return;
+/**
+ * Group free ends that are mutually within tolerance, closest pairs first. A group only grows while
+ * every pair inside it stays within tolerance, so its members stay close to their shared point.
+ */
+function nearEndGroups(ends: FreeEnd[], toleranceM: number): FreeEnd[][] {
+	const pairs: { left: number; right: number; distanceM: number }[] = [];
+	const close = new Set<string>();
+	for (let left = 0; left < ends.length; left++) {
+		for (let right = left + 1; right < ends.length; right++) {
+			const distanceM = distanceBetween(ends[left]!.position, ends[right]!.position);
+			if (distanceM > toleranceM || ends[left]!.nearby.has(ends[right]!.key)) continue;
+			pairs.push({ left, right, distanceM });
+			close.add(`${left},${right}`);
+		}
+	}
+	pairs.sort(
+		(first, second) =>
+			first.distanceM - second.distanceM || first.left - second.left || first.right - second.right
+	);
 
-	const start = startSnap?.split.position ?? source.start;
-	const end = endSnap?.split.position ?? source.end;
-	if (samePosition(start, end)) return;
+	const groups = ends.map((_, index) => [index]);
+	for (const { left, right } of pairs) {
+		const leftGroup = groups[left]!;
+		const rightGroup = groups[right]!;
+		if (leftGroup === rightGroup) continue;
+		const allClose = leftGroup.every((first) =>
+			rightGroup.every((second) =>
+				close.has(first < second ? `${first},${second}` : `${second},${first}`)
+			)
+		);
+		if (!allClose) continue;
+		const merged = [...leftGroup, ...rightGroup];
+		for (const index of merged) groups[index] = merged;
+	}
+	return [...new Set(groups)]
+		.filter((group) => group.length > 1)
+		.map((group) => group.map((index) => ends[index]!));
+}
 
-	const moved = withEndpointSplits({
-		guideIndex: source.guideIndex,
-		segmentIndex: source.segmentIndex,
-		start,
-		end
-	});
-	const crossings: { target: SourceSegment; left: SplitPoint; right: SplitPoint }[] = [];
-	for (const [original, other] of segments) {
-		if (original === source) continue;
-		const intersection = intersectSegments(moved, other);
-		if (intersection.kind === 'overlap') return;
-		if (intersection.kind !== 'point' || other === startSnap?.target || other === endSnap?.target) {
+function centroid(points: Position[]): Position {
+	let longitude = 0;
+	let latitude = 0;
+	for (const point of points) {
+		longitude += point[0]!;
+		latitude += point[1]!;
+	}
+	return [longitude / points.length, latitude / points.length];
+}
+
+/** Choose every free end's destination against the unmoved pieces. */
+function planSnaps(pieces: Segment[], ends: FreeEnd[], toleranceM: number): Map<FreeEnd, SnapMove> {
+	const localLimitM = LOCAL_PATH_FACTOR * toleranceM;
+	const moves = new Map<FreeEnd, SnapMove>();
+
+	// Mutually near ends (the apex of an "A") meet at one point instead of one hitting the other's side.
+	for (const group of nearEndGroups(ends, toleranceM)) {
+		const center = centroid(group.map(({ position }) => position));
+		const host = nearestHost(center, pieces, toleranceM, (piece, projection) =>
+			group.every(
+				(end) =>
+					localDistance(end, piece, projection.t) >= localLimitM &&
+					distanceBetween(end.position, projection.position) <= toleranceM
+			)
+		);
+		const move: SnapMove = host ? { target: host.split.position, host } : { target: center };
+		for (const end of group) moves.set(end, move);
+	}
+
+	for (const end of ends) {
+		if (moves.has(end)) continue;
+		const host = nearestHost(
+			end.position,
+			pieces,
+			toleranceM,
+			(piece, projection) => localDistance(end, piece, projection.t) >= localLimitM
+		);
+		if (host) moves.set(end, { target: host.split.position, host });
+	}
+	return moves;
+}
+
+/**
+ * Apply all moves together. A piece runs from its (moved) start through every host split to its
+ * (moved) end, so a host whose own free end moves bends at the junctions it received.
+ */
+function placeSegments(
+	pieces: Segment[],
+	moves: Map<FreeEnd, SnapMove>
+): { placed: PlacedSegment[]; collapsed: Set<number> } {
+	const hostSplits = pieces.map((): SplitPoint[] => []);
+	const movedStarts = new Map<number, Position>();
+	const movedEnds = new Map<number, Position>();
+	for (const [end, { target, host }] of moves) {
+		let position = target;
+		if (host) {
+			const splits = hostSplits[host.piece]!;
+			const existing = findSplit(splits, host.split);
+			if (!existing) splits.push(host.split);
+			position = (existing ?? host.split).position;
+		}
+		(end.atStart ? movedStarts : movedEnds).set(end.piece, position);
+	}
+
+	const placed: PlacedSegment[] = [];
+	const collapsed = new Set<number>();
+	for (const [piece, { sources, start, end }] of pieces.entries()) {
+		const movedStart = movedStarts.get(piece);
+		const movedEnd = movedEnds.get(piece);
+		const splits = hostSplits[piece]!.sort((left, right) => left.t - right.t);
+		const vertices = [
+			movedStart ?? start,
+			...splits.map(({ position }) => position),
+			movedEnd ?? end
+		].filter((vertex, index, all) => index === 0 || !samePosition(vertex, all[index - 1]!));
+		if (vertices.length < 2) {
+			collapsed.add(piece);
 			continue;
 		}
-		const { left, right } = intersection;
-		const existingSharedEndpoint =
-			!isInterior(left.t) &&
-			!isInterior(right.t) &&
-			samePosition(positionOnSegment(source, left.t), left.position);
-		if (!existingSharedEndpoint) {
-			crossings.push({ target: other, left, right });
+		for (let index = 1; index < vertices.length; index++) {
+			placed.push({
+				sources,
+				start: vertices[index - 1]!,
+				end: vertices[index]!,
+				piece,
+				moved:
+					(index === 1 && movedStart != null) || (index === vertices.length - 1 && movedEnd != null)
+			});
 		}
 	}
-
-	segments.set(source, moved);
-	// Record the projected junction explicitly and keep its host fixed for later snaps.
-	for (const snap of [startSnap, endSnap]) {
-		if (!snap) continue;
-		addSplit(snap.target, snap.split);
-		locked.add(snap.target);
-	}
-	for (const { target, left, right } of crossings) {
-		addSplit(moved, left);
-		addSplit(target, right);
-		locked.add(target);
-	}
+	return { placed, collapsed };
 }
 
-function snapNearEndpoints(pieces: Segment[], toleranceM: number): Segment[] {
+/** Pieces whose moved geometry overlaps other geometry; such a snap was a bad idea. */
+function overlappingPieces(placed: PlacedSegment[]): Set<number> {
+	const rejected = new Set<number>();
+	for (const [index, segment] of placed.entries()) {
+		if (!segment.moved) continue;
+		for (const [otherIndex, other] of placed.entries()) {
+			if (otherIndex === index || intersectSegments(segment, other).kind !== 'overlap') continue;
+			rejected.add(segment.piece);
+			if (other.moved) rejected.add(other.piece);
+		}
+	}
+	return rejected;
+}
+
+/** Split crossings introduced by moved segments. Unmoved segments are already noded. */
+function nodePlacedSegments(placed: PlacedSegment[]): Segment[] {
+	const positions = new SplitPositions();
+	const segments = placed.map((segment) => ({
+		...withEndpointSplits(segment),
+		moved: segment.moved,
+		keys: [positionKey(segment.start), positionKey(segment.end)]
+	}));
+	for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
+		const left = segments[leftIndex]!;
+		for (let rightIndex = leftIndex + 1; rightIndex < segments.length; rightIndex++) {
+			const right = segments[rightIndex]!;
+			// Straight segments that share an endpoint cannot cross anywhere else.
+			if ((!left.moved && !right.moved) || left.keys.some((key) => right.keys.includes(key))) {
+				continue;
+			}
+			const intersection = intersectSegments(left, right);
+			if (intersection.kind !== 'point') continue;
+			addCrossing(left, right, intersection, positions);
+		}
+	}
+	return splitSegments(segments, positions);
+}
+
+/**
+ * Move free ends within tolerance onto nearby geometry. Every destination is planned against the
+ * unmoved pieces; a piece whose move would collapse it or overlap other geometry keeps its ends,
+ * and the remaining ends are planned again without it.
+ */
+function snapFreeEnds(pieces: Segment[], toleranceM: number): Segment[] {
 	if (!Number.isFinite(toleranceM) || toleranceM <= 0) return pieces;
 
-	const degree = new Map<string, number>();
-	for (const { start, end } of pieces) {
-		for (const position of [start, end]) {
-			const key = positionKey(position);
-			degree.set(key, (degree.get(key) ?? 0) + 1);
-		}
+	let ends = freeEnds(pieces, LOCAL_PATH_FACTOR * toleranceM);
+	for (;;) {
+		const moves = planSnaps(pieces, ends, toleranceM);
+		if (!moves.size) return pieces;
+		const { placed, collapsed } = placeSegments(pieces, moves);
+		const rejected = overlappingPieces(placed);
+		for (const piece of collapsed) rejected.add(piece);
+		if (!rejected.size) return nodePlacedSegments(placed);
+		ends = ends.filter(({ piece }) => !rejected.has(piece));
 	}
-	const isDangling = (position: Position) => degree.get(positionKey(position)) === 1;
-	const originals = pieces.map(withEndpointSplits);
-	const segments = new Map(originals.map((segment) => [segment, segment]));
-	const locked = new Set<SourceSegment>();
-
-	// Only dangling ends can move. Resolve competing snaps by geometry instead of draw order.
-	const candidates = originals
-		.filter(({ start, end }) => isDangling(start) || isDangling(end))
-		.sort(compareSegments);
-	for (const source of candidates) {
-		if (locked.has(source)) continue;
-		const startSnap = isDangling(source.start)
-			? nearestSnap(source, source.start, segments, toleranceM)
-			: undefined;
-		const endSnap = isDangling(source.end)
-			? nearestSnap(source, source.end, segments, toleranceM)
-			: undefined;
-		applySnaps(source, startSnap, endSnap, segments, locked);
-	}
-	return splitSegments(segments.values());
 }
 
-/** Build an undirected graph from exact intersections and inferred near connections. */
+/**
+ * Build an undirected graph from exact intersections, merged collinear overlaps, and inferred near
+ * connections. Preserve short branches: their length does not distinguish details from overshoots.
+ */
 export function buildTopologyGraph(
 	guides: GuidePath[],
 	options: TopologyBuildOptions = {}
-): TopologyBuildResult {
+): TopologyGraph {
 	const segments = sourceSegments(guides);
+	const positions = new SplitPositions();
 
 	for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
 		const left = segments[leftIndex]!;
 		for (let rightIndex = leftIndex + 1; rightIndex < segments.length; rightIndex++) {
 			const right = segments[rightIndex]!;
 			const intersection = intersectSegments(left, right);
-			if (intersection.kind === 'none') continue;
-			if (intersection.kind === 'overlap') {
-				return {
-					ok: false,
-					code: 'collinear-overlap',
-					segments: [
-						{ guideIndex: left.guideIndex, segmentIndex: left.segmentIndex },
-						{ guideIndex: right.guideIndex, segmentIndex: right.segmentIndex }
-					]
-				};
-			}
-			addSplit(left, intersection.left);
-			addSplit(right, intersection.right);
+			if (intersection.kind === 'point') addCrossing(left, right, intersection, positions);
+			else if (intersection.kind === 'overlap') addOverlapSplits(left, right, positions);
 		}
 	}
 
-	const pieces = snapNearEndpoints(
-		splitSegments(segments),
-		options.snapToleranceM ?? TOPOLOGY_SNAP_TOLERANCE_M
-	);
+	const toleranceM = options.snapToleranceM ?? TOPOLOGY_SNAP_TOLERANCE_M;
+	const pieces = snapFreeEnds(splitSegments(segments, positions), toleranceM);
 	const nodes: TopologyNode[] = [];
 	const nodeIds = new Map<string, number>();
 	const nodeId = (position: Position) => {
@@ -473,12 +742,11 @@ export function buildTopologyGraph(
 		return id;
 	};
 
-	const edges = pieces.map<TopologyEdge>(({ start, end, guideIndex, segmentIndex }, id) => ({
+	const edges = pieces.map<TopologyEdge>(({ start, end, sources }, id) => ({
 		id,
 		fromNodeId: nodeId(start),
 		toNodeId: nodeId(end),
-		guideIndex,
-		segmentIndex
+		sources
 	}));
-	return { ok: true, graph: { nodes, edges } };
+	return { nodes, edges };
 }
