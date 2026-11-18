@@ -32,16 +32,15 @@ const routeLineStringSchema = z.object({
 
 // POST /api/route
 
+const sourceViaSchema = z.object({
+	location: routePositionSchema,
+	radiusM: z.number().optional().describe('Snapping radius in meters.'),
+	bearing: z.number().optional().describe('Heading in degrees.'),
+	bearingRange: z.number().optional().describe('Heading tolerance in degrees. Requires bearing.')
+});
+
 /** One input coordinate with optional road snapping constraints. */
-export type RouteVia = {
-	location: Position;
-	/** Snapping radius in meters. */
-	radiusM?: number;
-	/** Heading in degrees. */
-	bearing?: number;
-	/** Heading tolerance in degrees; requires `bearing`. */
-	bearingRange?: number;
-};
+export type RouteVia = z.infer<typeof sourceViaSchema>;
 
 export type RouteRequest = {
 	vias: RouteVia[];
@@ -53,7 +52,11 @@ export const routeSuccessSchema = z.object({
 	distanceM: z.number().nonnegative().describe('Route length in meters.'),
 	waypoints: z
 		.array(routePositionSchema)
-		.describe('Retained waypoints in route order, snapped when the provider returns a match.')
+		.describe('Retained waypoints in route order, snapped when the provider returns a match.'),
+	sourceVias: z
+		.array(sourceViaSchema)
+		.optional()
+		.describe('Original retained request vias, aligned with waypoints, for safe retries.')
 });
 
 export type RouteSuccess = z.infer<typeof routeSuccessSchema>;

@@ -32,3 +32,9 @@ export const MIN_VIAS = 2;
 
 /** Maximum time spent automatically refining a generated route. */
 export const AUTO_REFINE_TIMEOUT_MS = 5_000;
+
+/** Ignore tiny reversals and require near-identical mirrored road geometry. */
+export const BACKTRACKING_MIN_LENGTH_M = 30;
+export const BACKTRACKING_TOLERANCE_M = 1;
+/** Maximum small loop at the end of a retraced stem; larger loops may be intentional. */
+export const BACKTRACKING_MAX_TURNAROUND_M = 150;

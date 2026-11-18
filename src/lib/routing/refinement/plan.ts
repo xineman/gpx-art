@@ -25,9 +25,13 @@ export type DetourScore = {
 
 const MAX_AUTOMATIC_DISTANCE_INCREASE_RATIO = 1.1;
 
-function bearingAtRouteIndex(points: Position[], index: number): number | undefined {
-	const before = points[Math.max(0, index - 1)];
-	const after = points[Math.min(points.length - 1, index + 1)];
+function bearingAcross(
+	points: Position[],
+	startIndex: number,
+	endIndex: number
+): number | undefined {
+	const before = points[Math.max(0, startIndex - 1)];
+	const after = points[Math.min(points.length - 1, endIndex + 1)];
 	if (!before || !after || samePosition(before, after)) return undefined;
 	const radians = Math.atan2(
 		(after[0] - before[0]) * Math.cos((((before[1] + after[1]) / 2) * Math.PI) / 180),
@@ -75,9 +79,11 @@ export function buildRefinementPlan(
 	geometry: LineString | null,
 	waypoints: Position[],
 	analysisWithSelections: WaypointDetourAnalysis[],
-	selections: WaypointActionSelection[] = []
+	selections: WaypointActionSelection[] = [],
+	sourceVias?: RouteVia[]
 ): RefinementPlan {
 	const routePoints = geometry?.coordinates ?? [];
+	const alignedSourceVias = sourceVias?.length === waypoints.length ? sourceVias : undefined;
 	const vias: RouteVia[] = [];
 	const nextSelections: WaypointActionSelection[] = [];
 	const explicitlyKeptWaypointIndexes = new Set(
@@ -93,18 +99,16 @@ export function buildRefinementPlan(
 		const action = waypointAnalysis.action;
 		if (action === 'remove') continue;
 
-		let via: RouteVia = { location: waypoint };
-		if (action === 'move') {
-			if (candidate) {
-				const target = moveTarget(routePoints, waypoint, index, candidate);
-				const routeIndex = target.routeIndex;
-				const bearing = bearingAtRouteIndex(routePoints, routeIndex);
-				via = {
-					location: target.location,
-					radiusM: 20,
-					...(bearing == null ? {} : { bearing, bearingRange: 45 })
-				};
-			}
+		let via: RouteVia = alignedSourceVias?.[index] ?? { location: waypoint };
+		if (action === 'move' && candidate) {
+			const { location, routeIndex } = moveTarget(routePoints, waypoint, index, candidate);
+			const endIndex = candidate.kind === 'backtrack' ? candidate.endIndex : routeIndex;
+			const bearing = bearingAcross(routePoints, routeIndex, endIndex);
+			via = {
+				location,
+				radiusM: 20,
+				...(bearing == null ? {} : { bearing, bearingRange: 45 })
+			};
 		}
 
 		const previous = vias[vias.length - 1];

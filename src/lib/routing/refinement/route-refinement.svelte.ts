@@ -1,4 +1,5 @@
 import type { LineString, Position } from 'geojson';
+import type { RouteVia } from '../api/contracts';
 import { MIN_VIAS } from '../config';
 import {
 	analyzeRouteDetours,
@@ -17,6 +18,7 @@ import type { WaypointActionSelection, WaypointRefinementAction } from './types'
 type RouteRefinementSources = {
 	getRouteGeometry: () => LineString | null;
 	getWaypoints: () => Position[];
+	getSourceVias: () => RouteVia[] | undefined;
 };
 
 export class RouteRefinementState {
@@ -50,7 +52,8 @@ export class RouteRefinementState {
 			this.#sources.getRouteGeometry(),
 			this.#sources.getWaypoints(),
 			this.#analysisWithSelections,
-			this.#selections
+			this.#selections,
+			this.#sources.getSourceVias()
 		)
 	);
 

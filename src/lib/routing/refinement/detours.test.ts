@@ -5,6 +5,7 @@ import {
 	getWaypointDetourAnalysis,
 	isMeaningfulDetourCandidate
 } from './detours';
+import { buildRefinementPlan } from './plan';
 
 function line(coordinates: Position[]): LineString {
 	return { type: 'LineString', coordinates };
@@ -159,4 +160,26 @@ describe('analyzeRouteDetours', () => {
 		expect(analysis[0]!.coveredByWaypointIndexes).toEqual([]);
 		expect(analysis[1]!.coveredByWaypointIndexes).toEqual([]);
 	});
+});
+
+it('replaces the waypoints on one spur with a single move to the junction', () => {
+	const a = [21, 52],
+		j = [21.001, 52],
+		mid = [21.001, 52.0005],
+		tip = [21.001, 52.001],
+		b = [21.003, 52];
+	const geometry = line([a, j, mid, tip, mid, j, b]);
+	const waypoints = [a, mid, tip, mid, b];
+	const analysis = analyzeRouteDetours(geometry, waypoints);
+	expect(analysis.slice(1, 4).map(({ candidate }) => candidate?.kind)).toEqual([
+		'backtrack',
+		'backtrack',
+		'backtrack'
+	]);
+	const plan = buildRefinementPlan(geometry, waypoints, analysis);
+	expect(plan.request.vias).toEqual([
+		{ location: a },
+		{ location: j, radiusM: 20, bearing: 90, bearingRange: 45 },
+		{ location: b }
+	]);
 });

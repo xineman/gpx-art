@@ -1,7 +1,7 @@
 import { AUTO_REFINE_TIMEOUT_MS, MIN_VIAS } from '../config';
 import type { RouteRequest, RouteResponse, RouteSuccess } from '../api/contracts';
+import { introducesBacktracking } from './backtracking';
 import { analyzeRouteDetours } from './detours';
-import { applySelectionsToWaypointAnalysis } from './detour-coverage';
 import {
 	buildRefinementPlan,
 	improvesDetourScore,
@@ -21,7 +21,8 @@ type AutomaticRefinementOptions = {
 };
 
 /**
- * Refine a route locally until no request can improve its detour score.
+ * Refine a route locally until no request can improve its detour score. A trial with new
+ * backtracking can seed another pass, while only routes without new spurs are accepted.
  * The caller owns loading state, cancellation, and application of the returned best route.
  */
 export async function refineRouteAutomatically(
@@ -32,35 +33,44 @@ export async function refineRouteAutomatically(
 	const timeoutMs = options.timeoutMs ?? AUTO_REFINE_TIMEOUT_MS;
 	const now = options.now ?? Date.now;
 	const startedAt = now();
-	let route = initialRoute;
-	let refined = false;
+	let accepted = initialRoute;
+	let trial = initialRoute;
+	let analysis = analyzeRouteDetours(trial.geometry, trial.waypoints);
 	const seen = new Set<string>();
 
 	while (now() - startedAt < timeoutMs) {
-		const analysis = analyzeRouteDetours(route.geometry, route.waypoints);
-		if (!analysis.some(({ candidate }) => candidate != null)) break;
-
-		const analysisWithSelections = applySelectionsToWaypointAnalysis(analysis);
-		const plan = buildRefinementPlan(route.geometry, route.waypoints, analysisWithSelections);
-		if (plan.request.vias.length < MIN_VIAS) break;
-
-		const previousScore = scoreRouteDetours(analysis, route.distanceM);
+		const previousScore = scoreRouteDetours(analysis, trial.distanceM);
 		if (previousScore.candidateCount === 0) break;
 
-		const requestHash = routeRequestHash(plan.request);
-		if (seen.has(requestHash)) break;
+		let { request } = buildRefinementPlan(
+			trial.geometry,
+			trial.waypoints,
+			analysis,
+			[],
+			trial.sourceVias
+		);
+		let requestHash = routeRequestHash(request);
+		if (trial.sourceVias && seen.has(requestHash)) {
+			// Source vias can repeat even after Valhalla snaps some waypoints to new positions.
+			({ request } = buildRefinementPlan(trial.geometry, trial.waypoints, analysis));
+			requestHash = routeRequestHash(request);
+		}
+		if (request.vias.length < MIN_VIAS || seen.has(requestHash)) break;
 		seen.add(requestHash);
 
-		const response = await requestRoute(plan.request);
-		if (!response.ok) return { response, route, refined };
+		const response = await requestRoute(request);
+		if (!response.ok) return { response, route: accepted, refined: accepted !== initialRoute };
 
 		const nextAnalysis = analyzeRouteDetours(response.geometry, response.waypoints);
 		const nextScore = scoreRouteDetours(nextAnalysis, response.distanceM);
 		if (!improvesDetourScore(nextScore, previousScore)) break;
 
-		route = response;
-		refined = true;
+		trial = response;
+		analysis = nextAnalysis;
+		if (!introducesBacktracking(accepted.geometry.coordinates, trial.geometry.coordinates)) {
+			accepted = trial;
+		}
 	}
 
-	return { response: route, route, refined };
+	return { response: accepted, route: accepted, refined: accepted !== initialRoute };
 }
