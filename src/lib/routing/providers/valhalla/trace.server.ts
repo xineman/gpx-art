@@ -1,7 +1,7 @@
 import type { LineString, Position } from 'geojson';
 import { pathLength } from '#lib/geometry/distance.js';
 import { samePosition } from '#lib/geometry/position.js';
-import type { RouteRequest } from '../../api/contracts';
+import type { ApiFailure, RouteRequest, RouteSuccess } from '../../api/contracts';
 import { decodePolyline6 } from './polyline';
 import {
 	postValhalla,
@@ -48,14 +48,7 @@ type GeometryGap = { startIndex: number; endIndex: number };
 
 const MAX_GEOMETRY_GAP_REPAIRS = 4;
 
-export type ValhallaFetchResult =
-	| {
-			ok: true;
-			geometry: LineString;
-			distanceM: number;
-			waypoints: Position[];
-	  }
-	| { ok: false; error: string; status?: number };
+type ValhallaFetchResult = RouteSuccess | ApiFailure;
 
 function isFiniteNumber(value: unknown): value is number {
 	return typeof value === 'number' && Number.isFinite(value);
@@ -306,7 +299,8 @@ export async function fetchValhallaTrace(
 				edgeDistanceKm && edgeDistanceKm > 0
 					? edgeDistanceKm * 1_000 + repaired.connectorDistanceM
 					: pathLength(repaired.coordinates),
-			waypoints
+			waypoints,
+			sourceVias: activeRequest.vias
 		};
 	}
 }

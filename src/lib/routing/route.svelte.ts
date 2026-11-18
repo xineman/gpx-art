@@ -55,7 +55,8 @@ class RouteState {
 
 	#refinement = new RouteRefinementState({
 		getRouteGeometry: () => this.#routeGeometry,
-		getWaypoints: () => this.#waypoints
+		getWaypoints: () => this.#waypoints,
+		getSourceVias: () => this.#acceptedRoute?.sourceVias
 	});
 
 	readonly moveWaypointIndexes: number[] = $derived(this.#refinement.moveWaypointIndexes);

@@ -1,5 +1,6 @@
 import type { LineString, Position } from 'geojson';
 import { cumulativeDistances, distanceBetween } from '#lib/geometry/distance.js';
+import { findBacktracking } from './backtracking';
 import { applyCandidateCoverage } from './detour-coverage';
 import type { WaypointRefinementAction } from './types';
 
@@ -11,6 +12,7 @@ export type DetourDetectionOptions = {
 };
 
 export type RouteDetour = {
+	kind?: 'backtrack';
 	geometry: LineString;
 	startIndex: number;
 	endIndex: number;
@@ -231,10 +233,13 @@ export function analyzeRouteDetours(
 	};
 	const cumulative = cumulativeDistances(points);
 	const waypointRouteIndexes = locateWaypoints(points, waypoints);
+	const backtracks = findBacktracking(points);
 
 	const analysis = waypoints.map((_, waypointIndex): WaypointDetourAnalysis => {
+		const isEndpoint = waypointIndex === 0 || waypointIndex === waypoints.length - 1;
+		const routeIndex = waypointRouteIndexes[waypointIndex]!;
 		let candidate: RouteDetour | null;
-		if (waypointIndex === 0 || waypointIndex === waypoints.length - 1) {
+		if (isEndpoint) {
 			candidate = analyzeEndpointWaypoint(
 				points,
 				cumulative,
@@ -252,6 +257,17 @@ export function analyzeRouteDetours(
 			);
 		}
 
+		const backtrack = isEndpoint
+			? undefined
+			: backtracks.find(({ start, end }) => start < routeIndex && routeIndex < end);
+		// Extend local waypoint analysis across the whole spur; retain broader existing candidates.
+		if (
+			backtrack &&
+			(!candidate || candidate.startIndex >= backtrack.start || candidate.endIndex <= backtrack.end)
+		) {
+			const interval = intervalForRange(points, cumulative, backtrack.start, backtrack.end)!;
+			candidate = { ...withGeometry(points, interval), kind: 'backtrack' };
+		}
 		return {
 			waypointIndex,
 			candidate,

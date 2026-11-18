@@ -407,6 +407,41 @@ describe('route state', () => {
 		expect(route.hasRefinedRoute).toBe(false);
 	});
 
+	it('can refine a sketched spur manually and restores it on reset', async () => {
+		const start = [21, 52];
+		const junction = [21.001, 52];
+		const tip = [21.001, 52.001];
+		const end = [21.003, 52];
+		const matched = {
+			ok: true as const,
+			geometry: {
+				type: 'LineString' as const,
+				coordinates: [start, junction, tip, junction, end]
+			},
+			waypoints: [start, tip, end],
+			distanceM: 430
+		};
+		const sketch = [{ ...line, geometry: matched.geometry }];
+		requestRouteMock
+			.mockResolvedValueOnce(matched)
+			.mockResolvedValueOnce(straightSuccess)
+			.mockResolvedValueOnce(matched);
+
+		await route.generate(sketch, 31, { autoRefine: false });
+		expect(requestRouteMock).toHaveBeenCalledOnce();
+		expect(routeGeometry()).toEqual(matched.geometry);
+
+		await expect(route.refineRoute()).resolves.toMatchObject({ ok: true });
+		expect(requestRouteMock).toHaveBeenCalledTimes(2);
+		expect(routeGeometry()).toEqual(straightSuccess.geometry);
+		expect(route.hasRefinedRoute).toBe(true);
+
+		await route.resetFromSketch(sketch, 31);
+		expect(requestRouteMock).toHaveBeenCalledTimes(3);
+		expect(routeGeometry()).toEqual(matched.geometry);
+		expect(route.hasRefinedRoute).toBe(false);
+	});
+
 	it('keeps an explicit successful result even when it is longer and snaps to the same vias', async () => {
 		const longerSameViaSuccess = {
 			...success,

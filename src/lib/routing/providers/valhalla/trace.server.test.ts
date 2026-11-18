@@ -71,6 +71,7 @@ describe('fetchValhallaTrace', () => {
 		expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
 		expect(result).toEqual({
 			ok: true,
+			sourceVias: vias,
 			geometry: {
 				type: 'LineString',
 				coordinates: [
@@ -156,6 +157,7 @@ describe('fetchValhallaTrace', () => {
 		]);
 		expect(result).toEqual({
 			ok: true,
+			sourceVias: vias,
 			geometry: {
 				type: 'LineString',
 				coordinates: [
@@ -267,6 +269,7 @@ describe('fetchValhallaTrace', () => {
 		]);
 		expect(result).toEqual({
 			ok: true,
+			sourceVias: vias,
 			geometry: {
 				type: 'LineString',
 				coordinates: [

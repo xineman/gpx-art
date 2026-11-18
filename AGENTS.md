@@ -14,11 +14,13 @@ Working map + drawing + routing shell:
 - Sketch tools: pencil, polyline, polygon, rectangle, pan
 - Tools panel with letter shortcuts (`P` / `L` / `G` / `R` / `H`) and Space-to-pan
 - Bottom drawing-actions cartridge: undo/redo, sketch GeoJSON I/O, clear, **Download GPX** (when a route is ready), primary **Route**
-- **Route pipeline:** client extract guides → topology graph (exact noding, overlap merging, near-endpoint snapping, short-branch preservation) → Chinese Postman walk per connected component → global via allocation (turning junction passes and dead-end tips mandatory, Douglas–Peucker + densify under one cap) → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side component-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → display-only detour detection → road line + chevrons + road-attribution ribbon + optional GPX
+- **Route pipeline:** client extract guides → topology graph (exact noding, overlap merging, near-endpoint snapping, short-branch preservation) → Chinese Postman walk per connected component → global via allocation (turning junction passes and dead-end tips mandatory, Douglas–Peucker + densify under one cap) → `POST /api/matrix` for a Valhalla bicycle distance matrix → client-side component-level open-route optimization → `POST /api/route` with one ordered via array → Valhalla `trace_attributes` map matching (`bicycle`) → one retry without unmatched samples → local Valhalla `/route` repair for unowned geometry gaps → shared detour/backtracking analysis (including small turnaround loops) → optional iterative refinement using original source vias for untouched guides → road line + chevrons + road-attribution ribbon + optional GPX
 - Status bar (title, contextual status, sketch distance + point count)
 - Completed drawings in a shared GeoJSON feature list; live preview while drafting
 - Snapshot undo/redo on the shared `drawings` state instance (bulk import is one undo step)
 - Route is derived state on the shared `route` instance; sketch changes invalidate it
+
+Manual and automatic refinement share the detour analysis and plan builder. When original vias would repeat a request, automatic refinement tries the latest snapped waypoints. It can refine a trial route with a new spur and keeps the last accepted route until the new spur is removed. Backtracking detection is pure.
 
 Not present yet: manual multi-shape ordering UI, persistence, settings UI (profile/base URL via env).
 
@@ -84,7 +86,7 @@ src/
       preparation/       # features → guide paths → topology walks → globally bounded trace vias
       topology/          # guide paths → noded graph → Chinese Postman traversals (odd-vertex pairing) → walks with mandatory vias
       shape-optimization/ # component traversal candidates, route ordering, optimized-route request
-      refinement/        # detour analysis, plans, and owned route-refinement.svelte.ts
+      refinement/        # shared detour/backtracking analysis, refinement plans/iteration, and owned state
       export/            # GPX serialization
       providers/valhalla/ # Valhalla HTTP helper, trace/matrix/attribute adapters, and server config
       api/               # contracts.ts (shared schemas + types), client.ts (endpoint calls), failures, request schemas
